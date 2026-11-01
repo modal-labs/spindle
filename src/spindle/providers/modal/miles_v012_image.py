@@ -4,10 +4,10 @@ from .image_dependencies import ignore_config_source
 from .miles_release_image import MILES_PATH, release_image
 
 MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
-MILES_BRANCH = "micah/v41-engram-prefetch"
+MILES_BRANCH = "spindle-miles-v0.1.2"
 # Head of MILES_BRANCH. Modal caches this layer by command, so fetching the branch
 # by name would keep serving an older head.
-MILES_COMMIT = "8dadc6a1ee15c28baf33c66e42be0073eb44123f"
+MILES_COMMIT = "f2f8447c33ac0755a0988c30d413d334dea0a26a"
 
 image = release_image.run_commands(
     f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {MILES_COMMIT}"
