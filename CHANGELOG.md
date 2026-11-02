@@ -9,7 +9,7 @@ Faster DeepSeek-V4.1-Flash training, 64K and 128K DeepSeek-V4.1-Flash recipes, a
 ### Added
 
 - `deepseek_v41_flash_lora_64k`: DeepSeek-V4.1-Flash LoRA with 64K context. It trains at TP8 on B300 or B200; H200 cannot hold a 64K training sequence for this model (#178).
-- `deepseek_v41_flash_lora_128k`: DeepSeek-V4.1-Flash LoRA with 128K context. It trains on two 8× B300 nodes and splits each sequence across two GPUs (#172).
+- `deepseek_v41_flash_lora_128k`: DeepSeek-V4.1-Flash LoRA with 128K context (#172).
 - LoRA trainers can split one long sequence across GPUs for models that need it, such as DeepSeek-V4.1 (Miles `allgather_cp` with `qkv_format: bshd`), including batches that train several LoRA adapters at once (#172).
 - `platform.url_label` sets the part of the frontend URL after the double dash, so `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. `platform.requires_proxy_auth` makes Modal turn away frontend requests without a [proxy token](https://modal.com/docs/guide/webhook-proxy-auth). Deployments that set neither keep their URL and stay reachable by stock Tinker clients (#180).
 - `examples/shared-server`: one deployment a team shares, with one LoRA recipe for each bundled base model on a `prod` frontend in its own environment, a smoke test, a script that adds the proxy token to any Tinker script, and a workflow that redeploys it from `main` (#139, #189, #192).
