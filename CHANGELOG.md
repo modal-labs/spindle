@@ -2,23 +2,28 @@
 
 Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [semantic versioning](https://semver.org/). Before 1.0, a minor release (0.x.0) can change config defaults or deployment behavior; a patch release (0.x.y) only fixes bugs. Each release is tagged `vX.Y.Z` and published as a GitHub Release.
 
-## Unreleased
+## 0.1.5 - 2026-11-02
+
+Faster DeepSeek-V4.1-Flash training, 64K and 128K DeepSeek-V4.1-Flash recipes, and frontends that can require a Modal proxy token.
 
 ### Added
 
-- `deepseek_v41_flash_lora_64k`: DeepSeek-V4.1-Flash LoRA with 64K context. It trains at TP8 on B300 or B200; H200 cannot hold a 64K training sequence for this model.
-- `deepseek_v41_flash_lora_128k`: DeepSeek-V4.1-Flash LoRA with 128K context.
-- LoRA trainers can split one long sequence across GPUs for models that need it, such as DeepSeek-V4.1 (Miles `allgather_cp` with `qkv_format: bshd`).
-- `examples/shared-server`: one deployment a team shares, with three recipes on a `prod` frontend in its own environment, a smoke test, and a workflow that redeploys it from `main`.
+- `deepseek_v41_flash_lora_64k`: DeepSeek-V4.1-Flash LoRA with 64K context. It trains at TP8 on B300 or B200; H200 cannot hold a 64K training sequence for this model (#178).
+- `deepseek_v41_flash_lora_128k`: DeepSeek-V4.1-Flash LoRA with 128K context. It trains on two 8× B300 nodes and splits each sequence across two GPUs (#172).
+- LoRA trainers can split one long sequence across GPUs for models that need it, such as DeepSeek-V4.1 (Miles `allgather_cp` with `qkv_format: bshd`), including batches that train several LoRA adapters at once (#172).
+- `platform.url_label` sets the part of the frontend URL after the double dash, so `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. `platform.requires_proxy_auth` makes Modal turn away frontend requests without a [proxy token](https://modal.com/docs/guide/webhook-proxy-auth). Deployments that set neither keep their URL and stay reachable by stock Tinker clients (#180).
+- `examples/shared-server`: one deployment a team shares, with one LoRA recipe for each bundled base model on a `prod` frontend in its own environment, a smoke test, a script that adds the proxy token to any Tinker script, and a workflow that redeploys it from `main` (#139, #189, #192).
+- Every Spindle deployment is tagged with its version, such as `v0.1.5`. The Tag column of each app's deployment history shows which Spindle release it runs (#179).
 
 ### Changed
 
-- Deployments now download base weights for up to four recipes at once, so a small model no longer waits behind a large one.
-- The DeepSeek-V4.1-Flash 8K and 32K LoRA trainers now train several sequences together instead of one at a time, so training steps take less time and use more GPU memory. Recipes based on them inherit this; set `miles_cfg.dynamic_batch_size: False` and `miles_cfg.cli_options.qkv_format: "bshd"` to keep the previous behavior.
+- When a frontend serves several recipes for the same model, requests by model name go to the recipe with the longest context, instead of whichever was deployed first. Pass a recipe's name as `base_model` to pick that recipe. `get_server_capabilities` lists every recipe and its context length. Sampling a saved adapter uses the recipe that trained it (#171).
+- Deployments now download base weights for up to four recipes at once, so a small model no longer waits behind a large one (#182).
+- The DeepSeek-V4.1-Flash 8K and 32K LoRA trainers now train several sequences together instead of one at a time, so training steps take less time and use more GPU memory. On two 8× H200 nodes, a 32K GRPO training step drops from 128 to 57 seconds. Recipes based on them inherit this; set `miles_cfg.dynamic_batch_size: False` and `miles_cfg.cli_options.qkv_format: "bshd"` to keep the previous behavior (#193).
 
 ### Fixed
 
-- Scripts on Tinker SDK 0.36 or newer, including tinker-cookbook, no longer fail with a 404 when they exit. Spindle now accepts the SDK's end-of-session call and frees that session's models right away.
+- Scripts on Tinker SDK 0.36 or newer, including tinker-cookbook, no longer fail with a 404 when they exit. Spindle now accepts the SDK's end-of-session call and frees that session's models right away (#190).
 - Creating a model no longer fails with `trainer capacity exhausted` when a trainer finishes starting while the model is being placed (#185).
 
 ## 0.1.4 - 2026-10-29
