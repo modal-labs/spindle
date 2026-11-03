@@ -168,8 +168,9 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         log_scheduled_gpus("trainer")
         run_trainer(saved, instance_id, platform)
 
+    rdma = recipe.trainer_nodes > 1 and recipe.trainer_rdma
     if recipe.trainer_nodes > 1:
-        trainer = modal.experimental.clustered(recipe.trainer_nodes, rdma=True)(trainer)
+        trainer = modal.experimental.clustered(recipe.trainer_nodes, rdma=rdma)(trainer)
     trainer = app.function(
         name="trainer",
         serialized=True,
@@ -190,7 +191,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         volumes=volumes_for(platform),
         secrets=secrets_for(platform, training=True),
         env=env,
-        experimental_options={"efa_enabled": True} if recipe.trainer_nodes > 1 else {},
+        experimental_options={"efa_enabled": True} if rdma else {},
     )(trainer)
 
     return app, trainer

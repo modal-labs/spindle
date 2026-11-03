@@ -104,7 +104,9 @@ def _configure_cluster_env(topology: ClusterTopology) -> None:
     os.environ["no_proxy"] = ",".join(no_proxy)
     os.environ["NO_PROXY"] = os.environ["no_proxy"]
     os.environ.setdefault("MASTER_ADDR", topology.head_addr)
-    os.environ.setdefault("GLOO_SOCKET_IFNAME", cluster_interface(topology.node_ip))
+    interface = cluster_interface(topology.node_ip)
+    os.environ.setdefault("GLOO_SOCKET_IFNAME", interface)
+    os.environ.setdefault("NCCL_SOCKET_IFNAME", interface)
     os.environ.update(_GCS_HEALTH_CHECK_ENV)
 
 

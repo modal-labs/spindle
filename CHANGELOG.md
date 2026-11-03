@@ -2,6 +2,12 @@
 
 Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [semantic versioning](https://semver.org/). Before 1.0, a minor release (0.x.0) can change config defaults or deployment behavior; a patch release (0.x.y) only fixes bugs. Each release is tagged `vX.Y.Z` and published as a GitHub Release.
 
+## Unreleased
+
+### Added
+
+- `trainer_rdma = False` starts multi-node trainers without RDMA, for GPU types or regions that do not offer it. The nodes then talk over TCP, which is slower. It defaults to `True`, so existing recipes are unchanged.
+
 ## 0.1.5 - 2026-11-02
 
 Faster DeepSeek-V4.1-Flash training, 64K and 128K DeepSeek-V4.1-Flash recipes, and frontends that can require a Modal proxy token.

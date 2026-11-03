@@ -577,6 +577,22 @@ def test_scheduled_gpus_are_logged(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_multinode_trainer_without_rdma_uses_tcp(builders, monkeypatch):
+    row = deployment("qwen38-27b-lora-256k")
+    row.recipe.trainer_rdma = False
+    clusters = []
+
+    def clustered(nodes, *, rdma):
+        clusters.append((nodes, rdma))
+        return lambda fn: fn
+
+    monkeypatch.setattr(modal.experimental, "clustered", clustered)
+    app, _ = deployment_apps.build_trainer_app(row, image="test")
+    settings, _ = app.functions["trainer"]
+    assert clusters == [(2, False)]
+    assert settings["experimental_options"] == {}
+
+
 def test_multinode_trainer_uses_cluster_launcher(builders, monkeypatch):
     row = deployment("qwen38-27b-lora-256k")
     clusters = []
