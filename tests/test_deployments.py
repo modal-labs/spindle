@@ -388,6 +388,35 @@ def test_multiple_models_same_http_service_and_old_binding_survives_switch():
     asyncio.run(run())
 
 
+def test_capacity_reports_each_deployment_trainer_slots():
+    async def run():
+        async def list_instances():
+            return ()
+
+        plane = ControlPlane(
+            InMemoryKeyValueStore(), SimpleNamespace(list_instances=list_instances)
+        )
+        spec = recipe(trainer_max_instances=3, trainer_max_clients_per_instance=4)
+        app = create_control_plane_app(plane, [resolved(spec)], api_key="test")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://frontend",
+            headers={"x-api-key": "test"},
+        ) as client:
+            response = await client.get("/api/v1/spindle/capacity")
+            assert response.status_code == 200, response.text
+            [deployment] = response.json()["deployments"]
+            assert deployment["name"] == spec.name
+            assert deployment["availability"] == "after_trainer_start"
+            assert deployment["free_slots"] == 0
+            assert deployment["max_trainers"] == 3
+            assert deployment["slots_per_trainer"] == 4
+            client.headers.clear()
+            assert (await client.get("/api/v1/spindle/capacity")).status_code == 401
+
+    asyncio.run(run())
+
+
 def test_native_boolean_opposite_flags_and_optional_value():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bias", dest="bias", action="store_true")

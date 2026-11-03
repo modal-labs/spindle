@@ -5,6 +5,7 @@ import json
 import logging
 import uuid
 from collections.abc import Iterable, Mapping
+from dataclasses import asdict
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -31,6 +32,7 @@ from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
 from spindle.version import __version__, source_commit
 
+from .capacity import TrainerLimits, trainer_capacity
 from .deployments import DeploymentRoutes
 from .service import ControlPlane, FutureResolutionStatus
 
@@ -308,6 +310,38 @@ def create_control_plane_app(
                 }
                 for d in definitions
             ]
+        }
+
+    @app.get("/api/v1/spindle/capacity")
+    async def capacity():
+        recipes = {
+            d.definition_id: (d, d.recipe)
+            for d in definitions
+            if getattr(d, "recipe", None) is not None
+        }
+        snapshot = await trainer_capacity(
+            control_plane.kv,
+            control_plane.engines,
+            [
+                TrainerLimits(
+                    definition_id,
+                    slots_per_trainer=recipe.trainer_max_clients_per_instance,
+                    max_trainers=recipe.trainer_max_instances,
+                )
+                for definition_id, (_, recipe) in recipes.items()
+            ],
+        )
+        return {
+            "observed_at": control_plane.clock(),
+            "deployments": [
+                {
+                    "name": d.name,
+                    "base_model": d.model,
+                    "parameterization": d.parameterization,
+                    **asdict(snapshot[definition_id]),
+                }
+                for definition_id, (d, _) in recipes.items()
+            ],
         }
 
     @app.post("/api/v1/client/config")

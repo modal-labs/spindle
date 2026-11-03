@@ -164,6 +164,14 @@ All configs deployed together must share platform settings. Use a shared parent 
 
 One frontend serves all models through Tinker’s `base_model`. If several recipes serve the same model, requests by model name go to the one with the longest context. To use a specific recipe, pass its name as `base_model`. `get_server_capabilities` lists every recipe and its context length.
 
+`GET /api/v1/spindle/capacity` shows, for each recipe, whether a new training client can start right away. Each trainer holds up to `trainer_max_clients_per_instance` clients, and a recipe runs at most `trainer_max_instances` trainers. The `availability` field is one of:
+
+- `now`: a running trainer has a free slot, so `create_model` starts without waiting.
+- `after_trainer_start`: no running trainer has room, but another trainer can start. Expect to wait for GPUs and a trainer cold start.
+- `full`: every trainer the recipe allows is in use. New clients wait until another client finishes.
+
+`free_slots` counts open slots on running trainers after models already waiting have been placed. `waiting_models` counts clients waiting for a slot. The response is a snapshot, so another client can take a free slot before yours is placed.
+
 ## Update isolation
 
 Trainer apps are named `spindle-trainer-{name}` and inference apps `spindle-inference-{name}`. An inference-only change reuses the trainer app. A trainer-only change reuses the inference app. Source-only upgrades use `--refresh-trainer` / `--refresh-inference`. Updating inference settings also redeploys existing pools for that recipe before publishing the new frontend configuration. An interrupted pool update can be retried with the same command. Changes to region, storage, or secrets refresh both worker apps.
