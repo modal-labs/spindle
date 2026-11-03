@@ -4,6 +4,12 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Added
+
+- `qwen25_7b_instruct_lora_32k`: Qwen2.5-7B-Instruct LoRA with 32K context, trained on 4× H100 and sampled on one GPU per replica.
+- `qwen25_3b_lora_32k`: Qwen2.5-3B LoRA with 32K context, with one model replica per GPU.
+- The shared server serves both.
+
 ### Changed
 
 - Spindle requires Modal 1.6.3 or newer, the first release that builds images with [image builder version](https://modal.com/docs/guide/images#image-builder-updates) 2026.10. Multi-node trainers use `modal.clustered` instead of the deprecated `modal.experimental.clustered`.
