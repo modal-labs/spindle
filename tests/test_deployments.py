@@ -411,7 +411,7 @@ def test_queues_report_each_recipe():
             assert queue["slots"] == {"used": 0, "free": 0, "per_trainer": 4}
             assert queue["trainers"] == {"running": 0, "starting": 0, "max": 3}
             assert queue["recent"] == {
-                "window_s": 300.0,
+                "window_s": 3600.0,
                 "added": 0,
                 "placed": 0,
                 "released": 0,

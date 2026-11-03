@@ -15,7 +15,7 @@ from spindle.providers.contracts import EnginePlatform, KeyValueStore
 from .keys import queue_event_key
 from .records import PlacementRecord
 
-RECENT_WINDOW_S = 300.0
+RECENT_WINDOW_S = 3600.0
 EVENT_WRITE_TIMEOUT_S = 5.0
 QueueEvent = Literal["added", "placed", "released"]
 

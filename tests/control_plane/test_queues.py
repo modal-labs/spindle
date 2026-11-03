@@ -184,8 +184,8 @@ def test_events_leave_the_window_and_are_pruned():
         session = await plane.create_session()
         await placed_model(plane, clock, session.session_id, 0, 0.0, 5.0)
 
-        assert (await recent(plane, now=300.0)).added == 1
-        stats = await recent(plane, now=304.0)
+        assert (await recent(plane, now=3600.0)).added == 1
+        stats = await recent(plane, now=3604.0)
         assert (stats.added, stats.placed, stats.wait_s.p50) == (0, 1, 5.0)
         assert await prune_queue_events(plane.kv, before=4.0) == 1
         assert await prune_queue_events(plane.kv, before=6.0) == 1
