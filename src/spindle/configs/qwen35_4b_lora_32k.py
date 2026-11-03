@@ -16,7 +16,8 @@ class Config(Parent):
         "miles_cfg.model_type": "qwen3.5-4B",
         "miles_cfg.tensor_model_parallel_size": 1,
         "miles_cfg.max_lora_slots": 8,
-        "miles_cfg.max_tokens_per_gpu": 32768,
+        # More packed tokens run out of H100 memory; longer sequences train alone.
+        "miles_cfg.max_tokens_per_gpu": 16384,
         "miles_cfg.cli_options.log_probs_chunk_size": 4096,
         "miles_cfg.cli_options.balance_data": True,
         "sglang_cfg.max_running_requests": 64,
