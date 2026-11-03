@@ -30,6 +30,7 @@ Status/error-string mapping: `ERROR_STATUSES` in `spindle/control_plane/http.py`
 
 - `ModelLost` (`model_lost`): replace the client from a checkpoint (weights.md in `spindle` skill).
 - `EngineSaturated` (`saturated`): back off; check trainer slots and client fan-out.
+- Model creation pending with `all trainer slots for <model> are in use`: every trainer for the recipe is full and at `trainer_max_instances`. It is placed when a slot frees, oldest waiter first; after 30 minutes it fails with `waited 30m 00s for a trainer slot`. Check `GET /api/v1/spindle/queues`.
 - `SequenceConflict` (`conflict`): regenerate seq ids; duplicated or resubmitted operation.
 - `RecordUnavailable` (`conflict`): check object state, e.g. checkpoint metadata.
 - `RecordNotFound` (`not_found`): verify model_id and paths.

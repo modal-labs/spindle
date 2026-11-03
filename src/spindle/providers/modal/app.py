@@ -571,6 +571,12 @@ def trainer_autoscaling(definition_id: str) -> bool:
     return parameterization_for(definition_id) is not None
 
 
+def trainer_slots(definition_id: str) -> int | None:
+    if not trainer_autoscaling(definition_id):
+        return None
+    return module_for(definition_id).recipe.trainer_max_clients_per_instance
+
+
 @app.function(
     image=image,
     max_containers=1,
@@ -765,6 +771,7 @@ def _plane():
         checkpoint_root=CHECKPOINT_ROOT,
         reconcile_trainers=kick_trainers,
         trainer_autoscaling=trainer_autoscaling,
+        trainer_slots=trainer_slots,
         trainer_gpu_wait=gpu_wait(_trainer_function, _trainer_gpus),
     )
 

@@ -164,7 +164,7 @@ All configs deployed together must share platform settings. Use a shared parent 
 
 One frontend serves all models through Tinker’s `base_model`. If several recipes serve the same model, requests by model name go to the one with the longest context. To use a specific recipe, pass its name as `base_model`. `get_server_capabilities` lists every recipe and its context length.
 
-`GET /api/v1/spindle/queues` describes each recipe's training queue. Each trainer holds up to `trainer_max_clients_per_instance` training clients, and a recipe runs at most `trainer_max_instances` trainers. New clients are placed first come, first served.
+`GET /api/v1/spindle/queues` describes each recipe's training queue. Each trainer holds up to `trainer_max_clients_per_instance` training clients, and a recipe runs at most `trainer_max_instances` trainers. When every slot is in use, a new client waits in line instead of failing. The client that has waited longest gets the next free slot. After 30 minutes in line, model creation fails with `waited 30m 00s for a trainer slot`.
 
 ```json
 {"name": "qwen35_2b_lora_32k", "base_model": "Qwen/Qwen3.5-2B", "parameterization": "lora",
@@ -180,7 +180,7 @@ One frontend serves all models through Tinker’s `base_model`. If several recip
 - `trainers` counts trainers that are running, trainers that are still booting, and the most the recipe allows.
 - `recent` covers the last `window_s` seconds. `added` counts clients that asked for a slot, `placed` counts clients that got one, and `released` counts slots that opened up. A slot opens when a client unloads its model or its session closes or goes idle. Models lost when a trainer stops are not counted, since no slot opens for anyone else. `wait_s` gives the median, 95th percentile and longest wait of the clients placed in the window, or `null` if none were placed.
 
-A client can start right away when `slots.free` is greater than `backlog.count`. Otherwise it waits for a trainer to boot, or for another client to finish or go idle for `session_idle_timeout_s`. The response can be a few seconds old, so another client can take a free slot first.
+A client can start right away when `slots.free` is greater than `backlog.count`. Otherwise it waits for a trainer to boot, or for another client to finish or go idle for `session_idle_timeout_s`. While it waits, the Tinker SDK shows its place in line, such as `all trainer slots for Qwen/Qwen3.5-2B are in use; waiting for one to free up (2nd in line, 1m 10s so far)`. A client that stops waiting, for example because its script exited, loses its place within 30 seconds. The queue response and each frontend's view of the line can be a few seconds old, so a new client can occasionally take a slot just as it frees up.
 
 When no slot is free and no trainer is booting, `recent.released` shows how fast slots open up. For example, 4 slots released in the last hour means a slot opens about every 15 minutes. `backlog.count` shows how many other clients are waiting for those slots.
 
