@@ -138,13 +138,11 @@ def test_recent_counts_each_transition_once():
 
         (instance,) = await engines.list_instances()
         await engines.mark_dead(instance.instance_id)
-        await asyncio.gather(
-            *(plane.retrieve(c.request_id) for c in (second, second, third))
-        )
-        await plane.unload_model(second.model.model_id)
+        await asyncio.gather(*(plane.retrieve(second.request_id) for _ in range(2)))
+        await plane.unload_model(third.model.model_id)
 
         stats = await recent(plane, now=60.0)
-        assert (stats.added, stats.placed, stats.released) == (3, 3, 3)
+        assert (stats.added, stats.placed, stats.released) == (3, 3, 1)
         assert (stats.wait_s.p50, stats.wait_s.max) == (10.0, 15.0)
 
     asyncio.run(run())

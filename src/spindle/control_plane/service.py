@@ -829,9 +829,11 @@ class ControlPlane:
                 await self.engines.client(instance.instance_id).unload_model(
                     model.model_id
                 )
-            await self._release_placement(
-                placement.model_id, placement.engine_definition_id
-            )
+                await self._release_placement(
+                    placement.model_id, placement.engine_definition_id
+                )
+            else:
+                await self.kv.delete(placement_key(model.model_id))
         await self.kv.delete(trainer_demand_key(model.model_id))
         return model
 
@@ -1463,21 +1465,19 @@ class ControlPlane:
             placed_at=self.clock(),
             engine_boot_id=accepted_instance.boot_id,
         )
-        # The event key is per model, so a losing duplicate placement adds nothing.
-        inserted, _ = await asyncio.gather(
-            self.kv.put_if_absent(
-                placement_key(model.model_id),
-                record.model_dump(mode="json"),
-            ),
-            record_queue_event(
+        inserted = await self.kv.put_if_absent(
+            placement_key(model.model_id),
+            record.model_dump(mode="json"),
+        )
+        if inserted.created:
+            await record_queue_event(
                 self.kv,
                 "placed",
                 model.model_id,
                 definition_id,
                 record.placed_at,
                 wait_s=record.placed_at - model.created_at,
-            ),
-        )
+            )
         placement = PlacementRecord.model_validate(inserted.value)
         if placement.engine_instance_id != accepted_instance.instance_id:
             try:
@@ -1748,9 +1748,7 @@ class ControlPlane:
             or instance.terminal
             or placement.engine_boot_id not in ("", instance.boot_id)
         ):
-            await self._release_placement(
-                placement.model_id, placement.engine_definition_id
-            )
+            await self.kv.delete(placement_key(placement.model_id))
             await self.kv.delete(trainer_demand_key(placement.model_id))
             raise ModelLost(placement.model_id)
         return instance

@@ -178,11 +178,11 @@ One frontend serves all models through Tinker’s `base_model`. If several recip
 - `backlog` counts training clients waiting for a slot, and how long the oldest has waited.
 - `slots` counts clients on running trainers and the open slots left on them.
 - `trainers` counts trainers that are running, trainers that are still booting, and the most the recipe allows.
-- `recent` covers the last `window_s` seconds. `added` counts clients that asked for a slot, `placed` counts clients that got one, and `released` counts slots that opened up. A slot opens when a client unloads its model, its session closes or goes idle, or its trainer stops. `wait_s` is the median and longest wait of the clients placed in the window, or `null` if none were placed.
+- `recent` covers the last `window_s` seconds. `added` counts clients that asked for a slot, `placed` counts clients that got one, and `released` counts slots that opened up. A slot opens when a client unloads its model or its session closes or goes idle. Models lost when a trainer stops are not counted, since no slot opens for anyone else. `wait_s` is the median and longest wait of the clients placed in the window, or `null` if none were placed.
 
 A client can start right away when `slots.free` is greater than `backlog.count`. Otherwise it waits for a trainer to boot, or for another client to finish or go idle for `session_idle_timeout_s`. The response can be a few seconds old, so another client can take a free slot first.
 
-When no slot is free and no trainer is booting, `recent.released` shows how fast slots open up. For example, if 3 clients are waiting and 2 slots opened in the last 300 seconds, a new client can expect to wait around 600 seconds.
+When no slot is free and no trainer is booting, `recent.released` shows how fast slots open up. For example, 2 slots released in the last 300 seconds means a slot opens about every 150 seconds. `backlog.count` shows how many other clients are waiting for those slots.
 
 ## Update isolation
 

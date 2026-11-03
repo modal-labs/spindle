@@ -1,5 +1,4 @@
-"""Per-recipe training queue: models waiting for a trainer slot, slots in use,
-and how many models were added, placed and released recently."""
+"""Per-recipe training queue: waiting models, slots in use, and recent changes."""
 
 from __future__ import annotations
 
@@ -17,6 +16,7 @@ from .keys import queue_event_key
 from .records import PlacementRecord
 
 RECENT_WINDOW_S = 300.0
+EVENT_WRITE_TIMEOUT_S = 5.0
 QueueEvent = Literal["added", "placed", "released"]
 
 
@@ -78,13 +78,14 @@ async def record_queue_event(
     at: float,
     wait_s: float | None = None,
 ) -> None:
-    """Writes at most one event of each kind per model, so retries and racing
-    writers count once. Failures are logged and never raised."""
+    """One key per kind and model, so retries and racing writers count once.
+    Errors and slow writes are logged, not raised."""
     event = {"kind": kind, "definition_id": definition_id, "at": at}
     if wait_s is not None:
         event["wait_s"] = wait_s
     try:
-        await kv.put(queue_event_key(kind, model_id), event)
+        async with asyncio.timeout(EVENT_WRITE_TIMEOUT_S):
+            await kv.put(queue_event_key(kind, model_id), event)
     except Exception:
         logging.getLogger(__name__).exception("record %s event for %s", kind, model_id)
 

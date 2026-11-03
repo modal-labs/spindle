@@ -881,12 +881,15 @@ async def _cleanup_lora_pools() -> tuple[str, ...]:
 def cleaner():
     async def run() -> None:
         plane = _plane()
+        try:
+            await prune_queue_events(plane.kv, plane.clock() - RECENT_WINDOW_S)
+        except Exception:
+            logging.getLogger(__name__).exception("prune queue events")
         await plane.sweep_idle_sessions(SESSION_IDLE_TIMEOUT)
         await plane.sweep_idle_models(SESSION_IDLE_TIMEOUT)
         await plane.sweep_idle_engines()
         await _lose_undefined_models()
         await _cleanup_fft_pools()
         await _cleanup_lora_pools()
-        await prune_queue_events(plane.kv, plane.clock() - RECENT_WINDOW_S)
 
     asyncio.run(run())
