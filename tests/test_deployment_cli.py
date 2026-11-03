@@ -512,9 +512,16 @@ def test_app_flag_names_every_app_after_the_frontend(deployed):
     }
     assert deployed.env["SPINDLE_APP_NAME"] == "my-spindle"
     assert deployed.images == [("my-spindle", "dev")]
+    # A pool from a release that named every pool spindle-... is not refreshed.
+    old = LoraPoolSpec("qwen35-9b-lora-16k")
+    deployed.apps.add(old.app_name)
+    deployed.pools = [old.as_dict()]
+    deployed.calls.clear()
+    cli.main(["deploy", "qwen35-9b-lora-16k", "--app", "my-spindle", "--env", "dev"])
+    assert deployed.calls == ["frontend"]
 
 
-def test_stop_stops_the_frontend_then_its_apps(monkeypatch, capsys):
+def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, capsys):
     listed = [
         ("my-spindle-lora-qwen35-9b-lora-16k", "deployed"),
         ("my-spindle-trainer-qwen35-9b-lora-16k", "deployed"),
@@ -524,6 +531,7 @@ def test_stop_stops_the_frontend_then_its_apps(monkeypatch, capsys):
         ("my-spindle", "deployed"),
         ("my-spindle-2", "deployed"),
         ("spindle-trainer-qwen35-9b-lora-16k", "deployed"),
+        (None, "ephemeral"),
     ]
     calls = []
 
@@ -532,24 +540,24 @@ def test_stop_stops_the_frontend_then_its_apps(monkeypatch, capsys):
         if command[3:5] == ["app", "list"]:
             rows = [{"description": name, "state": state} for name, state in listed]
             return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+        if command[5].endswith("-latest"):
+            return subprocess.CompletedProcess(
+                command, 1, "", "App is already stopped."
+            )
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", run)
     cli.main(["stop", "--app", "my-spindle", "--env", "dev"])
-    assert calls == [
+    assert [command[3] for command in calls[1:]] == [
+        "my-spindle",
+        "my-spindle-inference-qwen35-9b-lora-16k",
+        "my-spindle-fft-0123456789abcdef-latest",
+        "my-spindle-lora-qwen35-9b-lora-16k",
+        "my-spindle-trainer-qwen35-9b-lora-16k",
+    ]
+    assert calls[:2] == [
         ["app", "list", "--json", "--env", "dev"],
         ["app", "stop", "-y", "my-spindle", "--env", "dev"],
-        ["app", "stop", "-y", "my-spindle-fft-0123456789abcdef-latest", "--env", "dev"],
-        [
-            "app",
-            "stop",
-            "-y",
-            "my-spindle-inference-qwen35-9b-lora-16k",
-            "--env",
-            "dev",
-        ],
-        ["app", "stop", "-y", "my-spindle-lora-qwen35-9b-lora-16k", "--env", "dev"],
-        ["app", "stop", "-y", "my-spindle-trainer-qwen35-9b-lora-16k", "--env", "dev"],
     ]
     assert capsys.readouterr().out.count("Stopped ") == 5
     calls.clear()

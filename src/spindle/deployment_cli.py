@@ -144,7 +144,11 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
                 if deployment.parameterization == "lora"
                 else FFTPoolSpec.from_dict(record)
             )
-            if not app_is_missing(pool.app_name, environment):
+            # Pools named for another frontend (from a release before --app
+            # named them) are never routed to again; leave them to be stopped.
+            if pool.frontend == platform["frontend"] and not app_is_missing(
+                pool.app_name, environment
+            ):
                 build_rollout_app(deployment, pool, platform)[0].deploy(
                     environment_name=environment, tag=deployment_tag()
                 )
@@ -219,26 +223,31 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
             )
 
 
-APP_ROLES = ("trainer", "inference", "lora", "fft")
+# Stop order: the frontend and inference apps create pools, so they go before
+# the pools; trainers only use them.
+APP_ROLES = ("inference", "fft", "lora", "trainer")
 
 
 def deployment_apps(frontend, environment):
-    """Running apps of one deployment: its frontend, workers, and sampler pools."""
+    """Running apps of one deployment, in the order to stop them."""
     command = [sys.executable, "-m", "modal", "app", "list", "--json"]
     if environment:
         command += ["--env", environment]
     rows = json.loads(
         subprocess.run(command, check=True, capture_output=True, text=True).stdout
     )
-    prefixes = tuple(f"{frontend}-{role}-" for role in APP_ROLES)
-    names = [
-        row["description"]
-        for row in rows
-        if row["state"] != "stopped"
-        and (row["description"] == frontend or row["description"].startswith(prefixes))
-    ]
-    # The frontend first, so its cleaner cannot replace pools while they stop.
-    return sorted(names, key=lambda name: (name != frontend, name))
+    prefixes = [f"{frontend}-{role}-" for role in APP_ROLES]
+
+    def rank(name):
+        if name == frontend:
+            return 0
+        return next((i for i, p in enumerate(prefixes, 1) if name.startswith(p)), None)
+
+    names = {row["description"] or "" for row in rows if row["state"] != "stopped"}
+    return sorted(
+        (name for name in names if rank(name) is not None),
+        key=lambda name: (rank(name), name),
+    )
 
 
 def stop(frontend, environment):
@@ -251,7 +260,10 @@ def stop(frontend, environment):
         command = [sys.executable, "-m", "modal", "app", "stop", "-y", name]
         if environment:
             command += ["--env", environment]
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        result = subprocess.run(command, capture_output=True, text=True)
+        output = (result.stdout + result.stderr).strip()
+        if result.returncode and "App is already stopped." not in output:
+            raise ValueError(f"stopping {name} failed: {output}")
         print(f"Stopped {name}")
 
 
