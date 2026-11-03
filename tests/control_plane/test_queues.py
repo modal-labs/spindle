@@ -148,7 +148,7 @@ def test_recent_counts_each_transition_once():
     asyncio.run(run())
 
 
-def test_idle_reclaim_counts_as_a_release():
+def test_idle_reclaim_releases_the_slot_and_leaves_the_backlog():
     async def run():
         clock = Clock()
         engines = LocalEnginePlatform(LORA, EchoExecutor, max_models=1)
@@ -160,8 +160,15 @@ def test_idle_reclaim_counts_as_a_release():
         live = await plane.create_session()
         await placed_model(plane, clock, live.session_id, 0, 100.0, 100.0)
 
-        stats = await recent(plane, now=100.0)
-        assert (stats.added, stats.placed, stats.released) == (2, 2, 1)
+        limits = [QueueLimits(LORA, slots_per_trainer=1, max_trainers=1)]
+        stats = (await describe_queues(plane.kv, engines, limits, 100.0))[LORA]
+        recent_stats = stats.recent
+        assert (recent_stats.added, recent_stats.placed, recent_stats.released) == (
+            2,
+            2,
+            1,
+        )
+        assert stats.backlog.count == 0
 
     asyncio.run(run())
 

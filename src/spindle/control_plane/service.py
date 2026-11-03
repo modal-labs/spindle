@@ -1542,6 +1542,8 @@ class ControlPlane:
                 await self.kv.delete(placement_key(model_id))
             else:
                 await self._release_placement(model_id, incumbent.engine_definition_id)
+            # Its session is closed, so it no longer waits for a slot.
+            await self.kv.delete(trainer_demand_key(model_id))
             reclaimed.append(model_id)
         return tuple(reclaimed)
 

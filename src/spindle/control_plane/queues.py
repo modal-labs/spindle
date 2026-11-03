@@ -78,8 +78,7 @@ async def record_queue_event(
     at: float,
     wait_s: float | None = None,
 ) -> None:
-    """One key per kind and model, so retries and racing writers count once.
-    Errors and slow writes are logged, not raised."""
+    # One key per kind and model, so retries and racing writers count once.
     event = {"kind": kind, "definition_id": definition_id, "at": at}
     if wait_s is not None:
         event["wait_s"] = wait_s
