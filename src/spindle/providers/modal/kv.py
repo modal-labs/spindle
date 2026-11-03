@@ -17,6 +17,7 @@ SAMPLING_SESSION_KV_NAME = "spindle-sampling-sessions"
 EXPORT_KV_NAME = "spindle-exports"
 ARTIFACT_KV_NAME = "spindle-artifacts"
 FFT_POOL_KV_NAME = "spindle-fft-pools"
+QUEUE_EVENT_KV_NAME = "spindle-queue-events"
 LIST_ITEMS_ATTEMPTS = 3
 # A healthy scan of ~4,800 session records can take over 40 seconds.
 LIST_ITEMS_TIMEOUT_SECONDS = 120.0
@@ -29,6 +30,7 @@ STORE_NAMES = {
     "sampling_sessions": SAMPLING_SESSION_KV_NAME,
     "exports": EXPORT_KV_NAME,
     "artifacts": ARTIFACT_KV_NAME,
+    "queue_events": QUEUE_EVENT_KV_NAME,
 }
 
 KEY_STORES = {
@@ -40,6 +42,7 @@ KEY_STORES = {
     "placement": "models",
     "placement_claim": "models",
     "trainer_demand": "models",
+    "queue_event": "queue_events",
     "engine_instance": "engines",
     "model_assets_ready": "engines",
     "model_assets_call": "engines",

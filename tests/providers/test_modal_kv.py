@@ -174,3 +174,14 @@ def test_engine_keys_route_to_the_engine_store(key):
         assert await stores["engines"].get(key) == 1.0
 
     asyncio.run(run())
+
+
+def test_queue_events_stay_out_of_the_models_store():
+    async def run():
+        stores = {name: InMemoryKeyValueStore() for name in kv.STORE_NAMES}
+        routed = kv.RoutedKeyValueStore(stores)
+        await routed.put("queue_event:added:m1", {"at": 1.0})
+        assert await stores["queue_events"].list_items("queue_event:")
+        assert await stores["models"].list_items("") == ()
+
+    asyncio.run(run())
