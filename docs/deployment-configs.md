@@ -105,7 +105,7 @@ The launcher consumes the saved settings. It does not reparse backend configurat
 
 ## Multi-node Miles
 
-[qwen38_27b_lora_256k.py](../src/spindle/configs/qwen38_27b_lora_256k.py) configures two nodes with eight H200s per node, TP2 and CP8. The trainer app uses Modal's clustered launcher and RDMA. Keep RDMA on whenever RDMA-connected nodes are available. If the only capacity you can get is not RDMA-connected, set `trainer_rdma = False`. The nodes then sync over TCP, so training steps are usually limited by network bandwidth rather than by the GPUs. When the model also has a single-node recipe that fits your context length, prefer it on such capacity: more jobs fit on single-node trainers and none of them pay the cross-node cost. Every rank mounts the same volumes; rank 0 starts the engine, and the other ranks join Ray using the launcher merged in #39. The driver receives the Ray address. GPU counts cannot be independently overridden through Miles options.
+[qwen38_27b_lora_256k.py](../src/spindle/configs/qwen38_27b_lora_256k.py) configures two nodes with eight H200s per node, TP2 and CP8. The trainer app uses Modal's clustered launcher and RDMA. Keep RDMA on whenever RDMA-connected nodes are available. If the only capacity you can get is not RDMA-connected, set `trainer_rdma = False`. The nodes then sync over TCP, so training steps are usually limited by network bandwidth rather than by the GPUs. Every rank mounts the same volumes; rank 0 starts the engine, and the other ranks join Ray using the launcher merged in #39. The driver receives the Ray address. GPU counts cannot be independently overridden through Miles options.
 
 This path has CPU construction/topology tests. This refactor has not been redeployed or tested on multiple GPU nodes.
 
