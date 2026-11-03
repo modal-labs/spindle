@@ -388,7 +388,7 @@ def test_multiple_models_same_http_service_and_old_binding_survives_switch():
     asyncio.run(run())
 
 
-def test_capacity_reports_each_deployment_trainer_slots():
+def test_queues_report_each_recipe():
     async def run():
         async def list_instances():
             return ()
@@ -403,14 +403,13 @@ def test_capacity_reports_each_deployment_trainer_slots():
             base_url="http://frontend",
             headers={"x-api-key": "test"},
         ) as client:
-            response = await client.get("/api/v1/spindle/capacity")
+            response = await client.get("/api/v1/spindle/queues")
             assert response.status_code == 200, response.text
-            [deployment] = response.json()["deployments"]
-            assert deployment["name"] == spec.name
-            assert deployment["availability"] == "after_trainer_start"
-            assert deployment["free_slots"] == 0
-            assert deployment["max_trainers"] == 3
-            assert deployment["slots_per_trainer"] == 4
+            [queue] = response.json()["queues"]
+            assert queue["name"] == spec.name
+            assert queue["backlog"] == {"count": 0, "oldest_age_s": None}
+            assert queue["slots"] == {"used": 0, "free": 0, "per_trainer": 4}
+            assert queue["trainers"] == {"running": 0, "starting": 0, "max": 3}
 
     asyncio.run(run())
 

@@ -164,13 +164,20 @@ All configs deployed together must share platform settings. Use a shared parent 
 
 One frontend serves all models through Tinker’s `base_model`. If several recipes serve the same model, requests by model name go to the one with the longest context. To use a specific recipe, pass its name as `base_model`. `get_server_capabilities` lists every recipe and its context length.
 
-`GET /api/v1/spindle/capacity` shows, for each recipe, whether a new training client can start right away. Each trainer holds up to `trainer_max_clients_per_instance` clients, and a recipe runs at most `trainer_max_instances` trainers. The `availability` field is one of:
+`GET /api/v1/spindle/queues` describes each recipe's training queue. Each trainer holds up to `trainer_max_clients_per_instance` training clients, and a recipe runs at most `trainer_max_instances` trainers. New clients are placed first come, first served.
 
-- `now`: a running trainer has a free slot, so `create_model` starts without waiting.
-- `after_trainer_start`: no running trainer has room, but another trainer can start. Expect to wait for GPUs and a trainer cold start.
-- `full`: every trainer the recipe allows is in use. New clients wait until another client finishes or has been idle for `session_idle_timeout_s`.
+```json
+{"name": "qwen35_2b_lora_32k", "base_model": "Qwen/Qwen3.5-2B", "parameterization": "lora",
+ "backlog": {"count": 1, "oldest_age_s": 42.0},
+ "slots": {"used": 6, "free": 0, "per_trainer": 6},
+ "trainers": {"running": 1, "starting": 1, "max": 4}}
+```
 
-`free_slots` counts open slots on running trainers after models already waiting have been placed. `waiting_models` counts clients waiting for a slot. The response is a snapshot up to a few seconds old, so another client can take a free slot before yours is placed.
+- `backlog` counts training clients waiting for a slot, and how long the oldest has waited.
+- `slots` counts clients on running trainers and the open slots left on them.
+- `trainers` counts trainers that are running, trainers that are still booting, and the most the recipe allows.
+
+A client can start right away when `slots.free` is greater than `backlog.count`. Otherwise it waits for a trainer to boot, or for another client to finish or go idle for `session_idle_timeout_s`. The response can be a few seconds old, so another client can take a free slot first.
 
 ## Update isolation
 

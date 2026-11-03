@@ -32,8 +32,8 @@ from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
 from spindle.version import __version__, source_commit
 
-from .capacity import CapacitySnapshots, TrainerLimits, trainer_capacity
 from .deployments import DeploymentRoutes
+from .queues import QueueLimits, SharedSnapshot, describe_queues
 from .service import ControlPlane, FutureResolutionStatus
 
 ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
@@ -313,27 +313,27 @@ def create_control_plane_app(
         }
 
     trained = [d for d in definitions if getattr(d, "recipe", None) is not None]
-    trainer_limits = [
-        TrainerLimits(
+    queue_limits = [
+        QueueLimits(
             d.definition_id,
             slots_per_trainer=d.recipe.trainer_max_clients_per_instance,
             max_trainers=d.recipe.trainer_max_instances,
         )
         for d in trained
     ]
-    capacity_snapshots = CapacitySnapshots(
-        lambda: trainer_capacity(
-            control_plane.kv, control_plane.engines, trainer_limits
+    queue_snapshot = SharedSnapshot(
+        lambda now: describe_queues(
+            control_plane.kv, control_plane.engines, queue_limits, now
         ),
         lambda: control_plane.clock(),
     )
 
-    @app.get("/api/v1/spindle/capacity")
-    async def capacity():
-        observed_at, snapshot = await capacity_snapshots.get()
+    @app.get("/api/v1/spindle/queues")
+    async def queues():
+        observed_at, snapshot = await queue_snapshot.get()
         return {
             "observed_at": observed_at,
-            "deployments": [
+            "queues": [
                 {
                     "name": d.name,
                     "base_model": d.model,
