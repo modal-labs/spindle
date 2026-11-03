@@ -1,15 +1,23 @@
-"""Per-recipe training queue: models waiting for a trainer slot, and slots in use."""
+"""Per-recipe training queue: models waiting for a trainer slot, slots in use,
+and how many models were added, placed and released recently."""
 
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
+import logging
+import statistics
+from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from spindle.providers.contracts import EnginePlatform, KeyValueStore
 
+from .keys import queue_event_key
 from .records import PlacementRecord
+
+RECENT_WINDOW_S = 300.0
+QueueEvent = Literal["added", "placed", "released"]
 
 
 @dataclass(frozen=True)
@@ -40,10 +48,70 @@ class Trainers:
 
 
 @dataclass(frozen=True)
+class Wait:
+    p50: float | None
+    max: float | None
+
+
+@dataclass(frozen=True)
+class Recent:
+    window_s: float
+    added: int
+    placed: int
+    released: int
+    wait_s: Wait
+
+
+@dataclass(frozen=True)
 class QueueStats:
     backlog: Backlog
     slots: Slots
     trainers: Trainers
+    recent: Recent
+
+
+async def record_queue_event(
+    kv: KeyValueStore,
+    kind: QueueEvent,
+    model_id: str,
+    definition_id: str,
+    at: float,
+    wait_s: float | None = None,
+) -> None:
+    """Writes at most one event of each kind per model, so retries and racing
+    writers count once. Failures are logged and never raised."""
+    event = {"kind": kind, "definition_id": definition_id, "at": at}
+    if wait_s is not None:
+        event["wait_s"] = wait_s
+    try:
+        await kv.put(queue_event_key(kind, model_id), event)
+    except Exception:
+        logging.getLogger(__name__).exception("record %s event for %s", kind, model_id)
+
+
+async def prune_queue_events(kv: KeyValueStore, before: float) -> int:
+    stale = [
+        key
+        for key, event in await kv.list_items("queue_event:")
+        if event["at"] < before
+    ]
+    await asyncio.gather(*(kv.delete(key) for key in stale))
+    return len(stale)
+
+
+def _recent(events: list[dict]) -> Recent:
+    kinds = Counter(event["kind"] for event in events)
+    waits = [event["wait_s"] for event in events if event["kind"] == "placed"]
+    return Recent(
+        window_s=RECENT_WINDOW_S,
+        added=kinds["added"],
+        placed=kinds["placed"],
+        released=kinds["released"],
+        wait_s=Wait(
+            p50=statistics.median(waits) if waits else None,
+            max=max(waits) if waits else None,
+        ),
+    )
 
 
 async def describe_queues(
@@ -52,10 +120,15 @@ async def describe_queues(
     limits: list[QueueLimits],
     now: float,
 ) -> dict[str, QueueStats]:
-    items, listed = await asyncio.gather(
+    items, event_items, listed = await asyncio.gather(
         kv.list_items("placement:", "trainer_demand:"),
+        kv.list_items("queue_event:"),
         engines.list_instances(),
     )
+    events: dict[str, list[dict]] = defaultdict(list)
+    for _, event in event_items:
+        if event["at"] >= now - RECENT_WINDOW_S:
+            events[event["definition_id"]].append(event)
     placements = [
         PlacementRecord.model_validate(value)
         for key, value in items
@@ -103,6 +176,7 @@ async def describe_queues(
                 starting=by_state[name, "starting"],
                 max=limit.max_trainers,
             ),
+            recent=_recent(events[name]),
         )
     return result
 

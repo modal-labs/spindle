@@ -63,6 +63,7 @@ from .records import (
     SessionLastSeenRecord,
     SessionRecord,
 )
+from .queues import record_queue_event
 
 
 def request_id_for(model_id: str, seq_id: int) -> str:
@@ -307,13 +308,18 @@ class ControlPlane:
         )
         model = ModelRecord.model_validate(model_insert.value)
         if model_insert.created:
-            await self.kv.put(
-                trainer_demand_key(model.model_id),
-                {
-                    "model_id": model.model_id,
-                    "definition_id": definition_id,
-                    "created_at": model.created_at,
-                },
+            await asyncio.gather(
+                self.kv.put(
+                    trainer_demand_key(model.model_id),
+                    {
+                        "model_id": model.model_id,
+                        "definition_id": definition_id,
+                        "created_at": model.created_at,
+                    },
+                ),
+                record_queue_event(
+                    self.kv, "added", model.model_id, definition_id, model.created_at
+                ),
             )
             if self.reconcile_trainers is not None:
                 await self.reconcile_trainers(definition_id)
@@ -823,7 +829,9 @@ class ControlPlane:
                 await self.engines.client(instance.instance_id).unload_model(
                     model.model_id
                 )
-            await self.kv.delete(placement_key(model.model_id))
+            await self._release_placement(
+                placement.model_id, placement.engine_definition_id
+            )
         await self.kv.delete(trainer_demand_key(model.model_id))
         return model
 
@@ -1455,9 +1463,20 @@ class ControlPlane:
             placed_at=self.clock(),
             engine_boot_id=accepted_instance.boot_id,
         )
-        inserted = await self.kv.put_if_absent(
-            placement_key(model.model_id),
-            record.model_dump(mode="json"),
+        # The event key is per model, so a losing duplicate placement adds nothing.
+        inserted, _ = await asyncio.gather(
+            self.kv.put_if_absent(
+                placement_key(model.model_id),
+                record.model_dump(mode="json"),
+            ),
+            record_queue_event(
+                self.kv,
+                "placed",
+                model.model_id,
+                definition_id,
+                record.placed_at,
+                wait_s=record.placed_at - model.created_at,
+            ),
         )
         placement = PlacementRecord.model_validate(inserted.value)
         if placement.engine_instance_id != accepted_instance.instance_id:
@@ -1488,8 +1507,8 @@ class ControlPlane:
         reclaimed = []
         for model_id in model_ids:
             value = await self.kv.get(model_key(model_id))
-            if value is not None:
-                incumbent = ModelRecord.model_validate(value)
+            incumbent = None if value is None else ModelRecord.model_validate(value)
+            if incumbent is not None:
                 closed = await self.kv.get(session_closed_key(incumbent.session_id))
                 last_seen = await self.kv.get(
                     session_last_seen_key(incumbent.session_id)
@@ -1519,7 +1538,10 @@ class ControlPlane:
                     instance_id,
                 )
                 continue
-            await self.kv.delete(placement_key(model_id))
+            if incumbent is None:
+                await self.kv.delete(placement_key(model_id))
+            else:
+                await self._release_placement(model_id, incumbent.engine_definition_id)
             reclaimed.append(model_id)
         return tuple(reclaimed)
 
@@ -1726,10 +1748,20 @@ class ControlPlane:
             or instance.terminal
             or placement.engine_boot_id not in ("", instance.boot_id)
         ):
-            await self.kv.delete(placement_key(placement.model_id))
+            await self._release_placement(
+                placement.model_id, placement.engine_definition_id
+            )
             await self.kv.delete(trainer_demand_key(placement.model_id))
             raise ModelLost(placement.model_id)
         return instance
+
+    async def _release_placement(self, model_id: str, definition_id: str) -> None:
+        await asyncio.gather(
+            self.kv.delete(placement_key(model_id)),
+            record_queue_event(
+                self.kv, "released", model_id, definition_id, self.clock()
+            ),
+        )
 
     def _model_id(self, session_id: str, model_seq_id: int) -> str:
         digest = hashlib.sha256(f"{session_id}\0{model_seq_id}".encode())

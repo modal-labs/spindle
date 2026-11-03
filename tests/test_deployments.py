@@ -410,6 +410,13 @@ def test_queues_report_each_recipe():
             assert queue["backlog"] == {"count": 0, "oldest_age_s": None}
             assert queue["slots"] == {"used": 0, "free": 0, "per_trainer": 4}
             assert queue["trainers"] == {"running": 0, "starting": 0, "max": 3}
+            assert queue["recent"] == {
+                "window_s": 300.0,
+                "added": 0,
+                "placed": 0,
+                "released": 0,
+                "wait_s": {"p50": None, "max": None},
+            }
 
     asyncio.run(run())
 
