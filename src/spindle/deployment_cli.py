@@ -1,4 +1,4 @@
-"""Operator CLI for Python deployments. Only `deploy` provisions Modal resources."""
+"""Operator CLI for Python deployments. Only `deploy` provisions Modal resources; `stop` releases them."""
 
 from __future__ import annotations
 
@@ -144,7 +144,11 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
                 if deployment.parameterization == "lora"
                 else FFTPoolSpec.from_dict(record)
             )
-            if not app_is_missing(pool.app_name, environment):
+            # Pools named for another frontend (from a release before --app
+            # named them) are never routed to again; leave them to be stopped.
+            if pool.frontend == platform["frontend"] and not app_is_missing(
+                pool.app_name, environment
+            ):
                 build_rollout_app(deployment, pool, platform)[0].deploy(
                     environment_name=environment, tag=deployment_tag()
                 )
@@ -219,6 +223,50 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
             )
 
 
+# Stop order: the frontend and inference apps create pools, so they go before
+# the pools; trainers only use them.
+APP_ROLES = ("inference", "fft", "lora", "trainer")
+
+
+def deployment_apps(frontend, environment):
+    """Running apps of one deployment, in the order to stop them."""
+    command = [sys.executable, "-m", "modal", "app", "list", "--json"]
+    if environment:
+        command += ["--env", environment]
+    rows = json.loads(
+        subprocess.run(command, check=True, capture_output=True, text=True).stdout
+    )
+    prefixes = [f"{frontend}-{role}-" for role in APP_ROLES]
+
+    def rank(name):
+        if name == frontend:
+            return 0
+        return next((i for i, p in enumerate(prefixes, 1) if name.startswith(p)), None)
+
+    names = {row["description"] or "" for row in rows if row["state"] != "stopped"}
+    return sorted(
+        (name for name in names if rank(name) is not None),
+        key=lambda name: (rank(name), name),
+    )
+
+
+def stop(frontend, environment):
+    """Stop every app of the deployment, ending its runs."""
+    names = deployment_apps(frontend, environment)
+    if not names:
+        print(f"No running apps for {frontend}.")
+        return
+    for name in names:
+        command = [sys.executable, "-m", "modal", "app", "stop", "-y", name]
+        if environment:
+            command += ["--env", environment]
+        result = subprocess.run(command, capture_output=True, text=True)
+        output = (result.stdout + result.stderr).strip()
+        if result.returncode and "App is already stopped." not in output:
+            raise ValueError(f"stopping {name} failed: {output}")
+        print(f"Stopped {name}")
+
+
 def in_background(step):
     """Run `step` on a daemon thread so a failed or interrupted deploy exits promptly."""
     future = Future()
@@ -275,6 +323,11 @@ def parser():
     apply.add_argument(
         "--refresh-inference", action="append", default=[], metavar="CONFIG_NAME"
     )
+    halt = commands.add_parser(
+        "stop", help="Stop a deployment's frontend, trainers, and sampler pools"
+    )
+    halt.add_argument("--app")
+    halt.add_argument("--env")
     management = commands.add_parser("deployment").add_subparsers(
         dest="action", required=True
     )
@@ -385,6 +438,11 @@ def main(argv=None):
             )
             if chosen:
                 deploy_wizard.show_next_steps(console, chosen, frontend, environment)
+        elif args.command == "stop":
+            stop(
+                args.app or BaseConfig.platform["frontend"],
+                args.env or os.environ.get("MODAL_ENVIRONMENT"),
+            )
         elif args.command == "skills":
             install_skills(args.project_dir, args.force)
         else:

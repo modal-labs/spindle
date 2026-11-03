@@ -123,8 +123,8 @@ def test_unresponsive_frontend_names_the_app_to_stop():
     deploy_wizard.show_plan(
         console, chosen, 16_384, None, deploy_wizard.stop_command("spindle", "dev")
     )
-    assert "modal app stop spindle -e dev" in console.export_text()
-    assert deploy_wizard.stop_command("spindle", None) == "modal app stop spindle"
+    assert "spindle stop --app spindle --env dev" in console.export_text()
+    assert deploy_wizard.stop_command("spindle", None) == "spindle stop --app spindle"
 
 
 def test_setup_check_lists_every_missing_secret_with_a_fix(monkeypatch):

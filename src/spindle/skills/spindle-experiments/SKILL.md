@@ -37,7 +37,7 @@ Same config, real batch size. Compare step timing (rollout / train / publish) an
 - Monitor step time, reward, response length, publication latency, queue depth: [monitoring.md](references/monitoring.md).
 - Early-stop on sustained no-progress across comparable evidence, not one noisy point.
 - Scheduled non-blocking `save_state`; await the final save.
-- Report run/app ids, checkpoint path, early-vs-late reward, eval, step time, GPU-hours. Verify `modal app list` is clean; stop leftover `spindle-fft-...` samplers.
+- Report run/app ids, checkpoint path, early-vs-late reward, eval, step time, GPU-hours. Verify `modal app list` is clean; stop leftover `...-fft-...` samplers, or the whole deployment with `spindle stop`.
 
 ## Diagnose by symptom
 

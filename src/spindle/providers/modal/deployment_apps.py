@@ -264,7 +264,7 @@ def _warm_lora_pool(frontend: str, definition_id: str) -> None:
     """Deploy the sampler pool now that a trainer has GPUs, not while it queues."""
     try:
         modal.Function.from_name(frontend, "ensure_lora_pool").spawn(
-            LoraPoolSpec(definition_id).as_dict()
+            LoraPoolSpec(definition_id, frontend).as_dict()
         )
     except Exception:
         logging.getLogger(__name__).exception("warm LoRA pool %s", definition_id)

@@ -410,6 +410,13 @@ def test_queues_report_each_recipe():
             assert queue["backlog"] == {"count": 0, "oldest_age_s": None}
             assert queue["slots"] == {"used": 0, "free": 0, "per_trainer": 4}
             assert queue["trainers"] == {"running": 0, "starting": 0, "max": 3}
+            assert queue["recent"] == {
+                "window_s": 3600.0,
+                "added": 0,
+                "placed": 0,
+                "released": 0,
+                "wait_s": {"p50": None, "p95": None, "max": None},
+            }
 
     asyncio.run(run())
 
@@ -585,6 +592,9 @@ def test_recipe_app_names_follow_the_recipe_name():
     base = resolved()
     assert base.trainer_app_name == f"spindle-trainer-{base.name}"
     assert base.inference_app_name == f"spindle-inference-{base.name}"
+    named = resolved(recipe(platform__frontend="my-spindle"))
+    assert named.trainer_app_name == f"my-spindle-trainer-{base.name}"
+    assert named.inference_app_name == f"my-spindle-inference-{base.name}"
 
     inference = resolved(recipe(sglang_cfg__max_running_requests=24))
     assert inference.trainer_app_name == base.trainer_app_name

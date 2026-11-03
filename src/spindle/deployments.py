@@ -113,11 +113,11 @@ class DeploymentConfig(BaseModel):
 
     @property
     def trainer_app_name(self) -> str:
-        return f"spindle-trainer-{self.recipe.name}"
+        return f"{self.recipe.platform['frontend']}-trainer-{self.recipe.name}"
 
     @property
     def inference_app_name(self) -> str:
-        return f"spindle-inference-{self.recipe.name}"
+        return f"{self.recipe.platform['frontend']}-inference-{self.recipe.name}"
 
     @property
     def weights_repo(self) -> str:

@@ -170,20 +170,25 @@ One frontend serves all models through Tinker’s `base_model`. If several recip
 {"name": "qwen35_2b_lora_32k", "base_model": "Qwen/Qwen3.5-2B", "parameterization": "lora",
  "backlog": {"count": 1, "oldest_age_s": 42.0},
  "slots": {"used": 6, "free": 0, "per_trainer": 6},
- "trainers": {"running": 1, "starting": 1, "max": 4}}
+ "trainers": {"running": 1, "starting": 1, "max": 4},
+ "recent": {"window_s": 3600.0, "added": 4, "placed": 3, "released": 2,
+            "wait_s": {"p50": 12.0, "p95": 80.0, "max": 95.0}}}
 ```
 
 - `backlog` counts training clients waiting for a slot, and how long the oldest has waited.
 - `slots` counts clients on running trainers and the open slots left on them.
 - `trainers` counts trainers that are running, trainers that are still booting, and the most the recipe allows.
+- `recent` covers the last `window_s` seconds. `added` counts clients that asked for a slot, `placed` counts clients that got one, and `released` counts slots that opened up. A slot opens when a client unloads its model or its session closes or goes idle. Models lost when a trainer stops are not counted, since no slot opens for anyone else. `wait_s` gives the median, 95th percentile and longest wait of the clients placed in the window, or `null` if none were placed.
 
 A client can start right away when `slots.free` is greater than `backlog.count`. Otherwise it waits for a trainer to boot, or for another client to finish or go idle for `session_idle_timeout_s`. The response can be a few seconds old, so another client can take a free slot first.
 
+When no slot is free and no trainer is booting, `recent.released` shows how fast slots open up. For example, 4 slots released in the last hour means a slot opens about every 15 minutes. `backlog.count` shows how many other clients are waiting for those slots.
+
 ## Update isolation
 
-Trainer apps are named `spindle-trainer-{name}` and inference apps `spindle-inference-{name}`. An inference-only change reuses the trainer app. A trainer-only change reuses the inference app. Source-only upgrades use `--refresh-trainer` / `--refresh-inference`. Updating inference settings also redeploys existing pools for that recipe before publishing the new frontend configuration. An interrupted pool update can be retried with the same command. Changes to region, storage, or secrets refresh both worker apps.
+Trainer apps are named `{frontend}-trainer-{name}` and inference apps `{frontend}-inference-{name}`, where `{frontend}` is the frontend app name (`spindle` by default, or the `--app` value). An inference-only change reuses the trainer app. A trainer-only change reuses the inference app. Source-only upgrades use `--refresh-trainer` / `--refresh-inference`. Updating inference settings also redeploys existing pools for that recipe before publishing the new frontend configuration. An interrupted pool update can be retried with the same command. Changes to region, storage, or secrets refresh both worker apps.
 
-Recipe names must be unique across frontends in the same Modal environment, since worker and pool names include the recipe name. Drain jobs before removing a recipe or making incompatible model, context, or adapter changes.
+Every app a deployment creates starts with its frontend name, so two deployments with different `--app` values can share one Modal environment and the same recipe names. Drain jobs before removing a recipe or making incompatible model, context, or adapter changes.
 
 Trainers receive the frontend App ID at launch and use its shared registry for engine state and reconciliation. A startup failure pauses new starts for five minutes; the failure then expires, allowing subsequent requests and reconciliation to retry. `spindle deployment retry` clears it immediately.
 
@@ -191,6 +196,8 @@ The frontend carries the current configs and exposes them through `deployed_conf
 
 `--app`, `--env`, `--region`, secrets, and storage names are frontend/platform settings. They are not copied onto each recipe.
 
-LoRA pools are named `spindle-lora-{name}`. FFT pools retain the existing `spindle-fft-{session_digest}-latest` or `spindle-fft-{session_digest}-v{version}` names to fit Modal’s 63-character limit. The digest identifies the recipe/client pair; it is not a config revision.
+LoRA pools are named `{frontend}-lora-{name}`. FFT pools are named `{frontend}-fft-{session_digest}-latest` or `{frontend}-fft-{session_digest}-v{version}` to fit Modal’s 63-character limit. The digest identifies the recipe/client pair; it is not a config revision.
+
+`spindle stop --app my-spindle --env dev` stops the frontend and every app whose name starts with `my-spindle-trainer-`, `my-spindle-inference-`, `my-spindle-lora-`, or `my-spindle-fft-`, ending any runs on them. Deployments made with `--app` on Spindle 0.1.5 or older named their worker and pool apps `spindle-...`; stop those with `modal app stop` after upgrading.
 
 See [validation results](deployment-validation.md) for CPU coverage, live GPU checks, and their limits.

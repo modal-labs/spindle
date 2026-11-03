@@ -8,6 +8,7 @@ import httpx
 import modal
 from stitch.pools.base import Pool
 
+from .deployment import APP_NAME_ENV
 from .fft_pool import proxy_auth_headers
 from modal._utils.async_utils import synchronize_api
 
@@ -53,7 +54,9 @@ def publication_pool(definition_id: str, model_id: str) -> Pool:
         return ScopedFlashPool(route)
     from .fft_pool import FFTLatestPool
 
-    return FFTLatestPool(definition_id, model_id)
+    return FFTLatestPool(
+        definition_id, model_id, os.environ.get(APP_NAME_ENV, "spindle")
+    )
 
 
 @synchronize_api
