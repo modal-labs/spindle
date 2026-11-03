@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- `trainer_rdma = False` starts multi-node trainers without RDMA, for GPU types or regions that do not offer it. The nodes then talk over TCP, which is slower. It defaults to `True`, so existing recipes are unchanged.
+- `trainer_rdma = False` starts multi-node trainers without RDMA, for GPU types or regions that do not offer it. The nodes then talk over TCP. It defaults to `True`, so existing recipes are unchanged.
 
 ## 0.1.5 - 2026-11-02
 
