@@ -6,6 +6,8 @@ Each file in `recipes/` subclasses a bundled recipe and changes its name to star
 
 `recipes/` holds one LoRA recipe per base model, 20 in all, from Qwen3.5-2B to Nemotron-3-Ultra-550B.
 
+Each recipe runs one trainer, which holds `trainer_max_clients_per_instance` LoRA models; the next model to be created fails with `trainer capacity exhausted`. The small models that most runs share start more trainers on demand: Qwen3-8B up to 20, and Qwen3.5-2B, Qwen3.5-4B and Qwen3-4B up to 4 each. Trainers with no models stop, so the extra ones cost nothing while idle.
+
 ## Deploy
 
 Create the environment and its `spindle-api`, `spindle-proxy` and `huggingface-secret` secrets as the [README](../../README.md#secrets) describes. Then deploy all the recipes together. Every deploy must list all of them, because the argument list is the full set the frontend serves:
