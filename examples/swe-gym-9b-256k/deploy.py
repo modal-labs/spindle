@@ -61,14 +61,14 @@ def deploy_apps(recipe, *, inference_only=False):
     lookup = lookup_kwargs(environment)
     modal.Function.from_name(
         definition.trainer_app_name, "trainer", **lookup
-    ).update_autoscaler(max_containers=1)
-    modal.Server.from_name(pool.app_name, "Server", **lookup).update_autoscaler(
+    ).autoscaler.update(max_containers=1)
+    modal.Server.from_name(pool.app_name, "Server", **lookup).autoscaler.update(
         min_containers=recipe.inference_min_replicas,
         max_containers=recipe.inference_max_replicas,
     )
     modal.Function.from_name(
         recipe.platform["frontend"], "execute_sample", **lookup
-    ).update_autoscaler(min_containers=4, max_containers=32)
+    ).autoscaler.update(min_containers=4, max_containers=32)
     endpoint = modal.Function.from_name(recipe.platform["frontend"], "server", **lookup)
     return definition, pool, endpoint.get_web_url()
 

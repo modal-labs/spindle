@@ -581,15 +581,15 @@ def test_multinode_trainer_uses_cluster_launcher(builders, monkeypatch):
     row = deployment("qwen38-27b-lora-256k")
     clusters = []
 
-    def clustered(nodes, *, rdma):
-        clusters.append((nodes, rdma))
+    def clustered(*, size, rdma):
+        clusters.append((size, rdma))
 
         def decorate(fn):
             return fn
 
         return decorate
 
-    monkeypatch.setattr(modal.experimental, "clustered", clustered)
+    monkeypatch.setattr(modal, "clustered", clustered)
     app, _ = deployment_apps.build_trainer_app(row, image="test")
     settings, _ = app.functions["trainer"]
     assert clusters == [(2, True)]

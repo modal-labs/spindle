@@ -169,7 +169,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         run_trainer(saved, instance_id, platform)
 
     if recipe.trainer_nodes > 1:
-        trainer = modal.experimental.clustered(recipe.trainer_nodes, rdma=True)(trainer)
+        trainer = modal.clustered(size=recipe.trainer_nodes, rdma=True)(trainer)
     trainer = app.function(
         name="trainer",
         serialized=True,
