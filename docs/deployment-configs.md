@@ -172,13 +172,13 @@ One frontend serves all models through Tinker’s `base_model`. If several recip
  "slots": {"used": 6, "free": 0, "per_trainer": 6},
  "trainers": {"running": 1, "starting": 1, "max": 4},
  "recent": {"window_s": 3600.0, "added": 4, "placed": 3, "released": 2,
-            "wait_s": {"p50": 12.0, "max": 95.0}}}
+            "wait_s": {"p50": 12.0, "p95": 80.0, "max": 95.0}}}
 ```
 
 - `backlog` counts training clients waiting for a slot, and how long the oldest has waited.
 - `slots` counts clients on running trainers and the open slots left on them.
 - `trainers` counts trainers that are running, trainers that are still booting, and the most the recipe allows.
-- `recent` covers the last `window_s` seconds. `added` counts clients that asked for a slot, `placed` counts clients that got one, and `released` counts slots that opened up. A slot opens when a client unloads its model or its session closes or goes idle. Models lost when a trainer stops are not counted, since no slot opens for anyone else. `wait_s` is the median and longest wait of the clients placed in the window, or `null` if none were placed.
+- `recent` covers the last `window_s` seconds. `added` counts clients that asked for a slot, `placed` counts clients that got one, and `released` counts slots that opened up. A slot opens when a client unloads its model or its session closes or goes idle. Models lost when a trainer stops are not counted, since no slot opens for anyone else. `wait_s` gives the median, 95th percentile and longest wait of the clients placed in the window, or `null` if none were placed.
 
 A client can start right away when `slots.free` is greater than `backlog.count`. Otherwise it waits for a trainer to boot, or for another client to finish or go idle for `session_idle_timeout_s`. The response can be a few seconds old, so another client can take a free slot first.
 

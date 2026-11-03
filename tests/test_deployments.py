@@ -415,7 +415,7 @@ def test_queues_report_each_recipe():
                 "added": 0,
                 "placed": 0,
                 "released": 0,
-                "wait_s": {"p50": None, "max": None},
+                "wait_s": {"p50": None, "p95": None, "max": None},
             }
 
     asyncio.run(run())

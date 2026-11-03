@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import statistics
+import math
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -50,6 +50,7 @@ class Trainers:
 @dataclass(frozen=True)
 class Wait:
     p50: float | None
+    p95: float | None
     max: float | None
 
 
@@ -107,11 +108,19 @@ def _recent(events: list[dict]) -> Recent:
         added=kinds["added"],
         placed=kinds["placed"],
         released=kinds["released"],
-        wait_s=Wait(
-            p50=statistics.median(waits) if waits else None,
-            max=max(waits) if waits else None,
-        ),
+        wait_s=_wait(waits),
     )
+
+
+def _wait(waits: list[float]) -> Wait:
+    if not waits:
+        return Wait(p50=None, p95=None, max=None)
+    ordered = sorted(waits)
+
+    def nearest_rank(q: float) -> float:
+        return ordered[math.ceil(q * len(ordered)) - 1]
+
+    return Wait(p50=nearest_rank(0.5), p95=nearest_rank(0.95), max=ordered[-1])
 
 
 async def describe_queues(

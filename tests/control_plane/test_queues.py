@@ -6,6 +6,7 @@ from spindle.control_plane.keys import placement_key, trainer_demand_key
 from spindle.control_plane.queues import (
     QueueLimits,
     SharedSnapshot,
+    _wait,
     describe_queues,
     prune_queue_events,
 )
@@ -143,7 +144,11 @@ def test_recent_counts_each_transition_once():
 
         stats = await recent(plane, now=60.0)
         assert (stats.added, stats.placed, stats.released) == (3, 3, 1)
-        assert (stats.wait_s.p50, stats.wait_s.max) == (10.0, 15.0)
+        assert (stats.wait_s.p50, stats.wait_s.p95, stats.wait_s.max) == (
+            10.0,
+            15.0,
+            15.0,
+        )
 
     asyncio.run(run())
 
@@ -212,3 +217,8 @@ def test_event_write_failures_do_not_fail_requests():
         assert (await recent(plane, now=2.0)).added == 0
 
     asyncio.run(run())
+
+
+def test_wait_percentiles_use_observed_waits():
+    wait = _wait([float(seconds) for seconds in range(20, 0, -1)])
+    assert (wait.p50, wait.p95, wait.max) == (10.0, 19.0, 20.0)
