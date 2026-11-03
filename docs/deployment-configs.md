@@ -181,9 +181,9 @@ A client can start right away when `slots.free` is greater than `backlog.count`.
 
 ## Update isolation
 
-Trainer apps are named `spindle-trainer-{name}` and inference apps `spindle-inference-{name}`. An inference-only change reuses the trainer app. A trainer-only change reuses the inference app. Source-only upgrades use `--refresh-trainer` / `--refresh-inference`. Updating inference settings also redeploys existing pools for that recipe before publishing the new frontend configuration. An interrupted pool update can be retried with the same command. Changes to region, storage, or secrets refresh both worker apps.
+Trainer apps are named `{frontend}-trainer-{name}` and inference apps `{frontend}-inference-{name}`, where `{frontend}` is the frontend app name (`spindle` by default, or the `--app` value). An inference-only change reuses the trainer app. A trainer-only change reuses the inference app. Source-only upgrades use `--refresh-trainer` / `--refresh-inference`. Updating inference settings also redeploys existing pools for that recipe before publishing the new frontend configuration. An interrupted pool update can be retried with the same command. Changes to region, storage, or secrets refresh both worker apps.
 
-Recipe names must be unique across frontends in the same Modal environment, since worker and pool names include the recipe name. Drain jobs before removing a recipe or making incompatible model, context, or adapter changes.
+Every app a deployment creates starts with its frontend name, so two deployments with different `--app` values can share one Modal environment and the same recipe names. Drain jobs before removing a recipe or making incompatible model, context, or adapter changes.
 
 Trainers receive the frontend App ID at launch and use its shared registry for engine state and reconciliation. A startup failure pauses new starts for five minutes; the failure then expires, allowing subsequent requests and reconciliation to retry. `spindle deployment retry` clears it immediately.
 
@@ -191,6 +191,8 @@ The frontend carries the current configs and exposes them through `deployed_conf
 
 `--app`, `--env`, `--region`, secrets, and storage names are frontend/platform settings. They are not copied onto each recipe.
 
-LoRA pools are named `spindle-lora-{name}`. FFT pools retain the existing `spindle-fft-{session_digest}-latest` or `spindle-fft-{session_digest}-v{version}` names to fit Modal’s 63-character limit. The digest identifies the recipe/client pair; it is not a config revision.
+LoRA pools are named `{frontend}-lora-{name}`. FFT pools are named `{frontend}-fft-{session_digest}-latest` or `{frontend}-fft-{session_digest}-v{version}` to fit Modal’s 63-character limit. The digest identifies the recipe/client pair; it is not a config revision.
+
+`spindle stop --app my-spindle --env dev` stops the frontend and every app whose name starts with `my-spindle-trainer-`, `my-spindle-inference-`, `my-spindle-lora-`, or `my-spindle-fft-`, ending any runs on them. Deployments made with `--app` on Spindle 0.1.5 or older named their worker and pool apps `spindle-...`; stop those with `modal app stop` after upgrading.
 
 See [validation results](deployment-validation.md) for CPU coverage, live GPU checks, and their limits.

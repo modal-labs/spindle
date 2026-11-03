@@ -26,7 +26,7 @@ uv run modal app logs spindle-trainer-<config> \
 
 ## Modal side
 
-`modal app list`/`modal app logs` + GPU metrics; apps tagged `_modal_source=spindle`, `spindle_role`. Leftover `spindle-fft-...` samplers bill while warm; frontend stop does not stop them.
+`modal app list`/`modal app logs` + GPU metrics; apps tagged `_modal_source=spindle`, `spindle_role`. Leftover `...-fft-...` samplers bill while warm; `modal app stop` on the frontend does not stop them, `spindle stop` does.
 
 ## Cadence
 

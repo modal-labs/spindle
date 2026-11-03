@@ -1,4 +1,4 @@
-"""Operator CLI for Python deployments. Only `deploy` provisions Modal resources."""
+"""Operator CLI for Python deployments. Only `deploy` provisions Modal resources; `stop` releases them."""
 
 from __future__ import annotations
 
@@ -219,6 +219,42 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
             )
 
 
+APP_ROLES = ("trainer", "inference", "lora", "fft")
+
+
+def deployment_apps(frontend, environment):
+    """Running apps of one deployment: its frontend, workers, and sampler pools."""
+    command = [sys.executable, "-m", "modal", "app", "list", "--json"]
+    if environment:
+        command += ["--env", environment]
+    rows = json.loads(
+        subprocess.run(command, check=True, capture_output=True, text=True).stdout
+    )
+    prefixes = tuple(f"{frontend}-{role}-" for role in APP_ROLES)
+    names = [
+        row["description"]
+        for row in rows
+        if row["state"] != "stopped"
+        and (row["description"] == frontend or row["description"].startswith(prefixes))
+    ]
+    # The frontend first, so its cleaner cannot replace pools while they stop.
+    return sorted(names, key=lambda name: (name != frontend, name))
+
+
+def stop(frontend, environment):
+    """Stop every app of the deployment, ending its runs."""
+    names = deployment_apps(frontend, environment)
+    if not names:
+        print(f"No running apps for {frontend}.")
+        return
+    for name in names:
+        command = [sys.executable, "-m", "modal", "app", "stop", "-y", name]
+        if environment:
+            command += ["--env", environment]
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        print(f"Stopped {name}")
+
+
 def in_background(step):
     """Run `step` on a daemon thread so a failed or interrupted deploy exits promptly."""
     future = Future()
@@ -275,6 +311,11 @@ def parser():
     apply.add_argument(
         "--refresh-inference", action="append", default=[], metavar="CONFIG_NAME"
     )
+    halt = commands.add_parser(
+        "stop", help="Stop a deployment's frontend, trainers, and sampler pools"
+    )
+    halt.add_argument("--app")
+    halt.add_argument("--env")
     management = commands.add_parser("deployment").add_subparsers(
         dest="action", required=True
     )
@@ -385,6 +426,11 @@ def main(argv=None):
             )
             if chosen:
                 deploy_wizard.show_next_steps(console, chosen, frontend, environment)
+        elif args.command == "stop":
+            stop(
+                args.app or BaseConfig.platform["frontend"],
+                args.env or os.environ.get("MODAL_ENVIRONMENT"),
+            )
         elif args.command == "skills":
             install_skills(args.project_dir, args.force)
         else:

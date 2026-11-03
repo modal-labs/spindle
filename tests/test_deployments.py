@@ -585,6 +585,10 @@ def test_recipe_app_names_follow_the_recipe_name():
     base = resolved()
     assert base.trainer_app_name == f"spindle-trainer-{base.name}"
     assert base.inference_app_name == f"spindle-inference-{base.name}"
+    base.recipe.platform["frontend"] = "my-spindle"
+    assert base.trainer_app_name == f"my-spindle-trainer-{base.name}"
+    assert base.inference_app_name == f"my-spindle-inference-{base.name}"
+    base.recipe.platform["frontend"] = "spindle"
 
     inference = resolved(recipe(sglang_cfg__max_running_requests=24))
     assert inference.trainer_app_name == base.trainer_app_name

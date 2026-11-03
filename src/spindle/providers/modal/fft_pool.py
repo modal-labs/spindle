@@ -44,10 +44,11 @@ class FFTPoolSpec:
     min_containers: int | None = None
     max_containers: int | None = None
     scaledown_window: int | None = None
+    frontend: str = "spindle"
 
     @classmethod
-    def base(cls, definition_id: str) -> FFTPoolSpec:
-        return cls(definition_id, "base", False, 0)
+    def base(cls, definition_id: str, frontend: str = "spindle") -> FFTPoolSpec:
+        return cls(definition_id, "base", False, 0, frontend=frontend)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> FFTPoolSpec:
@@ -59,7 +60,7 @@ class FFTPoolSpec:
             f"{self.definition_id}\0{self.model_id}".encode()
         ).hexdigest()[:16]
         suffix = "latest" if self.latest else f"v{self.version}"
-        return f"spindle-fft-{digest}-{suffix}"
+        return f"{self.frontend}-fft-{digest}-{suffix}"
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -78,9 +79,11 @@ class FFTPoolSpec:
 
 
 class FFTLatestPool(ModalFlashPool):
-    def __init__(self, definition_id: str, model_id: str) -> None:
+    def __init__(
+        self, definition_id: str, model_id: str, frontend: str = "spindle"
+    ) -> None:
         super().__init__(
-            FFTPoolSpec(definition_id, model_id, True, 0).app_name,
+            FFTPoolSpec(definition_id, model_id, True, 0, frontend=frontend).app_name,
             "Server",
         )
 

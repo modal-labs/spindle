@@ -469,7 +469,7 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
     if task["model_id"] is None:
         await _ensure_weights_ready(definition_id)
     if parameterization == "lora":
-        spec = LoraPoolSpec(definition_id)
+        spec = LoraPoolSpec(definition_id, APP_NAME)
         gateway = await _ready_lora_pool(spec)
         router = None
         if definition.recipe.inference_lora_routing == "cache_wait":
@@ -508,13 +508,14 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
             stats=stats,
         )
     spec = (
-        FFTPoolSpec.base(definition_id)
+        FFTPoolSpec.base(definition_id, APP_NAME)
         if task["model_id"] is None
         else FFTPoolSpec(
             definition_id=definition_id,
             model_id=str(task["model_id"]),
             latest=bool(task.get("latest")),
             version=int(task["publish_version"]),
+            frontend=APP_NAME,
         )
     )
     # ensure_pool skips the base pool while weights download; deploy it here if
@@ -542,6 +543,7 @@ def _latest_pool(model) -> FFTPoolSpec:
         model.model_id,
         True,
         0,
+        frontend=APP_NAME,
         **(model.spec.get("rollout") or {}),
     )
 
@@ -694,7 +696,7 @@ def _plane():
         elif await _trainer_booted(kv, model.engine_definition_id):
             # Otherwise the trainer deploys the pool once it boots.
             await ensure_lora_pool.spawn.aio(
-                LoraPoolSpec(model.engine_definition_id).as_dict()
+                LoraPoolSpec(model.engine_definition_id, APP_NAME).as_dict()
             )
 
     async def ensure_pool(session) -> None:
@@ -708,10 +710,10 @@ def _plane():
         ):
             return
         if parameterization == "lora":
-            await _ready_lora_pool(LoraPoolSpec(definition_id))
+            await _ready_lora_pool(LoraPoolSpec(definition_id, APP_NAME))
             return
         if session.model_id is None:
-            pool = FFTPoolSpec.base(definition_id)
+            pool = FFTPoolSpec.base(definition_id, APP_NAME)
         elif session.publish_version is None:
             return
         else:
@@ -720,6 +722,7 @@ def _plane():
                 model_id=session.model_id,
                 latest=session.latest,
                 version=session.publish_version,
+                frontend=APP_NAME,
             )
         registry = fft_pool_kv()
         key = f"fft_pool:{pool.app_name}"
@@ -808,6 +811,7 @@ async def _cleanup_fft_pools() -> tuple[str, ...]:
             model.model_id,
             True,
             0,
+            frontend=APP_NAME,
         ).app_name
         for _, value in await shared_kv().list_items("model:")
         for model in (ModelRecord.model_validate(value),)
@@ -852,7 +856,7 @@ async def _cleanup_fft_pools() -> tuple[str, ...]:
 async def _cleanup_lora_pools() -> tuple[str, ...]:
     registry = shared_kv()
     active = {
-        LoraPoolSpec(model.engine_definition_id).app_name
+        LoraPoolSpec(model.engine_definition_id, APP_NAME).app_name
         for _, value in await registry.list_items("model:")
         for model in (ModelRecord.model_validate(value),)
         if parameterization_for(model.engine_definition_id) == "lora"

@@ -38,7 +38,7 @@ Fixed a bundled config? See the `spindle-dev` skill's upstream-config.md.
 
 ## Update isolation
 
-- Apps: `spindle-trainer-{name}`, `spindle-inference-{name}`; pools `spindle-lora-{name}`, `spindle-fft-{digest}-*`. Recipe names must be unique per Modal environment.
+- Apps: `{frontend}-trainer-{name}`, `{frontend}-inference-{name}`; pools `{frontend}-lora-{name}`, `{frontend}-fft-{digest}-*`, where `{frontend}` is `spindle` or the `--app` value. Recipe names must be unique per frontend.
 - Inference-only change reuses the trainer app and vice versa. `--refresh-trainer`/`--refresh-inference` for source-only upgrades.
 - Inference changes redeploy existing pools before the frontend publishes; an interrupted update retries with the same command. Region/storage/secret changes refresh both apps.
 - Drain jobs before removing a recipe or changing model/context/adapter incompatibly.
@@ -46,4 +46,4 @@ Fixed a bundled config? See the `spindle-dev` skill's upstream-config.md.
 
 ## Teardown
 
-Stopped heartbeats trigger a periodic cleaner that reclaims idle models and latest pools (`modal app list` to check). Manual: stop `spindle-fft-...` samplers first, then the frontend with `modal app stop`; stopping the frontend does not stop samplers.
+Stopped heartbeats trigger a periodic cleaner that reclaims idle models and latest pools (`modal app list` to check). Tear down: `spindle stop --app <frontend> --env <env>` stops the frontend, workers, and samplers; `modal app stop <frontend>` alone leaves samplers running.

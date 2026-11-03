@@ -502,3 +502,58 @@ def test_conflicting_platforms_fail_before_deployment(deployed):
     with pytest.raises(ValueError, match="share platform settings"):
         cli.deploy([first, second])
     assert deployed.calls == []
+
+
+def test_app_flag_names_every_app_after_the_frontend(deployed):
+    cli.main(["deploy", "qwen35-9b-lora-16k", "--app", "my-spindle", "--env", "dev"])
+    assert deployed.apps == {
+        "my-spindle-trainer-qwen35-9b-lora-16k",
+        "my-spindle-inference-qwen35-9b-lora-16k",
+    }
+    assert deployed.env["SPINDLE_APP_NAME"] == "my-spindle"
+    assert deployed.images == [("my-spindle", "dev")]
+
+
+def test_stop_stops_the_frontend_then_its_apps(monkeypatch, capsys):
+    listed = [
+        ("my-spindle-lora-qwen35-9b-lora-16k", "deployed"),
+        ("my-spindle-trainer-qwen35-9b-lora-16k", "deployed"),
+        ("my-spindle-trainer-qwen3-8b-lora-32k", "stopped"),
+        ("my-spindle-inference-qwen35-9b-lora-16k", "deployed"),
+        ("my-spindle-fft-0123456789abcdef-latest", "deployed"),
+        ("my-spindle", "deployed"),
+        ("my-spindle-2", "deployed"),
+        ("spindle-trainer-qwen35-9b-lora-16k", "deployed"),
+    ]
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command[3:])
+        if command[3:5] == ["app", "list"]:
+            rows = [{"description": name, "state": state} for name, state in listed]
+            return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    cli.main(["stop", "--app", "my-spindle", "--env", "dev"])
+    assert calls == [
+        ["app", "list", "--json", "--env", "dev"],
+        ["app", "stop", "-y", "my-spindle", "--env", "dev"],
+        ["app", "stop", "-y", "my-spindle-fft-0123456789abcdef-latest", "--env", "dev"],
+        [
+            "app",
+            "stop",
+            "-y",
+            "my-spindle-inference-qwen35-9b-lora-16k",
+            "--env",
+            "dev",
+        ],
+        ["app", "stop", "-y", "my-spindle-lora-qwen35-9b-lora-16k", "--env", "dev"],
+        ["app", "stop", "-y", "my-spindle-trainer-qwen35-9b-lora-16k", "--env", "dev"],
+    ]
+    assert capsys.readouterr().out.count("Stopped ") == 5
+    calls.clear()
+    listed[:] = [("my-spindle", "stopped")]
+    cli.main(["stop", "--app", "my-spindle"])
+    assert calls == [["app", "list", "--json"]]
+    assert "No running apps for my-spindle" in capsys.readouterr().out

@@ -346,7 +346,9 @@ def deploy_command(chosen: list[Preset]) -> str:
 
 
 def stop_command(frontend: str, environment: str | None) -> str:
-    return f"modal app stop {frontend}" + (f" -e {environment}" if environment else "")
+    return f"spindle stop --app {frontend}" + (
+        f" --env {environment}" if environment else ""
+    )
 
 
 def show_plan(
