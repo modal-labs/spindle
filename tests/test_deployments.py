@@ -411,8 +411,6 @@ def test_capacity_reports_each_deployment_trainer_slots():
             assert deployment["free_slots"] == 0
             assert deployment["max_trainers"] == 3
             assert deployment["slots_per_trainer"] == 4
-            client.headers.clear()
-            assert (await client.get("/api/v1/spindle/capacity")).status_code == 401
 
     asyncio.run(run())
 

@@ -168,9 +168,9 @@ One frontend serves all models through Tinker’s `base_model`. If several recip
 
 - `now`: a running trainer has a free slot, so `create_model` starts without waiting.
 - `after_trainer_start`: no running trainer has room, but another trainer can start. Expect to wait for GPUs and a trainer cold start.
-- `full`: every trainer the recipe allows is in use. New clients wait until another client finishes.
+- `full`: every trainer the recipe allows is in use. New clients wait until another client finishes or has been idle for `session_idle_timeout_s`.
 
-`free_slots` counts open slots on running trainers after models already waiting have been placed. `waiting_models` counts clients waiting for a slot. The response is a snapshot, so another client can take a free slot before yours is placed.
+`free_slots` counts open slots on running trainers after models already waiting have been placed. `waiting_models` counts clients waiting for a slot. The response is a snapshot up to a few seconds old, so another client can take a free slot before yours is placed.
 
 ## Update isolation
 

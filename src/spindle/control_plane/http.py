@@ -32,7 +32,7 @@ from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
 from spindle.version import __version__, source_commit
 
-from .capacity import TrainerLimits, trainer_capacity
+from .capacity import CapacitySnapshots, TrainerLimits, trainer_capacity
 from .deployments import DeploymentRoutes
 from .service import ControlPlane, FutureResolutionStatus
 
@@ -312,35 +312,35 @@ def create_control_plane_app(
             ]
         }
 
+    trained = [d for d in definitions if getattr(d, "recipe", None) is not None]
+    trainer_limits = [
+        TrainerLimits(
+            d.definition_id,
+            slots_per_trainer=d.recipe.trainer_max_clients_per_instance,
+            max_trainers=d.recipe.trainer_max_instances,
+        )
+        for d in trained
+    ]
+    capacity_snapshots = CapacitySnapshots(
+        lambda: trainer_capacity(
+            control_plane.kv, control_plane.engines, trainer_limits
+        ),
+        lambda: control_plane.clock(),
+    )
+
     @app.get("/api/v1/spindle/capacity")
     async def capacity():
-        recipes = {
-            d.definition_id: (d, d.recipe)
-            for d in definitions
-            if getattr(d, "recipe", None) is not None
-        }
-        snapshot = await trainer_capacity(
-            control_plane.kv,
-            control_plane.engines,
-            [
-                TrainerLimits(
-                    definition_id,
-                    slots_per_trainer=recipe.trainer_max_clients_per_instance,
-                    max_trainers=recipe.trainer_max_instances,
-                )
-                for definition_id, (_, recipe) in recipes.items()
-            ],
-        )
+        observed_at, snapshot = await capacity_snapshots.get()
         return {
-            "observed_at": control_plane.clock(),
+            "observed_at": observed_at,
             "deployments": [
                 {
                     "name": d.name,
                     "base_model": d.model,
                     "parameterization": d.parameterization,
-                    **asdict(snapshot[definition_id]),
+                    **asdict(snapshot[d.definition_id]),
                 }
-                for definition_id, (d, _) in recipes.items()
+                for d in trained
             ],
         }
 
