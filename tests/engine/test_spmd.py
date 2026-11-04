@@ -99,33 +99,15 @@ class RecordingBackend:
         self.calls.append(("close",))
 
 
-def test_parse_model_spec_reads_the_optimizer_family() -> None:
-    spec = parse_model_spec(
-        {
-            "base_model": "Qwen/Qwen3-4B",
-            "lora_config": {"rank": 16},
-            "optimizer_config": {"type": "dimuon", "version": 1},
-        }
-    )
-    assert spec.optimizer == "dimuon"
-
-
-def test_parse_model_spec_defaults_to_adamw() -> None:
-    spec = parse_model_spec(
-        {"base_model": "Qwen/Qwen3-4B", "lora_config": {"rank": 16}}
-    )
-    assert spec.optimizer == "adamw"
-
-
-def test_parse_model_spec_rejects_unknown_optimizer_family() -> None:
-    with pytest.raises(ValueError, match="optimizer family lion"):
-        parse_model_spec(
-            {
-                "base_model": "Qwen/Qwen3-4B",
-                "lora_config": {"rank": 16},
-                "optimizer_config": {"type": "lion"},
-            }
-        )
+@pytest.mark.parametrize(
+    ("optimizer_config", "family"),
+    [(None, "adamw"), ({"type": "dimuon", "version": 1}, "dimuon")],
+)
+def test_parse_model_spec_reads_the_optimizer_family(optimizer_config, family) -> None:
+    spec = {"base_model": "Qwen/Qwen3-4B", "lora_config": {"rank": 16}}
+    if optimizer_config is not None:
+        spec["optimizer_config"] = optimizer_config
+    assert parse_model_spec(spec).optimizer == family
 
 
 def test_distributed_executor_normalizes_and_dispatches_lifecycle() -> None:

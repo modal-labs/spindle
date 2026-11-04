@@ -167,7 +167,6 @@ def parse_operation_payload(
 
 
 def parse_optimizer_params(raw: Mapping[str, Any]) -> AdamParams | DimuonParams:
-    """Parses optim_step hyperparameters from ``adam_params`` or a Dimuon ``optimizer_params``."""
     adam_params = raw.get("adam_params")
     optimizer_params = raw.get("optimizer_params")
     if adam_params is not None and optimizer_params is not None:

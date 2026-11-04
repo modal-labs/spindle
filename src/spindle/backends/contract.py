@@ -28,13 +28,13 @@ OPTIMIZER_FAMILIES: tuple[OptimizerFamily, ...] = ("adamw", "dimuon")
 
 
 class DimuonParams(BaseModel):
-    """Per-step hyperparameters of the Dimuon optimizer, as Tinker sends them in optimizer_params."""
+    """Mirrors tinker.types.DimuonParams (Tinker SDK 0.33+)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     type: Literal["dimuon"] = "dimuon"
     learning_rate: float = Field(ge=0)
-    grad_clip_norm: float = Field(default=0.0, ge=0)
+    grad_clip_norm: float = 0.0
     beta1: float = Field(default=0.9, ge=0, lt=1)
 
 

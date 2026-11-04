@@ -156,6 +156,49 @@ def test_upstream_error_result_invalidates_runtime():
         runtime._run(error())
 
 
+class _BridgeBeforeSlotOptimizers:
+    def __init__(self):
+        self.loaded = []
+
+    async def load_slot(self, slot, rank, alpha, ckpt_path=None, load_optimizer=True):
+        self.loaded.append("adam")
+
+
+class _BridgeWithSlotOptimizers(_BridgeBeforeSlotOptimizers):
+    async def load_slot(
+        self, slot, rank, alpha, ckpt_path=None, load_optimizer=True, optimizer="adam"
+    ):
+        self.loaded.append(optimizer)
+
+
+@pytest.mark.parametrize(
+    ("bridge", "optimizer", "loaded"),
+    [
+        (_BridgeBeforeSlotOptimizers, "adamw", ["adam"]),
+        (_BridgeBeforeSlotOptimizers, "dimuon", None),
+        (_BridgeWithSlotOptimizers, "adamw", ["adam"]),
+        (_BridgeWithSlotOptimizers, "dimuon", ["dimuon"]),
+    ],
+)
+def test_load_slot_sends_the_optimizer_only_to_miles_that_takes_it(
+    bridge, optimizer, loaded
+):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    runtime.revision = "abc"
+    runtime._bridge = bridge()
+    if loaded is None:
+        with pytest.raises(ValueError, match="does not support the dimuon"):
+            runtime.load_slot(0, 8, 32.0, optimizer=optimizer)
+        assert runtime._failure is None
+        assert runtime._bridge.loaded == []
+    else:
+        runtime.load_slot(0, 8, 32.0, optimizer=optimizer)
+        assert runtime._bridge.loaded == loaded
+
+
 @pytest.mark.parametrize("failed_rank", [0, 1])
 def test_weights_only_worker_error_invalidates_runtime_before_capture(
     tmp_path, failed_rank

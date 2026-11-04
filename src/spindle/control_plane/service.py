@@ -482,6 +482,8 @@ class ControlPlane:
         definition_id = metadata["engine_definition_id"]
         parameterization = metadata["parameterization"]
         lora_config = metadata["lora_config"]
+        if family == "dimuon" and parameterization.get("type") != "lora":
+            raise ValueError("dimuon requires lora parameterization")
         if base_model is not None and base_model != saved_base_model:
             raise ValueError("base_model does not match checkpoint")
         if definition_ids is not None and definition_id not in definition_ids:

@@ -108,12 +108,12 @@ class MilesRuntime:
         restore_optimizer: bool = True,
         optimizer: OptimizerFamily = "adamw",
     ) -> None:
-        """Raises BackendFailed for a non-AdamW optimizer on a Miles revision without per-slot optimizers."""
-        # AdamW slots omit the argument so they keep loading on older Miles revisions.
+        # AdamW omits the argument so older Miles revisions keep working. ValueError,
+        # not BackendFailed: nothing has run yet, so the trainer must not be fenced.
         optimizer_kwargs = {}
         if optimizer != "adamw":
             if "optimizer" not in inspect.signature(self._bridge.load_slot).parameters:
-                raise BackendFailed(
+                raise ValueError(
                     f"Miles revision {self.revision} does not support the {optimizer} optimizer"
                 )
             optimizer_kwargs["optimizer"] = optimizer

@@ -991,12 +991,19 @@ def test_hf_targets_match_tinker_training_flags(targets, expected):
     assert lora_target_flags(targets) == expected
 
 
-def test_dimuon_model_loads_a_dimuon_slot(tmp_path):
-    runtime = FakeMilesRuntime()
-    backend = _backend(tmp_path, runtime)
-    backend.accept_model("model-a", _dimuon_spec())
-    assert runtime.calls[-1] == ("load_slot", 0, 8, 32.0, None, True)
-    assert runtime.slot_optimizers[0] == "dimuon"
+def test_unsupported_optimizer_frees_the_slot(tmp_path):
+    class OldMilesRuntime(FakeMilesRuntime):
+        def load_slot(self, slot, rank, alpha, *, optimizer="adamw", **kwargs):
+            if optimizer != "adamw":
+                raise ValueError("does not support the dimuon optimizer")
+            super().load_slot(slot, rank, alpha, optimizer=optimizer, **kwargs)
+
+    backend = _backend(tmp_path, OldMilesRuntime())
+    with pytest.raises(ValueError, match="dimuon"):
+        backend.accept_model("model-a", _dimuon_spec())
+    assert "model-a" not in backend.jobs
+    backend.accept_model("model-a", _spec())
+    assert backend.job_to_slot == {"model-a": 0}
 
 
 def test_dimuon_optim_step_sends_dimuon_params_to_the_slot(tmp_path):
@@ -1018,20 +1025,19 @@ def test_dimuon_optim_step_sends_dimuon_params_to_the_slot(tmp_path):
     )
 
 
-def test_adam_params_are_rejected_for_a_dimuon_model(tmp_path):
+@pytest.mark.parametrize(
+    ("spec", "params", "message"),
+    [
+        (_dimuon_spec(), AdamParams(learning_rate=1e-4), "uses the dimuon optimizer"),
+        (_spec(), DimuonParams(learning_rate=1e-2), "uses the adamw optimizer"),
+    ],
+)
+def test_optim_step_rejects_another_familys_params(tmp_path, spec, params, message):
     backend = _backend(tmp_path)
-    backend.accept_model("model-a", _dimuon_spec())
+    backend.accept_model("model-a", spec)
     backend.jobs["model-a"].accumulating = True
-    with pytest.raises(ValueError, match="uses the dimuon optimizer"):
-        backend.optim_step(("model-a",), AdamParams(learning_rate=1e-4))
-
-
-def test_dimuon_params_are_rejected_for_an_adamw_model(tmp_path):
-    backend = _backend(tmp_path)
-    backend.accept_model("model-a", _spec())
-    backend.jobs["model-a"].accumulating = True
-    with pytest.raises(ValueError, match="uses the adamw optimizer"):
-        backend.optim_step(("model-a",), DimuonParams(learning_rate=1e-2))
+    with pytest.raises(ValueError, match=message):
+        backend.optim_step(("model-a",), params)
 
 
 def test_model_cannot_be_respecified_with_another_optimizer(tmp_path):
@@ -1041,20 +1047,11 @@ def test_model_cannot_be_respecified_with_another_optimizer(tmp_path):
         backend.accept_model("model-a", _dimuon_spec())
 
 
-def test_checkpoint_records_the_optimizer_family(tmp_path):
-    backend = _backend(tmp_path)
-    backend.accept_model("model-a", _dimuon_spec())
-    backend.capture_checkpoint(
-        "model-a", "capture-a", destination="step-1", include_optimizer=True
-    )
-    uri = Path(backend.persist_checkpoint("capture-a", "step-1"))
-    assert json.loads((uri / "metadata.json").read_text())["optimizer"] == "dimuon"
-
-
-def test_dimuon_checkpoint_restore_reloads_a_dimuon_slot(tmp_path):
+def test_dimuon_model_loads_and_restores_a_dimuon_slot(tmp_path):
     runtime = FakeMilesRuntime()
     backend = _backend(tmp_path, runtime)
     backend.accept_model("model-a", _dimuon_spec())
+    assert runtime.slot_optimizers == {0: "dimuon"}
     backend.capture_checkpoint(
         "model-a", "capture-a", destination="step-1", include_optimizer=True
     )
