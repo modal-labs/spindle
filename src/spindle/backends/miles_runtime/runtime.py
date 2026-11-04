@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from spindle.backends.contract import OptimizerFamily
 from spindle.backends.miles_arguments import defer_config_overrides
 from spindle.backends.miles_config import MilesBackendConfig
 from spindle.errors import BackendFailed
@@ -105,7 +106,17 @@ class MilesRuntime:
         *,
         checkpoint: str | None = None,
         restore_optimizer: bool = True,
+        optimizer: OptimizerFamily = "adamw",
     ) -> None:
+        """Raises BackendFailed for a non-AdamW optimizer on a Miles revision without per-slot optimizers."""
+        # AdamW slots omit the argument so they keep loading on older Miles revisions.
+        optimizer_kwargs = {}
+        if optimizer != "adamw":
+            if "optimizer" not in inspect.signature(self._bridge.load_slot).parameters:
+                raise BackendFailed(
+                    f"Miles revision {self.revision} does not support the {optimizer} optimizer"
+                )
+            optimizer_kwargs["optimizer"] = optimizer
         self._run(
             self._bridge.load_slot(
                 slot,
@@ -113,34 +124,7 @@ class MilesRuntime:
                 alpha,
                 ckpt_path=checkpoint,
                 load_optimizer=restore_optimizer,
-            )
-        )
-
-    def load_dimuon_slot(
-        self,
-        slot: int,
-        rank: int,
-        alpha: float,
-        *,
-        checkpoint: str | None = None,
-        restore_optimizer: bool = True,
-    ) -> None:
-        """Loads a slot whose per-slot Miles optimizer is Dimuon.
-
-        Raises BackendFailed when the deployed Miles revision has no per-slot optimizer families.
-        """
-        if "optimizer" not in inspect.signature(self._bridge.load_slot).parameters:
-            raise BackendFailed(
-                f"Miles revision {self.revision} does not support the dimuon optimizer"
-            )
-        self._run(
-            self._bridge.load_slot(
-                slot,
-                rank,
-                alpha,
-                ckpt_path=checkpoint,
-                load_optimizer=restore_optimizer,
-                optimizer="dimuon",
+                **optimizer_kwargs,
             )
         )
 

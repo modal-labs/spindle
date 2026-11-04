@@ -159,13 +159,11 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
         alpha: float,
         ckpt_path: str | None = None,
         load_optimizer: bool = True,
-        optimizer: str = "adam",
+        optimizer: str | None = None,
     ):
         if ckpt_path:
             _sync_checkpoint_volume("reload")
-        # Forward the optimizer family only for non-Adam slots so Miles revisions
-        # without per-slot optimizer families keep loading Adam slots.
-        optimizer_kwargs = {} if optimizer == "adam" else {"optimizer": optimizer}
+        optimizer_kwargs = {} if optimizer is None else {"optimizer": optimizer}
         result = super().load_slot(
             slot,
             rank,

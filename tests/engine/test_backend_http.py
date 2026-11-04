@@ -173,18 +173,19 @@ def test_dimuon_params_survive_serialization() -> None:
     assert parse_operation_payload(OperationKind.OPTIM_STEP, serialized) == params
 
 
-def test_dimuon_params_reject_beta1_of_one() -> None:
+@pytest.mark.parametrize(
+    ("name", "value"),
+    (
+        ("learning_rate", -1.0),
+        ("grad_clip_norm", -1.0),
+        ("grad_clip_norm", float("inf")),
+        ("beta1", 1.0),
+    ),
+)
+def test_invalid_dimuon_params_are_rejected(name, value) -> None:
+    params = {"type": "dimuon", "learning_rate": 1e-2, name: value}
     with pytest.raises(ValueError):
-        parse_operation_payload(
-            OperationKind.OPTIM_STEP,
-            {
-                "optimizer_params": {
-                    "type": "dimuon",
-                    "learning_rate": 1e-2,
-                    "beta1": 1.0,
-                }
-            },
-        )
+        parse_operation_payload(OperationKind.OPTIM_STEP, {"optimizer_params": params})
 
 
 @pytest.mark.parametrize(

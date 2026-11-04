@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
 
+from spindle.backends.contract import checkpoint_optimizer, optimizer_family
 from spindle.encoding import fingerprint
 from spindle.engine.api import EngineApi, FutureStatus
 from spindle.errors import (
@@ -462,9 +463,20 @@ class ControlPlane:
         base_model: str | None,
         user_metadata: dict[str, object] | None,
         optimizer: bool,
+        optimizer_config: Mapping[str, object] | None = None,
         definition_ids: Collection[str] | None = None,
     ) -> ModelCreation:
+        """Restoring optimizer state keeps the checkpoint's optimizer family. A
+        weights-only load uses ``optimizer_config``, which defaults to AdamW."""
         metadata = await self.checkpoint_metadata(path)
+        saved_optimizer = checkpoint_optimizer(metadata)
+        family = optimizer_family(optimizer_config)
+        if optimizer and optimizer_config is not None and family != saved_optimizer:
+            raise ValueError(
+                f"optimizer_config {family} does not match the checkpoint's {saved_optimizer} state"
+            )
+        if optimizer:
+            family = saved_optimizer
         path = self.resolve_checkpoint_path(path)
         saved_base_model = metadata["base_model"]
         definition_id = metadata["engine_definition_id"]
@@ -482,6 +494,7 @@ class ControlPlane:
                 "base_model": saved_base_model,
                 "lora_config": dict(lora_config) if lora_config is not None else None,
                 "parameterization": dict(parameterization),
+                "optimizer_config": {"type": family},
                 "user_metadata": user_metadata,
                 "checkpoint": {
                     "uri": path,

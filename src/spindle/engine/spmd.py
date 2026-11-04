@@ -14,8 +14,8 @@ from tinker import AdamParams, ForwardBackwardOutput
 from tinker.types.forward_backward_input import ForwardBackwardInput
 
 from spindle.backends.contract import (
-    DimuonParams,
     Backend,
+    DimuonParams,
     ForwardBatch,
     ForwardItem,
     ModelSpec,

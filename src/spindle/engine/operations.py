@@ -13,7 +13,12 @@ from tinker.types._pydantic_types.forward_backward_input import (
 from tinker.types._pydantic_types.tensor_data import TensorData as TensorDataModel
 from tinker.types.forward_backward_input import ForwardBackwardInput
 
-from spindle.backends.contract import DimuonParams, LossFn, ModelSpec
+from spindle.backends.contract import (
+    DimuonParams,
+    LossFn,
+    ModelSpec,
+    optimizer_family,
+)
 
 from .api import OperationKind
 
@@ -162,11 +167,7 @@ def parse_operation_payload(
 
 
 def parse_optimizer_params(raw: Mapping[str, Any]) -> AdamParams | DimuonParams:
-    """Parses optim_step hyperparameters from ``adam_params`` or a Dimuon ``optimizer_params``.
-
-    Raises ValueError when both keys are present, when ``optimizer_params`` names a
-    family other than dimuon, or when another ``*_params`` key is present.
-    """
+    """Parses optim_step hyperparameters from ``adam_params`` or a Dimuon ``optimizer_params``."""
     adam_params = raw.get("adam_params")
     optimizer_params = raw.get("optimizer_params")
     if adam_params is not None and optimizer_params is not None:
@@ -268,7 +269,7 @@ def parse_model_spec(value: object) -> ModelSpec:
         base_model=base_model,
         parameterization=parameterization,
         lora_config=lora,
-        optimizer=(raw_optimizer or {}).get("type", "adamw"),
+        optimizer=optimizer_family(raw_optimizer),
     )
 
 

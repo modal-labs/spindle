@@ -16,7 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from spindle.backends.contract import OPTIMIZER_FAMILIES
+from spindle.backends.contract import checkpoint_optimizer, optimizer_family
 from spindle.engine.api import JSON_OPERATIONS, OperationKind, submit_json_operation
 from spindle.errors import (
     EngineSaturated,
@@ -121,6 +121,7 @@ class LoadWeightsBody(BaseModel):
     user_metadata: dict[str, Any] | None = None
     path: str
     optimizer: bool = False
+    optimizer_config: dict[str, Any] | None = None
     weights_access_token: str | None = None
 
 
@@ -390,12 +391,13 @@ def create_control_plane_app(
                 status_code=400,
                 detail=f"unsupported base_model: {body.base_model}",
             )
-        optimizer_family = (body.optimizer_config or {}).get("type", "adamw")
-        if optimizer_family not in OPTIMIZER_FAMILIES:
+        try:
+            optimizer = optimizer_family(body.optimizer_config)
+        except ValueError:
             logging.getLogger(__name__).warning(
-                "rejected unsupported optimizer: %s", optimizer_family
+                "rejected unsupported optimizer: %s", body.optimizer_config
             )
-            raise ValueError(f"optimizer family {optimizer_family} is not supported")
+            raise
         if body.parameterization is None:
             parameterization: Parameterization | None = (
                 "lora" if body.lora_config is not None else None
@@ -417,7 +419,7 @@ def create_control_plane_app(
             raise ValueError("lora parameterization is configured through lora_config")
         if body.rollout is not None and parameterization != "full":
             raise ValueError("rollout is only configurable for full parameterization")
-        if optimizer_family == "dimuon" and parameterization != "lora":
+        if optimizer == "dimuon" and parameterization != "lora":
             raise ValueError("dimuon requires lora parameterization")
         definition_id = definition_for(body.base_model, parameterization)
         if definition_id is None:
@@ -579,6 +581,7 @@ def create_control_plane_app(
                 base_model=body.base_model,
                 user_metadata=body.user_metadata,
                 optimizer=body.optimizer,
+                optimizer_config=body.optimizer_config,
                 definition_ids={d.definition_id for d in definitions},
             )
             return {
@@ -587,6 +590,10 @@ def create_control_plane_app(
             }
         if body.model_id is None or body.seq_id is None:
             raise ValueError("model_id and seq_id are required")
+        if body.optimizer_config is not None:
+            raise ValueError(
+                "optimizer_config applies only when loading creates a model"
+            )
         engine = await control_plane.engine_for(body.model_id)
         body.path = control_plane.resolve_checkpoint_path(body.path)
         request_id = await engine.load_weights(
@@ -610,6 +617,7 @@ def create_control_plane_app(
             ),
             "train_mlp": lora_config.get("train_mlp") if lora_config else None,
             "train_attn": lora_config.get("train_attn") if lora_config else None,
+            "optimizer_config": {"type": checkpoint_optimizer(metadata)},
         }
 
     @app.post("/api/v1/save_weights_for_sampler")

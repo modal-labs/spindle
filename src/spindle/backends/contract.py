@@ -34,11 +34,27 @@ class DimuonParams(BaseModel):
 
     type: Literal["dimuon"] = "dimuon"
     learning_rate: float = Field(ge=0)
-    grad_clip_norm: float = 0.0
+    grad_clip_norm: float = Field(default=0.0, ge=0)
     beta1: float = Field(default=0.9, ge=0, lt=1)
 
 
 OptimizerParams = AdamParams | DimuonParams
+
+
+def optimizer_family(config: Mapping[str, object] | None) -> OptimizerFamily:
+    """Reads the family of a Tinker ``optimizer_config``. A missing config means AdamW."""
+    config = config or {}
+    family = config.get("type", "adamw")
+    if family not in OPTIMIZER_FAMILIES:
+        raise ValueError(f"optimizer family {family} is not supported")
+    if family == "dimuon" and config.get("version", 1) != 1:
+        raise ValueError(f"dimuon version {config['version']} is not supported")
+    return family
+
+
+def checkpoint_optimizer(metadata: Mapping[str, object]) -> OptimizerFamily:
+    """Checkpoints written before optimizer families existed hold AdamW state."""
+    return optimizer_family({"type": metadata.get("optimizer", "adamw")})
 
 
 @dataclass(frozen=True)

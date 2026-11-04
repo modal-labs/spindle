@@ -9,6 +9,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - `qwen25_7b_instruct_lora_32k`: Qwen2.5-7B-Instruct LoRA with 32K context, trained on 4× H100 and sampled on one GPU per replica.
 - `qwen25_3b_lora_32k`: Qwen2.5-3B LoRA with 32K context, with one model replica per GPU.
 - The shared server serves both.
+- Miles LoRA recipes accept Tinker's Dimuon optimizer: `DimuonOptimizerConfig` when creating a model and `DimuonParams` for each step. This needs a Miles revision with per-slot optimizers. Checkpoints record their optimizer, and `create_training_client_from_state_with_optimizer` restores a Dimuon model as Dimuon.
 - `spindle stop` stops a deployment: its frontend, then every trainer, inference, and sampler app it created. Pass the same `--app` and `--env` as the deploy.
 
 ### Changed

@@ -165,6 +165,31 @@ def test_real_sdk_recreates_lora_client_from_state(base_url: str) -> None:
     ).metrics == {"lr": 1e-4}
 
 
+@pytest.mark.skipif(
+    not hasattr(types, "DimuonOptimizerConfig"),
+    reason="this Tinker SDK has no Dimuon optimizer",
+)
+def test_real_sdk_restores_a_dimuon_checkpoint_as_dimuon() -> None:
+    async def dimuon_metadata(path: str) -> dict[str, object]:
+        return {**await lora_checkpoint_metadata(path), "optimizer": "dimuon"}
+
+    plane = ControlPlane(
+        InMemoryKeyValueStore(),
+        LocalEnginePlatform(DEFINITION, TinkerStubExecutor),
+        read_checkpoint_metadata=dimuon_metadata,
+    )
+    app = create_control_plane_app(
+        plane, DEFINITIONS, api_key=API_KEY, retrieve_window=5.0
+    )
+    path = "tinker://run-d/weights/snapshot"
+    with serve(app) as url:
+        service = tinker.ServiceClient(base_url=url, api_key=API_KEY)
+        info = service.create_rest_client().get_weights_info_by_tinker_path(path)
+        assert info.result(timeout=30).optimizer_config.type == "dimuon"
+        resumed = service.create_training_client_from_state_with_optimizer(path)
+        assert resumed.get_info().optimizer_config.type == "dimuon"
+
+
 def test_real_sdk_recreates_full_client_from_state(full_base_url: str) -> None:
     service = tinker.ServiceClient(base_url=full_base_url, api_key=API_KEY)
     training = create_full_training_client(service, BASE_MODEL)

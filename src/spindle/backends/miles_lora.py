@@ -23,13 +23,14 @@ from spindle.inference.bulletin import SnapshotBulletin
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
 from .contract import (
-    DimuonParams,
-    OptimizerFamily,
-    OptimizerParams,
     Backend,
+    DimuonParams,
     ForwardBatch,
     ModelSpec,
+    OptimizerFamily,
+    OptimizerParams,
     SamplerPublication,
+    checkpoint_optimizer,
 )
 from .miles_config import (
     MilesBackendConfig,
@@ -158,10 +159,9 @@ class MilesCommandBackend(Backend):
         self.job_to_slot[model_id] = slot
         self.slot_to_job[slot] = model_id
         try:
-            if state.optimizer == "dimuon":
-                self.runtime.load_dimuon_slot(slot, state.rank, state.alpha)
-            else:
-                self.runtime.load_slot(slot, state.rank, state.alpha)
+            self.runtime.load_slot(
+                slot, state.rank, state.alpha, optimizer=state.optimizer
+            )
         except BaseException:
             self._release(model_id, slot)
             self.jobs.pop(model_id, None)
@@ -250,7 +250,9 @@ class MilesCommandBackend(Backend):
         if len(set(model_ids)) != len(model_ids):
             raise ValueError("optim_step contains duplicate model ids")
         self._require_jobs(model_ids)
-        family = "dimuon" if isinstance(params, DimuonParams) else "adamw"
+        family: OptimizerFamily = (
+            "dimuon" if isinstance(params, DimuonParams) else "adamw"
+        )
         for model_id in model_ids:
             job = self.jobs[model_id]
             if not job.accumulating:
@@ -260,10 +262,11 @@ class MilesCommandBackend(Backend):
                     f"model {model_id} uses the {job.optimizer} optimizer "
                     f"and cannot take {family} parameters"
                 )
-        if isinstance(params, DimuonParams):
-            parameters = _dimuon_parameters(params)
-        else:
-            parameters = _adam_parameters(params)
+        parameters = (
+            params.model_dump()
+            if isinstance(params, DimuonParams)
+            else _adam_parameters(params)
+        )
         by_slot = {
             self.job_to_slot[model_id]: parameters.copy() for model_id in model_ids
         }
@@ -427,17 +430,13 @@ class MilesCommandBackend(Backend):
                 raise ValueError(f"invalid Miles checkpoint: {uri}") from exc
             state = self.jobs[model_id]
             self._validate_checkpoint(metadata, state, restore_optimizer)
-            load_slot = (
-                self.runtime.load_dimuon_slot
-                if state.optimizer == "dimuon"
-                else self.runtime.load_slot
-            )
-            load_slot(
+            self.runtime.load_slot(
                 self.job_to_slot[model_id],
                 state.rank,
                 state.alpha,
                 checkpoint=str(checkpoint / "miles"),
                 restore_optimizer=restore_optimizer,
+                optimizer=state.optimizer,
             )
             state.accumulating = False
             state.optimizer_step = (
@@ -702,8 +701,7 @@ class MilesCommandBackend(Backend):
             raise ValueError("checkpoint topology does not match deployment")
         if restore_optimizer and not metadata.get("has_optimizer"):
             raise ValueError("checkpoint does not include optimizer state")
-        # Checkpoints written before optimizer families existed hold AdamW state.
-        stored_optimizer = metadata.get("optimizer", "adamw")
+        stored_optimizer = checkpoint_optimizer(metadata)
         if restore_optimizer and stored_optimizer != state.optimizer:
             raise ValueError(
                 f"checkpoint optimizer family {stored_optimizer} does not match "
@@ -731,21 +729,6 @@ def _adam_parameters(adam: AdamParams) -> dict[str, float]:
     if values["weight_decay"] < 0 or values["grad_clip_norm"] < 0:
         raise ValueError("weight_decay and grad_clip_norm must be non-negative")
     return values
-
-
-def _dimuon_parameters(params: DimuonParams) -> dict[str, float | str]:
-    values = {
-        "learning_rate": float(params.learning_rate),
-        "beta1": float(params.beta1),
-        "grad_clip_norm": float(params.grad_clip_norm),
-    }
-    if not all(math.isfinite(value) for value in values.values()):
-        raise ValueError("Dimuon parameters must be finite")
-    if values["learning_rate"] < 0 or values["grad_clip_norm"] < 0:
-        raise ValueError("learning_rate and grad_clip_norm must be non-negative")
-    if not 0 <= values["beta1"] < 1:
-        raise ValueError("dimuon beta1 must be in [0, 1)")
-    return {"type": "dimuon", **values}
 
 
 def _install_capture(

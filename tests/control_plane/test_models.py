@@ -90,6 +90,64 @@ def test_checkpoint_load_failure_resolves_creation_as_failed() -> None:
     asyncio.run(run())
 
 
+async def dimuon_checkpoint_metadata(path: str) -> dict[str, object]:
+    return {**await checkpoint_metadata(path), "optimizer": "dimuon"}
+
+
+@pytest.mark.parametrize(
+    ("optimizer", "optimizer_config", "expected"),
+    [
+        (True, None, "dimuon"),
+        (False, None, "adamw"),
+        (False, {"type": "dimuon", "version": 1}, "dimuon"),
+    ],
+)
+def test_checkpoint_creation_picks_the_optimizer_family(
+    optimizer, optimizer_config, expected
+) -> None:
+    async def run() -> None:
+        plane = ControlPlane(
+            InMemoryKeyValueStore(),
+            LocalEnginePlatform(DEFINITION, EchoExecutor),
+            read_checkpoint_metadata=dimuon_checkpoint_metadata,
+        )
+        session = await plane.create_session()
+        creation = await plane.create_model_from_checkpoint(
+            session_id=session.session_id,
+            model_seq_id=0,
+            path="tinker://run-d/weights/step-1",
+            base_model=None,
+            user_metadata=None,
+            optimizer=optimizer,
+            optimizer_config=optimizer_config,
+        )
+        assert creation.model.spec["optimizer_config"] == {"type": expected}
+
+    asyncio.run(run())
+
+
+def test_optimizer_restore_rejects_a_different_optimizer_config() -> None:
+    async def run() -> None:
+        plane = ControlPlane(
+            InMemoryKeyValueStore(),
+            LocalEnginePlatform(DEFINITION, EchoExecutor),
+            read_checkpoint_metadata=dimuon_checkpoint_metadata,
+        )
+        session = await plane.create_session()
+        with pytest.raises(ValueError, match="does not match the checkpoint"):
+            await plane.create_model_from_checkpoint(
+                session_id=session.session_id,
+                model_seq_id=0,
+                path="tinker://run-d/weights/step-1",
+                base_model=None,
+                user_metadata=None,
+                optimizer=True,
+                optimizer_config={"type": "adamw"},
+            )
+
+    asyncio.run(run())
+
+
 CHECKPOINTS = [
     {
         "model_id": "run-a",

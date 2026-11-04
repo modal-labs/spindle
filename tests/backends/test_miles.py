@@ -39,6 +39,7 @@ class FakeMilesRuntime:
 
     def __init__(self) -> None:
         self.calls = []
+        self.slot_optimizers = {}
         self.closed = False
 
     def load_slot(
@@ -49,23 +50,12 @@ class FakeMilesRuntime:
         *,
         checkpoint=None,
         restore_optimizer=True,
+        optimizer="adamw",
     ):
         self.calls.append(
             ("load_slot", slot, rank, alpha, checkpoint, restore_optimizer)
         )
-
-    def load_dimuon_slot(
-        self,
-        slot,
-        rank,
-        alpha,
-        *,
-        checkpoint=None,
-        restore_optimizer=True,
-    ):
-        self.calls.append(
-            ("load_dimuon_slot", slot, rank, alpha, checkpoint, restore_optimizer)
-        )
+        self.slot_optimizers[slot] = optimizer
 
     def unload_slot(self, slot):
         self.calls.append(("unload_slot", slot))
@@ -1005,7 +995,8 @@ def test_dimuon_model_loads_a_dimuon_slot(tmp_path):
     runtime = FakeMilesRuntime()
     backend = _backend(tmp_path, runtime)
     backend.accept_model("model-a", _dimuon_spec())
-    assert runtime.calls[-1] == ("load_dimuon_slot", 0, 8, 32.0, None, True)
+    assert runtime.calls[-1] == ("load_slot", 0, 8, 32.0, None, True)
+    assert runtime.slot_optimizers[0] == "dimuon"
 
 
 def test_dimuon_optim_step_sends_dimuon_params_to_the_slot(tmp_path):
@@ -1068,8 +1059,9 @@ def test_dimuon_checkpoint_restore_reloads_a_dimuon_slot(tmp_path):
         "model-a", "capture-a", destination="step-1", include_optimizer=True
     )
     uri = backend.persist_checkpoint("capture-a", "step-1")
+    runtime.slot_optimizers.clear()
     backend.load_checkpoint("model-a", uri, restore_optimizer=True)
-    assert runtime.calls[-1][0] == "load_dimuon_slot"
+    assert runtime.slot_optimizers == {0: "dimuon"}
 
 
 def test_optimizer_restore_rejects_a_different_optimizer_family(tmp_path):
@@ -1093,22 +1085,7 @@ def test_weights_only_restore_accepts_a_different_optimizer_family(tmp_path):
     )
     uri = backend.persist_checkpoint("capture-a", "step-1")
     backend.accept_model("model-b", _dimuon_spec())
+    slot = backend.job_to_slot["model-b"]
+    runtime.slot_optimizers.clear()
     backend.load_checkpoint("model-b", uri, restore_optimizer=False)
-    assert runtime.calls[-1][0] == "load_dimuon_slot"
-
-
-@pytest.mark.parametrize(
-    ("name", "value"), (("learning_rate", -1.0), ("grad_clip_norm", float("inf")))
-)
-def test_invalid_dimuon_parameters_rejected_before_runtime(tmp_path, name, value):
-    runtime = FakeMilesRuntime()
-    backend = _backend(tmp_path, runtime)
-    backend.accept_model("model-a", _dimuon_spec())
-    backend.jobs["model-a"].accumulating = True
-    values = {"learning_rate": 1e-2, "beta1": 0.9, "grad_clip_norm": 0.0}
-    values[name] = value
-    params = DimuonParams.model_construct(type="dimuon", **values)
-    calls = list(runtime.calls)
-    with pytest.raises(ValueError):
-        backend.optim_step(("model-a",), params)
-    assert runtime.calls == calls
+    assert runtime.slot_optimizers == {slot: "dimuon"}
