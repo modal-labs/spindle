@@ -11,6 +11,7 @@ import httpx
 import pytest
 import tinker
 from tinker import types
+from tinker.lib.public_interfaces.api_future import APIFuture
 
 from spindle.client import create_full_training_client
 from spindle.control_plane import ControlPlane, create_control_plane_app
@@ -168,6 +169,7 @@ def test_real_sdk_recreates_lora_client_from_state(base_url: str) -> None:
 def test_real_sdk_recreates_full_client_from_state(full_base_url: str) -> None:
     service = tinker.ServiceClient(base_url=full_base_url, api_key=API_KEY)
     training = create_full_training_client(service, BASE_MODEL)
+    assert training.get_info().model_data.model_name == BASE_MODEL
     saved = training.save_state("full-resume").result(timeout=30)
     info = (
         service.create_rest_client()
@@ -478,6 +480,8 @@ def test_real_sdk_lost_model_fails_fast(tmp_path, monkeypatch) -> None:
     with serve(app) as url:
         service = tinker.ServiceClient(base_url=url, api_key=API_KEY)
         training = service.create_lora_training_client(base_model=BASE_MODEL, rank=32)
+        if isinstance(training, APIFuture):
+            training = training.result(timeout=30)
         [instance] = asyncio.run(plane.engines.list_instances())
         asyncio.run(plane.engines.mark_dead(instance.instance_id))
 

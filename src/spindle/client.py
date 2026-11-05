@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import time
 
 from tinker import ServiceClient, TrainingClient, types
@@ -46,10 +47,18 @@ def _create_full_training_client_submit(
             request_type="CreateModel",
             queue_state_observer=QueueStateLogger(base_model, "Model creation"),
         ).result_async()
+        kwargs = {}
+        if "info" in inspect.signature(TrainingClient).parameters:
+            from tinker.lib.public_interfaces.training_client import fetch_training_info
+
+            kwargs["info"] = await fetch_training_info(
+                service.holder, response.model_id
+            )
         return TrainingClient(
             service.holder,
             model_seq_id=model_seq_id,
             model_id=response.model_id,
+            **kwargs,
         )
 
     return service.holder.run_coroutine_threadsafe(create())

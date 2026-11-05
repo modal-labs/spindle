@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 import tinker
 from tinker import types
+from tinker.lib.public_interfaces.api_future import APIFuture
 
 from spindle import sample_with_replay
 from spindle.control_plane import ControlPlane, create_control_plane_app
@@ -20,7 +21,8 @@ from tests.support import TinkerStubExecutor, serve
 pytestmark = pytest.mark.usefixtures("sdk_garbage_collected_off_loop")
 
 
-def test_sdk_replay_roundtrip():
+@pytest.mark.parametrize("resolve_client", [False, True])
+def test_sdk_replay_roundtrip(resolve_client):
     seen = []
 
     class Executor(TinkerStubExecutor):
@@ -72,6 +74,8 @@ def test_sdk_replay_roundtrip():
     with serve(app) as url:
         service = tinker.ServiceClient(base_url=url, api_key="tml-test-key")
         sampling = service.create_sampling_client(base_model=definition.model)
+        if resolve_client and isinstance(sampling, APIFuture):
+            sampling = sampling.result(timeout=30)
         sequence = (
             sample_with_replay(
                 sampling,
