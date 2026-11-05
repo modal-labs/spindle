@@ -40,4 +40,3 @@ def with_deterministic_fa3(base_image, artifacts: Path):
         )
         .env({"SPINDLE_PARITY_FA3_HD256": "1", "TORCHINDUCTOR_COMPILE_THREADS": "1"})
     )
-

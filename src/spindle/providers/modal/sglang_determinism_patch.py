@@ -35,4 +35,3 @@ def apply(root: Path) -> None:
 
 if __name__ == "__main__":
     apply(Path(sys.argv[1]))
-

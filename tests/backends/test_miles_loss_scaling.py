@@ -187,7 +187,7 @@ def test_dense_gdn_attention_has_no_auxiliary_loss(loss_scaling, variant):
             schedules,
             miles_loss,
             55,
-        config=SimpleNamespace(experimental_attention_variant=variant),
+            config=SimpleNamespace(experimental_attention_variant=variant),
         )
         == 2.0
     )
