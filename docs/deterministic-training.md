@@ -10,6 +10,9 @@ the GPU architecture, dependency revisions, TP layout, ordered training data,
 initial weights, optimizer state, and forward/backward request and update boundaries. Increasing precision
 alone does not make atomic reductions or asynchronous scheduling reproducible.
 
+See the [November 5 validation and controls](deterministic-training-validation.md)
+for current model coverage, observed drift, and evidence links.
+
 The default keeps different clients in separate microbatches, preserving each
 client's isolated shapes and accumulation order while sharing the trainer and
 base weights. This trades some multi-client batching throughput for repeatability.

@@ -241,6 +241,14 @@ def main(args):
             scores = evaluation.loss_fn_outputs[0]["logprobs"].data
             report["final_nll"] = -sum(scores) / len(scores)
             if args.mode == "packed" and args.deterministic:
+                if any(
+                    rank["total"] <= 0
+                    for row in report["steps"]
+                    for rank in row["schedule"]
+                ):
+                    raise AssertionError(
+                        "No deterministic microbatch plan was observed"
+                    )
                 mixed = any(
                     rank["mixed"] for row in report["steps"] for rank in row["schedule"]
                 )
