@@ -13,6 +13,18 @@ from spindle.providers.contracts import KeyValueStore
 
 REGISTRY_TTL_S = 5.0
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
+RECIPE_FIELDS = frozenset(key for key in vars(BaseConfig) if not key.startswith("_"))
+
+
+class DeploymentConflict(ValueError):
+    """A recipe name is already registered with different settings."""
+
+
+class DeploymentNotFound(KeyError):
+    """No recipe is registered under that name."""
+
+    def __str__(self) -> str:
+        return self.args[0] if self.args else ""
 
 
 class Platform(TypedDict):
@@ -124,6 +136,81 @@ class DeploymentRoutes:
 
     async def definitions(self) -> list[Routable]:
         return list(await self._load())
+
+    async def build(
+        self,
+        name: str,
+        overrides: dict[str, Any],
+        *,
+        base: str | None = None,
+        recipe: dict[str, Any] | None = None,
+    ) -> DeploymentConfig:
+        """Compile an API request into a recipe under this frontend's settings."""
+        if (base is None) == (recipe is None):
+            raise ValueError("pass exactly one of base or recipe")
+        for key in overrides:
+            if key == "platform" or key.startswith("platform."):
+                raise ValueError(
+                    f"{key}: platform settings come from the frontend and cannot be overridden"
+                )
+        if recipe is None:
+            parent = await self.get(base)
+            if not isinstance(parent, DeploymentConfig):
+                raise ValueError("unknown base deployment")
+            recipe = vars(parent.recipe)
+        unknown = sorted(
+            (set(recipe) | {key.split(".", 1)[0] for key in overrides}) - RECIPE_FIELDS
+        )
+        if unknown:
+            raise ValueError(f"unknown config settings: {', '.join(unknown)}")
+        recipe = {**recipe, "platform": self.frontend.platform}
+        for field in FRONTEND_FIELDS:
+            recipe.setdefault(field, getattr(self.frontend, field))
+        try:
+            deployment = DeploymentConfig.create(
+                BaseConfig(**recipe, overrides={**overrides, "name": name})
+            )
+        except (ArithmeticError, AttributeError, KeyError, TypeError) as exc:
+            raise ValueError(f"invalid config: {exc}") from exc
+        if FrontendSettings.from_recipe(deployment.recipe) != self.frontend:
+            raise ValueError(
+                "deployments on one frontend must share lifecycle settings"
+            )
+        return deployment
+
+    async def add(self, deployment: DeploymentConfig) -> dict[str, Any]:
+        """Write a config to the registry; its apps are deployed by the CLI.
+
+        The same config under its name again is a no-op; a different one
+        raises ``DeploymentConflict``.
+        """
+        config = deployment.model_dump(mode="json")
+        current = await self._store().get(deployment.name)
+        if current is None:
+            await self._store().put(deployment.name, config)
+            self._rows = None
+        elif current != config:
+            raise DeploymentConflict(
+                f"deployment {deployment.name!r} already exists with different settings"
+            )
+        return config
+
+    async def remove(self, name: str) -> DeploymentConfig:
+        """Drop a config from the registry; it stops routing on the next read.
+
+        Its trainer and inference apps are left to scale down on their own.
+        """
+        row = await self._store().get(name)
+        if row is None:
+            raise DeploymentNotFound(f"no deployment named {name!r}")
+        await self._store().delete(name)
+        self._rows = None
+        return DeploymentConfig.model_validate(row)
+
+    def _store(self) -> KeyValueStore:
+        if self.kv is None:
+            raise ValueError("this frontend serves a fixed set of recipes")
+        return self.kv()
 
     async def capabilities(self) -> list[dict[str, Any]]:
         definitions = await self.definitions()

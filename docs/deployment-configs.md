@@ -190,6 +190,24 @@ Every recipe a frontend serves is one `<recipe>.json` config file in a Modal Vol
 
 Upgrading a frontend that still ships a configs file needs no extra step: `spindle deploy` on the new version writes every recipe the old frontend serves to the registry before the swap, so nothing drops out and unchanged apps are not deployed again.
 
+## Add or remove a config through the API
+
+`POST /api/v1/spindle/deployments` writes a config into a running frontend's registry without redeploying the frontend. Send a new `name` with either the deployed config to start from as `base` plus the settings to change as `overrides` (the same dotted keys as a config's `overrides`), or a full `recipe`:
+
+~~~bash
+curl -sS -i -X POST "$TINKER_BASE_URL/api/v1/spindle/deployments" \
+  -H "X-API-Key: $TINKER_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "qwen35-9b-lora-16k-h200",
+       "base": "qwen35-9b-lora-16k",
+       "overrides": {"trainer_gpu": "H200", "miles_cfg.max_tokens_per_gpu": 8192}}'
+~~~
+
+The new config takes the frontend's platform settings and must match its lifecycle settings; unknown settings, platform overrides and values of the wrong type return HTTP 400 and write nothing. A valid request returns HTTP 201, the same config under the same name again is a no-op, and a different config under an existing name returns HTTP 409. The registry holds configs only: the frontend routes to the new config as soon as it is written, but its trainer and inference apps exist only once a `spindle deploy` that lists it has run. Clients that have just the frontend's URL and API key, such as a team's MLEs on a shared server, can register a config but not deploy it; someone with Modal credentials for the workspace must run that deploy before training on the new config works.
+
+`DELETE /api/v1/spindle/deployments/{name}` removes a config; the frontend stops routing to it on its next registry read and its trainer and inference apps scale down on their own. An unknown name returns HTTP 404. `GET /api/v1/spindle/deployments` lists what is registered.
+
+Anyone with the frontend's API key can add and remove configs.
+
 ## Update isolation
 
 Trainer apps are named `{frontend}-trainer-{name}` and inference apps `{frontend}-inference-{name}`, where `{frontend}` is the frontend app name (`spindle` by default, or the `--app` value). An inference-only change reuses the trainer app. A trainer-only change reuses the inference app. Source-only upgrades use `--refresh-trainer` / `--refresh-inference`. Updating inference settings also redeploys existing pools for that recipe before publishing the new frontend configuration. An interrupted pool update can be retried with the same command. Changes to region, storage, or secrets refresh both worker apps.
