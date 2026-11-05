@@ -5,7 +5,12 @@ import pytest
 
 from tests.support import EchoExecutor
 from spindle.control_plane import ControlPlane, FutureResolutionStatus
-from spindle.control_plane.keys import model_key, placement_key, trainer_demand_key
+from spindle.control_plane.keys import (
+    model_key,
+    placement_key,
+    trainer_demand_key,
+    trainer_slot_wait_key,
+)
 from spindle.engine import OperationKind
 from spindle.errors import (
     RecordNotFound,
@@ -539,6 +544,7 @@ def test_model_creation_waits_in_line_for_a_trainer_slot() -> None:
         assert (
             await plane.retrieve(second.request_id)
         ).status == FutureResolutionStatus.COMPLETE
+        assert await plane.kv.get(trainer_slot_wait_key(second.model.model_id)) is None
 
         await advance(plane, now, 5, second, third)
         waiting = await plane.retrieve(third.request_id)
