@@ -23,7 +23,7 @@
 - `uv run spindle deploy <name...>`: bundled configs by name. `--all`: every bundled config (in `src/spindle/configs`).
 - `uv run spindle deploy config.py`: custom config file.
 - Each deploy adds or updates the listed configs in the per-frontend registry; configs not listed remain served.
-- `POST /api/v1/spindle/deployments` (JSON `name` + `base` and `overrides`, or `recipe`) registers a config on a running frontend; `DELETE /api/v1/spindle/deployments/{name}` removes one. Invalid configs return HTTP 400, a different config under an existing name 409, an unknown name 404. The API writes the registry only; the config's apps are deployed by the next `spindle deploy` that lists it, which needs Modal credentials, not just the API key. `GET /api/v1/spindle/deployments` reports each config's `apps` as `"deployed"` or `"missing"`.
+- `POST /api/v1/spindle/deployments` (JSON `name` + `base` and `overrides`, or `recipe`) registers a config on a running frontend and deploys its trainer and inference apps in the background; `DELETE /api/v1/spindle/deployments/{name}` removes one and stops its apps (HTTP 409 listing the models still training on it unless `?force=true`). Invalid configs return HTTP 400, a different config under an existing name 409, an unknown name 404. `GET /api/v1/spindle/deployments` reports each config's `apps` as `"deploying"`, `"ready"`, `"failed"` or `"missing"`; re-sending the same config retries a failed deploy.
 
 ## Custom configs
 

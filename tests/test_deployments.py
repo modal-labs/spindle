@@ -24,7 +24,8 @@ from spindle.control_plane.deployments import (
     DeploymentRequest,
     DeploymentRoutes,
 )
-from spindle.control_plane.keys import model_key
+from spindle.control_plane.keys import model_key, placement_key
+from spindle.control_plane.records import ModelRecord
 from spindle.deployments import (
     DeploymentConfig,
     config_path,
@@ -494,14 +495,14 @@ async def test_the_registry_ignores_fields_a_newer_spindle_wrote():
     assert await names(routes) == [base.name]
 
 
-def client_for(routes, store=None, apps_deployed=None):
+def client_for(routes, store=None, **hooks):
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(
             app=create_control_plane_app(
                 ControlPlane(store or InMemoryKeyValueStore(), SimpleNamespace()),
                 routes,
                 api_key="test",
-                apps_deployed=apps_deployed,
+                **hooks,
             )
         ),
         base_url="http://frontend",
@@ -971,7 +972,7 @@ async def test_api_add_routes_at_once_conflicts_409_and_identical_adds_are_idemp
 
         await routes.definitions()
         first = await post("variant", {"trainer_gpu": "H200"})
-        assert first.status_code == 201, first.text
+        assert first.status_code == 202, first.text
         # Listed straight away, without waiting for the cache to expire.
         assert "variant" in [d.name for d in await routes.definitions()]
         assert first.json()["deployment"]["name"] == "variant"
@@ -981,7 +982,7 @@ async def test_api_add_routes_at_once_conflicts_409_and_identical_adds_are_idemp
         conflict = await post("variant", {"trainer_gpu": "B200"})
         base_conflict = await post(base.name, {"trainer_gpu": "B200"})
         listed = (await client.get("/api/v1/spindle/deployments")).json()
-    assert identical.status_code == 201
+    assert identical.status_code == 202
     assert conflict.status_code == base_conflict.status_code == 409
     assert conflict.json()["error"] == "conflict"
     assert "different settings" in conflict.json()["message"]
@@ -1009,7 +1010,7 @@ async def test_api_remove_stops_routing_and_unknown_names_are_404():
             "/api/v1/spindle/deployments",
             json={"name": "variant", "base": base.name, "overrides": {}},
         )
-        assert added.status_code == 201, added.text
+        assert added.status_code == 202, added.text
         assert await routes.get("variant") is not None
         removed = await client.delete("/api/v1/spindle/deployments/variant")
         assert removed.status_code == 200, removed.text
@@ -1024,24 +1025,72 @@ async def test_api_remove_stops_routing_and_unknown_names_are_404():
 
 
 @pytest.mark.anyio
-async def test_listing_reports_whether_each_configs_apps_are_deployed():
+async def test_adding_a_config_starts_its_app_deploy_and_the_listing_tracks_it():
     base = resolved()
     routes, store = routes_for(base)
+    deploying = set()
 
-    async def apps_deployed(definition):
-        return definition.name == base.name
+    async def deploy_apps(definition):
+        deploying.add(definition.name)
 
-    async with client_for(routes, store, apps_deployed) as client:
+    async def apps_status(definition):
+        if definition.name == base.name:
+            return {"apps": "deployed"}
+        return {"apps": "deploying" if definition.name in deploying else "missing"}
+
+    hooks = {"deploy_apps": deploy_apps, "apps_status": apps_status}
+    async with client_for(routes, store, **hooks) as client:
         added = await client.post(
             "/api/v1/spindle/deployments",
             json={"name": "variant", "base": base.name, "overrides": {}},
         )
-        assert added.status_code == 201, added.text
+        assert added.status_code == 202, added.text
+        assert added.json()["deployment"]["apps"] == "deploying"
         listed = (await client.get("/api/v1/spindle/deployments")).json()
+    assert deploying == {"variant"}
     assert {d["name"]: d["apps"] for d in listed["deployments"]} == {
         base.name: "deployed",
-        "variant": "missing",
+        "variant": "deploying",
     }
     async with client_for(routes, store) as client:
         listed = (await client.get("/api/v1/spindle/deployments")).json()
     assert all("apps" not in d for d in listed["deployments"])
+
+
+@pytest.mark.anyio
+async def test_removing_a_config_models_still_train_on_needs_force_and_stops_its_apps():
+    base = resolved()
+    routes, _ = routes_for(base)
+    plane = InMemoryKeyValueStore()
+    stopped = []
+
+    async def stop_apps(definition):
+        stopped.append(definition.name)
+
+    model = ModelRecord(
+        model_id="session:train:0",
+        session_id="session",
+        model_seq_id=0,
+        engine_definition_id="variant",
+        spec={},
+        created_at=1.0,
+    )
+    await plane.put(model_key(model.model_id), model.model_dump())
+    await plane.put(placement_key(model.model_id), {"model_id": model.model_id})
+    async with client_for(routes, plane, stop_apps=stop_apps) as client:
+        added = await client.post(
+            "/api/v1/spindle/deployments",
+            json={"name": "variant", "base": base.name, "overrides": {}},
+        )
+        assert added.status_code == 202, added.text
+        refused = await client.delete("/api/v1/spindle/deployments/variant")
+        assert refused.status_code == 409
+        assert refused.json()["models"] == [
+            {"model_id": model.model_id, "session_id": "session", "created_at": 1.0}
+        ]
+        assert stopped == []
+        assert await routes.get("variant") is not None
+        forced = await client.delete("/api/v1/spindle/deployments/variant?force=true")
+        assert forced.status_code == 200, forced.text
+    assert stopped == ["variant"]
+    assert await routes.get("variant") is None

@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import json
 import subprocess
+import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -1364,16 +1365,104 @@ def test_trainer_gpu_wait_reports_the_recipes_gpus(monkeypatch) -> None:
     )
 
 
-def test_apps_deployed_needs_both_the_trainer_and_the_inference_app(monkeypatch):
+def app_deploy_fakes(monkeypatch, deployed):
+    modal_app = importlib.import_module("spindle.providers.modal.app")
+    store = InMemoryKeyValueStore()
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: store)
+
+    async def exists(name):
+        return name in deployed
+
+    monkeypatch.setattr(modal_app, "_app_exists", exists)
+    return modal_app, store
+
+
+def test_apps_status_reports_ready_missing_deploying_and_failed(monkeypatch):
+    deployed = set()
+    modal_app, store = app_deploy_fakes(monkeypatch, deployed)
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
+    key = modal_app._app_deploy_key(recipe.name)
+    running = AsyncMock(return_value=True)
+    monkeypatch.setattr(modal_app, "_call_running", running)
+
+    def status():
+        return asyncio.run(modal_app._apps_status(recipe))
+
+    assert status() == {"apps": "missing"}
+    asyncio.run(store.put(key, {"call_id": "fc-1"}))
+    assert status() == {"apps": "deploying"}
+    running.side_effect = RuntimeError("container died")
+    assert status() == {"apps": "failed", "apps_error": "container died"}
+    asyncio.run(store.put(key, {"call_id": "fc-1", "error": "trainer deploy failed"}))
+    assert status() == {"apps": "failed", "apps_error": "trainer deploy failed"}
+    asyncio.run(store.put(key, {"claimed_at": time.time()}))
+    assert status() == {"apps": "deploying"}
+    asyncio.run(store.put(key, {"claimed_at": time.time() - 3600}))
+    assert status() == {"apps": "missing"}
+    deployed |= {recipe.trainer_app_name, recipe.inference_app_name}
+    assert status() == {"apps": "ready"}
+
+
+def test_app_deploy_starts_once_and_retries_after_a_failure(monkeypatch):
+    modal_app, store = app_deploy_fakes(monkeypatch, set())
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
+    calls = iter(SimpleNamespace(object_id=f"fc-{i}") for i in range(3))
+    spawn = AsyncMock(side_effect=lambda name: next(calls))
+    monkeypatch.setattr(modal_app.deploy_apps, "spawn", SimpleNamespace(aio=spawn))
+    monkeypatch.setattr(modal_app, "_call_running", AsyncMock(return_value=True))
+    asyncio.run(modal_app._start_app_deploy(recipe))
+    asyncio.run(modal_app._start_app_deploy(recipe))
+    assert spawn.await_count == 1
+    key = modal_app._app_deploy_key(recipe.name)
+    asyncio.run(store.put(key, {"call_id": "fc-0", "error": "boom"}))
+    asyncio.run(modal_app._start_app_deploy(recipe))
+    assert spawn.await_count == 2
+    assert asyncio.run(store.get(key)) == {"call_id": "fc-1"}
+
+
+def test_deploy_apps_builds_only_missing_apps_then_starts_weights(monkeypatch):
     modal_app = importlib.import_module("spindle.providers.modal.app")
     recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
-    deployed = {recipe.trainer_app_name, recipe.inference_app_name}
+    modal_app, store = app_deploy_fakes(monkeypatch, {recipe.trainer_app_name})
+    key = modal_app._app_deploy_key(recipe.name)
+    asyncio.run(store.put(key, {"call_id": "fc-1"}))
+    built = []
+    monkeypatch.setattr(
+        modal_app, "_deploy_app", lambda deployment, role: built.append(role)
+    )
+    weights = AsyncMock()
+    monkeypatch.setattr(modal_app, "_start_weights_download", weights)
+    asyncio.run(modal_app.deploy_apps.local(recipe.name))
+    assert built == ["inference"]
+    assert asyncio.run(store.get(key)) is None
+    weights.assert_awaited_once_with(recipe.name)
 
-    async def lookup(name, **kwargs):
-        if name not in deployed:
-            raise modal.exception.NotFoundError(name)
 
-    monkeypatch.setattr(modal.App, "lookup", SimpleNamespace(aio=lookup))
-    assert asyncio.run(modal_app._apps_deployed(recipe))
-    deployed.discard(recipe.inference_app_name)
-    assert not asyncio.run(modal_app._apps_deployed(recipe))
+def test_deploy_apps_records_the_error_when_a_deploy_fails(monkeypatch):
+    modal_app, store = app_deploy_fakes(monkeypatch, set())
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
+
+    def fail(deployment, role):
+        raise RuntimeError(f"{role} deploy failed: no quota")
+
+    monkeypatch.setattr(modal_app, "_deploy_app", fail)
+    monkeypatch.setattr(modal_app.modal, "current_function_call_id", lambda: "fc-9")
+    with pytest.raises(RuntimeError, match="no quota"):
+        asyncio.run(modal_app.deploy_apps.local(recipe.name))
+    assert asyncio.run(store.get(modal_app._app_deploy_key(recipe.name))) == {
+        "call_id": "fc-9",
+        "error": "trainer deploy failed: no quota",
+    }
+
+
+def test_stop_apps_stops_only_deployed_apps_and_forgets_the_deploy(monkeypatch):
+    modal_app = importlib.import_module("spindle.providers.modal.app")
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
+    modal_app, store = app_deploy_fakes(monkeypatch, {recipe.trainer_app_name})
+    key = modal_app._app_deploy_key(recipe.name)
+    asyncio.run(store.put(key, {"call_id": "fc-1", "error": "boom"}))
+    stopped = []
+    monkeypatch.setattr(modal_app, "_stop_app", stopped.append)
+    asyncio.run(modal_app._stop_apps(recipe))
+    assert stopped == [recipe.trainer_app_name]
+    assert asyncio.run(store.get(key)) is None

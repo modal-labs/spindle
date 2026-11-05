@@ -192,7 +192,7 @@ Upgrading a frontend that still ships a configs file needs no extra step: `spind
 
 ## Add or remove a config through the API
 
-`POST /api/v1/spindle/deployments` writes a config into a running frontend's registry without redeploying the frontend. Send a new `name` with either the deployed config to start from as `base` plus the settings to change as `overrides` (the same dotted keys as a config's `overrides`), or a full `recipe`:
+`POST /api/v1/spindle/deployments` writes a config into a running frontend's registry and deploys its trainer and inference apps in the background, without redeploying the frontend. Send a new `name` with either the deployed config to start from as `base` plus the settings to change as `overrides` (the same dotted keys as a config's `overrides`), or a full `recipe`:
 
 ~~~bash
 curl -sS -i -X POST "$TINKER_BASE_URL/api/v1/spindle/deployments" \
@@ -202,11 +202,13 @@ curl -sS -i -X POST "$TINKER_BASE_URL/api/v1/spindle/deployments" \
        "overrides": {"trainer_gpu": "H200", "miles_cfg.max_tokens_per_gpu": 8192}}'
 ~~~
 
-`DELETE /api/v1/spindle/deployments/{name}` removes a config, and `GET /api/v1/spindle/deployments` lists them.
+`DELETE /api/v1/spindle/deployments/{name}` removes a config and stops its trainer and inference apps, and `GET /api/v1/spindle/deployments` lists them. If models still train on the config, `DELETE` returns HTTP 409 listing them; add `?force=true` to remove it anyway, which ends their training.
 
 Configs deployed before this API are already registered and listed. To move a config kept in a Python file onto the API, send its fields as `recipe` (`vars(config)`).
 
-Each listed config reports `"apps": "deployed"` or `"missing"`. A config with missing apps routes but can't train until someone with Modal credentials runs a `spindle deploy` that lists it.
+Each listed config reports `apps` as `"deploying"`, `"ready"`, `"failed"` (with `apps_error`) or `"missing"`. Sending the same config again retries a failed deploy.
+
+If you find a config that clearly beats the current baselines, please upstream it to Spindle as a bundled config.
 
 Anyone with the frontend's API key can add and remove configs.
 

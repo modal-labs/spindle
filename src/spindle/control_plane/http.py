@@ -39,7 +39,9 @@ from .deployments import (
     DeploymentRoutes,
     Routable,
 )
+from .keys import placement_key
 from .queues import QueueLimits, SharedSnapshot, describe_queues
+from .records import ModelRecord
 from .service import ControlPlane, FutureResolutionStatus
 
 ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
@@ -210,7 +212,9 @@ def create_control_plane_app(
     api_key: str | None = None,
     retrieve_window: float = 30.0,
     checkpoint_volume: str = "spindle-checkpoints",
-    apps_deployed: Callable[[Routable], Awaitable[bool]] | None = None,
+    apps_status: Callable[[Routable], Awaitable[dict[str, str]]] | None = None,
+    deploy_apps: Callable[[Routable], Awaitable[None]] | None = None,
+    stop_apps: Callable[[Routable], Awaitable[None]] | None = None,
 ) -> FastAPI:
     routes = (
         definitions
@@ -316,21 +320,62 @@ def create_control_plane_app(
     async def list_deployments():
         definitions = await routes.definitions()
         rows = [_deployment_summary(d) for d in definitions]
-        if apps_deployed is not None:
-            deployed = await asyncio.gather(*(apps_deployed(d) for d in definitions))
-            for row, ok in zip(rows, deployed):
-                row["apps"] = "deployed" if ok else "missing"
+        if apps_status is not None:
+            statuses = await asyncio.gather(*(apps_status(d) for d in definitions))
+            for row, status in zip(rows, statuses):
+                row.update(status)
         return {"deployments": rows}
 
-    @app.post("/api/v1/spindle/deployments", status_code=201)
+    @app.post("/api/v1/spindle/deployments", status_code=202)
     async def add_deployment(body: DeploymentRequest):
         deployment = await routes.build(body)
         config = await routes.add(deployment)
-        return {"deployment": _deployment_summary(deployment), "config": config}
+        summary = _deployment_summary(deployment)
+        if deploy_apps is not None:
+            await deploy_apps(deployment)
+        if apps_status is not None:
+            summary.update(await apps_status(deployment))
+        return {"deployment": summary, "config": config}
+
+    async def placed_models(name: str) -> list[dict[str, object]]:
+        placed = []
+        for _, value in await control_plane.kv.list_items("model:"):
+            model = ModelRecord.model_validate(value)
+            if model.engine_definition_id == name and await control_plane.kv.get(
+                placement_key(model.model_id)
+            ):
+                placed.append(
+                    {
+                        "model_id": model.model_id,
+                        "session_id": model.session_id,
+                        "created_at": model.created_at,
+                    }
+                )
+        return placed
 
     @app.delete("/api/v1/spindle/deployments/{name}")
-    async def remove_deployment(name: str):
-        return {"deployment": _deployment_summary(await routes.remove(name))}
+    async def remove_deployment(name: str, force: bool = False):
+        placed = await placed_models(name)
+        if placed and not force:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "conflict",
+                    "message": f"{len(placed)} model(s) still train on {name!r}; "
+                    "retry with force=true to remove it anyway",
+                    "models": placed,
+                },
+            )
+        removed = await routes.remove(name)
+        if placed:
+            logging.getLogger(__name__).warning(
+                "Removed %s; orphaned models %s",
+                name,
+                [model["model_id"] for model in placed],
+            )
+        if stop_apps is not None:
+            await stop_apps(removed)
+        return {"deployment": _deployment_summary(removed)}
 
     async def trained_recipes():
         definitions = await routes.definitions()
