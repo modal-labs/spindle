@@ -799,20 +799,27 @@ def _app_deploy_key(name: str) -> str:
     return f"app_deploy:{name}"
 
 
-async def _app_exists(name: str) -> bool:
+async def _app_exists(name: str) -> bool | None:
+    """Whether the app is deployed, or None if Modal could not say."""
     try:
         await modal.App.lookup.aio(
             name, environment_name=PLATFORM["modal"]["environment"]
         )
     except modal.exception.NotFoundError:
         return False
+    except Exception:
+        logging.getLogger(__name__).exception("Looking up app %s", name)
+        return None
     return True
 
 
 async def _apps_status(definition) -> dict[str, str]:
     names = (definition.trainer_app_name, definition.inference_app_name)
-    if all(await asyncio.gather(*(_app_exists(name) for name in names))):
+    found = await asyncio.gather(*(_app_exists(name) for name in names))
+    if all(found):
         return {"apps": "ready"}
+    if None in found:
+        return {"apps": "unknown"}
     record = await shared_kv().get(_app_deploy_key(definition.name))
     if record is None:
         return {"apps": "missing"}
@@ -830,7 +837,7 @@ async def _apps_status(definition) -> dict[str, str]:
 
 async def _start_app_deploy(definition) -> None:
     """Deploy a registered config's missing apps in the background, once per name."""
-    if (await _apps_status(definition))["apps"] in {"ready", "deploying"}:
+    if (await _apps_status(definition))["apps"] in {"ready", "deploying", "unknown"}:
         return
     kv, key = shared_kv(), _app_deploy_key(definition.name)
     await kv.delete(key)
@@ -843,7 +850,7 @@ async def _start_app_deploy(definition) -> None:
 async def _stop_apps(definition) -> None:
     await shared_kv().delete(_app_deploy_key(definition.name))
     for name in (definition.trainer_app_name, definition.inference_app_name):
-        if await _app_exists(name):
+        if await _app_exists(name) is not False:
             await asyncio.to_thread(_stop_app, name)
 
 
@@ -885,7 +892,10 @@ async def deploy_apps(name: str) -> None:
             ("trainer", deployment.trainer_app_name),
             ("inference", deployment.inference_app_name),
         ):
-            if not await _app_exists(app_name):
+            exists = await _app_exists(app_name)
+            if exists is None:
+                raise RuntimeError(f"could not look up {app_name}")
+            if not exists:
                 await asyncio.to_thread(_deploy_app, deployment, role)
     except Exception as exc:
         await shared_kv().put(

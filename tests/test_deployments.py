@@ -942,6 +942,7 @@ async def test_api_adds_take_a_base_or_a_recipe_under_frontend_settings():
         {"base": "missing", "overrides": {}},
         {"base": None, "overrides": {}},
         {"name": "Bad Name", "overrides": {}},
+        {"name": "a" * 50, "overrides": {}},
     ],
 )
 @pytest.mark.anyio
@@ -1094,3 +1095,36 @@ async def test_removing_a_config_models_still_train_on_needs_force_and_stops_its
         assert forced.status_code == 200, forced.text
     assert stopped == ["variant"]
     assert await routes.get("variant") is None
+
+
+@pytest.mark.anyio
+async def test_re_adding_after_a_version_bump_is_no_conflict():
+    base = resolved()
+    routes, store = routes_for(base)
+    request = DeploymentRequest(name="variant", base=base.name)
+    first = await routes.add(await routes.build(request))
+    await store.put("variant", {**first, "spindle_version": "0.0.1"})
+    await routes.add(await routes.build(request))
+    assert (await store.get("variant"))["spindle_version"] == "0.0.1"
+
+
+@pytest.mark.anyio
+async def test_a_concurrent_add_under_the_same_name_is_a_conflict():
+    base = resolved()
+    routes, store = routes_for(base)
+    rival = await routes.build(
+        DeploymentRequest(
+            name="variant", base=base.name, overrides={"trainer_gpu": "B200"}
+        )
+    )
+    put = store.put
+
+    async def put_then_overwritten(key, value):
+        await put(key, value)
+        await put(key, rival.model_dump(mode="json"))
+
+    store.put = put_then_overwritten
+    with pytest.raises(DeploymentConflict):
+        await routes.add(
+            await routes.build(DeploymentRequest(name="variant", base=base.name))
+        )

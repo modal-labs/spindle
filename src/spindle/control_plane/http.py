@@ -366,6 +366,10 @@ def create_control_plane_app(
                     "models": placed,
                 },
             )
+        # Stop the apps first, so a failed stop leaves the config for a retry.
+        current = await routes.get(name)
+        if current is not None and stop_apps is not None:
+            await stop_apps(current)
         removed = await routes.remove(name)
         if placed:
             logging.getLogger(__name__).warning(
@@ -373,8 +377,6 @@ def create_control_plane_app(
                 name,
                 [model["model_id"] for model in placed],
             )
-        if stop_apps is not None:
-            await stop_apps(removed)
         return {"deployment": _deployment_summary(removed)}
 
     async def trained_recipes():

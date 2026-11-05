@@ -1466,3 +1466,20 @@ def test_stop_apps_stops_only_deployed_apps_and_forgets_the_deploy(monkeypatch):
     asyncio.run(modal_app._stop_apps(recipe))
     assert stopped == [recipe.trainer_app_name]
     assert asyncio.run(store.get(key)) is None
+
+
+def test_a_failing_app_lookup_reports_unknown_and_starts_no_deploy(monkeypatch):
+    modal_app = importlib.import_module("spindle.providers.modal.app")
+    store = InMemoryKeyValueStore()
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: store)
+    lookup = AsyncMock(side_effect=RuntimeError("rate limited"))
+    monkeypatch.setattr(modal.App, "lookup", SimpleNamespace(aio=lookup))
+    spawn = AsyncMock()
+    monkeypatch.setattr(modal_app.deploy_apps, "spawn", SimpleNamespace(aio=spawn))
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
+    assert asyncio.run(modal_app._app_exists(recipe.trainer_app_name)) is None
+    assert asyncio.run(modal_app._apps_status(recipe)) == {"apps": "unknown"}
+    asyncio.run(modal_app._start_app_deploy(recipe))
+    spawn.assert_not_awaited()
+    with pytest.raises(RuntimeError, match="could not look up"):
+        asyncio.run(modal_app.deploy_apps.local(recipe.name))

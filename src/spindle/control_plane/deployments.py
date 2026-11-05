@@ -18,6 +18,7 @@ from spindle.providers.contracts import KeyValueStore
 logger = logging.getLogger(__name__)
 
 REGISTRY_TTL_S = 5.0
+MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
 RECIPE_FIELDS = frozenset(key for key in vars(BaseConfig) if not key.startswith("_"))
 
@@ -209,8 +210,14 @@ class DeploymentRoutes:
                     **settings, overrides={**request.overrides, "name": request.name}
                 )
             )
-        except (ArithmeticError, AttributeError, KeyError, TypeError) as exc:
+        except (ArithmeticError, KeyError, TypeError) as exc:
             raise ValueError(f"invalid config: {exc}") from exc
+        for app_name in (deployment.trainer_app_name, deployment.inference_app_name):
+            if len(app_name) > MAX_APP_NAME_LENGTH:
+                raise ValueError(
+                    f"name too long: app {app_name!r} would exceed "
+                    f"{MAX_APP_NAME_LENGTH} characters"
+                )
         if FrontendSettings.from_recipe(deployment.recipe) != frontend:
             raise ValueError(
                 "deployments on one frontend must share lifecycle settings"
@@ -223,8 +230,11 @@ class DeploymentRoutes:
         current = await store.get(deployment.name)
         if current is None:
             await store.put(deployment.name, config)
+            # Last write wins: read back to catch a concurrent add of the same name.
+            current = await store.get(deployment.name)
             await self._reload(newer_than=time.monotonic())
-        elif current != config:
+        # The recipe alone, so a frontend upgrade's spindle_version is no conflict.
+        if not isinstance(current, dict) or current.get("recipe") != config["recipe"]:
             raise DeploymentConflict(
                 f"deployment {deployment.name!r} already exists with different settings"
             )
