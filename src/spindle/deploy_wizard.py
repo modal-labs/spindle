@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -18,6 +20,7 @@ from rich.table import Table
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig, load
+from spindle.providers.modal.deployment_configs import deployed_configs
 
 CONFIG_DIR = Path(__file__).with_name("configs")
 SERVED_TIMEOUT_S = 20
@@ -227,24 +230,26 @@ def ask(question):
     return answer
 
 
-def check_served(frontend: str, environment: str | None):
-    try:
-        return modal.Function.from_name(
-            frontend, "deployed_configs", environment_name=environment
-        ).spawn()
-    except modal.exception.NotFoundError:
-        return None
+def check_served(frontend: str, environment: str | None) -> Future:
+    """Start reading what the frontend serves while the user picks models."""
+    future = Future()
+
+    def run():
+        try:
+            future.set_result(deployed_configs(frontend, environment))
+        except BaseException as exc:
+            future.set_exception(exc)
+
+    threading.Thread(target=run, daemon=True).start()
+    return future
 
 
-def served_configs(console: Console, call) -> list[str] | None:
-    """Names the current frontend serves, or None if it doesn't answer in time."""
-    if call is None:
-        return []
+def served_configs(console: Console, served: Future) -> list[str] | None:
+    """Names the current frontend serves, or None if they can't be read in time."""
     with console.status("Checking what's already deployed..."):
         try:
-            rows = call.get(timeout=SERVED_TIMEOUT_S)
-        except (TimeoutError, modal.exception.TimeoutError):
-            call.cancel()
+            rows = served.result(timeout=SERVED_TIMEOUT_S)
+        except (TimeoutError, ValueError):
             return None
     return [DeploymentConfig.model_validate(row).name for row in rows]
 

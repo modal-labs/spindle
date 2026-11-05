@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 from concurrent.futures import Future
 from functools import partial
@@ -32,13 +32,16 @@ from spindle.providers.modal.deployment_apps import (
     build_sampler_image,
     build_trainer_app,
 )
+from spindle.control_plane.deployments import FrontendSettings
 from spindle.providers.modal.deployment_configs import (
-    CONFIGS_FILE_ENV,
-    PLATFORM_ENV,
+    FRONTEND_SETTINGS_ENV,
+    delete_registry,
     deployed_configs,
     deployed_platform,
     deployed_pools,
+    frontend_app_id,
     start_weights_download,
+    write_registry,
 )
 from spindle.providers.modal.fft_pool import FFTPoolSpec
 from spindle.providers.modal.lora_pool import LoraPoolSpec
@@ -100,7 +103,11 @@ def apps_to_publish(configs, current_configs, environment, trainers, inference):
 
 
 def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None):
-    """Deploy missing or changed trainer and inference apps, then the frontend."""
+    """Deploy missing or changed trainer and inference apps, then the frontend.
+
+    The listed configs are added to or updated in the frontend's registry;
+    recipes it already serves and that are not listed keep serving.
+    """
     if sys.version_info[:2] != (3, 12):
         raise ValueError(
             "Python deployment requires Python 3.12 to match the serialized GPU runtime images"
@@ -114,12 +121,18 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
     validate_frontend([deployment.recipe for deployment in configs])
     platform = configs[0].recipe.platform
     environment = platform["modal"]["environment"]
-    current_configs = [
-        DeploymentConfig.model_validate(row)
-        for row in deployed_configs(platform["frontend"], environment)
-    ]
+    served = deployed_configs(platform["frontend"], environment)
+    current_configs = [DeploymentConfig.model_validate(row) for row in served]
+    unlisted = [row for row in served if row["recipe"]["name"] not in names]
     current_platform = deployed_platform(platform["frontend"], environment)
     if current_platform is not None and current_platform != platform:
+        if unlisted:
+            raise ValueError(
+                "This deploy changes the frontend's platform settings, so "
+                "recipes it does not list would keep apps built for the old "
+                f"settings: {sorted(row['recipe']['name'] for row in unlisted)}. "
+                "List them in this deploy too."
+            )
         trainers.update(names)
         inference.update(names)
     trainers, inference = apps_to_publish(
@@ -153,29 +166,36 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
                     environment_name=environment, tag=deployment_tag()
                 )
 
+    def register():
+        # An older frontend serves recipes without a registry; carry them over.
+        return write_registry(
+            platform["frontend"],
+            environment,
+            [deployment.model_dump(mode="json") for deployment in configs],
+            keep_existing=unlisted,
+        )
+
     def deploy_frontend():
+        # Fill the registry before the swap when the frontend already exists,
+        # so nothing it serves drops out; a new frontend gets it afterwards.
+        registered = register()
         command = [sys.executable, "-m", "modal", "deploy", "--tag", deployment_tag()]
         if environment:
             command += ["--env", environment]
         captured = {"capture_output": True, "text": True} if run_steps else {}
-        with tempfile.TemporaryDirectory() as directory:
-            configs_file = Path(directory, "deployment_configs.json")
-            configs_file.write_text(
-                json.dumps(
-                    [deployment.model_dump(mode="json") for deployment in configs]
-                )
-            )
-            subprocess.run(
-                [*command, "-m", "spindle.providers.modal.app"],
-                check=True,
-                env={
-                    **os.environ,
-                    CONFIGS_FILE_ENV: str(configs_file),
-                    PLATFORM_ENV: json.dumps(platform),
-                    "SPINDLE_APP_NAME": platform["frontend"],
-                },
-                **captured,
-            )
+        settings = FrontendSettings.from_recipe(configs[0].recipe)
+        subprocess.run(
+            [*command, "-m", "spindle.providers.modal.app"],
+            check=True,
+            env={
+                **os.environ,
+                FRONTEND_SETTINGS_ENV: json.dumps(asdict(settings)),
+                "SPINDLE_APP_NAME": platform["frontend"],
+            },
+            **captured,
+        )
+        if not registered:
+            register()
 
     def start_weights(deployment):
         try:
@@ -256,6 +276,8 @@ def stop(frontend, environment):
     if not names:
         print(f"No running apps for {frontend}.")
         return
+    # The next deploy gets a new app ID and so a new registry folder; drop this one.
+    app_id = frontend_app_id(frontend, environment) if frontend in names else None
     for name in names:
         command = [sys.executable, "-m", "modal", "app", "stop", "-y", name]
         if environment:
@@ -265,6 +287,9 @@ def stop(frontend, environment):
         if result.returncode and "App is already stopped." not in output:
             raise ValueError(f"stopping {name} failed: {output}")
         print(f"Stopped {name}")
+    if app_id is not None:
+        delete_registry(app_id, environment)
+        print(f"Deleted the registry for {frontend} ({app_id})")
 
 
 def in_background(step):
@@ -306,7 +331,7 @@ def parser():
     validate.add_argument("files", nargs="+")
     apply = commands.add_parser(
         "deploy",
-        help="Deploy the complete active Python config set behind one frontend",
+        help="Add or update Python configs behind one frontend",
     )
     apply.add_argument(
         "files",

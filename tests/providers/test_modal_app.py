@@ -29,35 +29,51 @@ FULL_DEFINITION = definition_id("qwen35-9b-fft-64k")
 LORA_DEFINITION = definition_id("qwen35-9b-lora-16k")
 
 
+def register_recipes(modal_app, store, *definitions):
+    """Seed the frontend registry and load it into its cache."""
+
+    async def seed():
+        for definition in definitions:
+            await store.put(definition.name, definition.model_dump(mode="json"))
+        await modal_app.DEPLOYMENTS._load(refresh=True)
+
+    asyncio.run(seed())
+
+
 @pytest.fixture(autouse=True)
 def reset_lora_pool_cache(monkeypatch):
     modal_app = importlib.import_module("spindle.providers.modal.app")
+    store = InMemoryKeyValueStore()
+    monkeypatch.setattr(modal_app, "deployment_kv", lambda: store)
     monkeypatch.setattr(modal_app, "_lora_pool_gateways", {})
     monkeypatch.setattr(modal_app, "_lora_pool_checks", {})
     monkeypatch.setattr(modal_app, "_weights_ready", set())
     monkeypatch.setattr(modal_app, "_weights_starts", {})
+    register_recipes(
+        modal_app,
+        store,
+        *[
+            DeploymentConfig.create(load(config_path(name)))
+            for name in ("qwen35-9b-fft-64k", "qwen35-9b-lora-16k")
+        ],
+    )
 
 
 def weights_ready(monkeypatch, *definitions):
     modal_app = importlib.import_module("spindle.providers.modal.app")
     monkeypatch.setattr(
-        modal_app, "_weights_ready", {modal_app._weights_id(d) for d in definitions}
+        modal_app,
+        "_weights_ready",
+        {asyncio.run(modal_app._weights_id(d)) for d in definitions},
     )
 
 
 def test_definitions_come_only_from_the_configured_records() -> None:
     modal_app = importlib.import_module("spindle.providers.modal.app")
-    assert {definition.definition_id for definition in modal_app.DEFINITIONS} == {
+    assert {d.name for d in asyncio.run(modal_app.DEPLOYMENTS.definitions())} == {
         FULL_DEFINITION,
         LORA_DEFINITION,
     }
-
-
-def test_trainer_autoscaling_supports_full_and_lora_definitions() -> None:
-    modal_app = importlib.import_module("spindle.providers.modal.app")
-    assert modal_app.trainer_autoscaling(FULL_DEFINITION)
-    assert modal_app.trainer_autoscaling(LORA_DEFINITION)
-    assert not modal_app.trainer_autoscaling("missing-definition")
 
 
 @pytest.mark.parametrize(
@@ -85,7 +101,7 @@ def test_transitional_trainer_at_cap_keeps_capacity_pending(
     monkeypatch.setattr(modal_app, "ModalSessionKeyValueStores", SimpleNamespace)
     monkeypatch.setattr(modal_app, "ModalEnginePlatform", lambda *args: engines)
     monkeypatch.setattr(modal_app, "kick_trainer_reconciler", kick)
-    modal_app.module_for(LORA_DEFINITION).recipe.trainer_max_instances = 1
+    asyncio.run(modal_app.module_for(LORA_DEFINITION)).recipe.trainer_max_instances = 1
 
     plane = modal_app._plane()
     assert asyncio.run(plane.reconcile_trainers(LORA_DEFINITION)) is available
@@ -304,8 +320,11 @@ def same_weights_as_lora(monkeypatch) -> str:
     """Deploy a second recipe on the LoRA recipe's base weights."""
     modal_app = importlib.import_module("spindle.providers.modal.app")
     sibling = DeploymentConfig.create(load(config_path("qwen35-9b-lora-64k")))
-    assert sibling.asset_path == modal_app.module_for(LORA_DEFINITION).asset_path
-    monkeypatch.setattr(modal_app, "DEFINITIONS", (*modal_app.DEFINITIONS, sibling))
+    assert (
+        sibling.asset_path
+        == asyncio.run(modal_app.module_for(LORA_DEFINITION)).asset_path
+    )
+    register_recipes(modal_app, modal_app.deployment_kv(), sibling)
     return sibling.definition_id
 
 
@@ -321,7 +340,7 @@ def test_recipes_on_the_same_weights_share_one_download(monkeypatch) -> None:
             modal_app._start_weights_download(sibling),
         )
         assert first == second
-        await registry.put(modal_app._weights_ready_key(LORA_DEFINITION), 1.0)
+        await registry.put(await modal_app._weights_ready_key(LORA_DEFINITION), 1.0)
         assert await modal_app._weights_are_ready(sibling)
 
     asyncio.run(run())
@@ -333,20 +352,20 @@ def test_revisions_of_one_repo_download_one_at_a_time(monkeypatch) -> None:
     registry = InMemoryKeyValueStore()
     calls = {}
     spawned = weight_downloads(monkeypatch, registry, calls)
-    recipe = modal_app.module_for(LORA_DEFINITION).recipe
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION)).recipe
     other = DeploymentConfig.create(
         BaseConfig(
             **{**vars(recipe), "name": "other-revision", "weights_revision": "abc123"}
         )
     )
-    monkeypatch.setattr(modal_app, "DEFINITIONS", (*modal_app.DEFINITIONS, other))
+    register_recipes(modal_app, modal_app.deployment_kv(), other)
 
     async def run() -> None:
         first = await modal_app._start_weights_download(LORA_DEFINITION)
         assert await modal_app._start_weights_download(other.definition_id) == first
         assert spawned == [LORA_DEFINITION]
         calls["fc-1"] = False
-        await registry.put(modal_app._weights_ready_key(LORA_DEFINITION), 1.0)
+        await registry.put(await modal_app._weights_ready_key(LORA_DEFINITION), 1.0)
         assert await modal_app._weights_download(other.definition_id) is not None
 
     asyncio.run(run())
@@ -360,7 +379,7 @@ def test_weights_marked_ready_by_an_older_release_are_not_downloaded_again(
     registry = InMemoryKeyValueStore()
     spawned = weight_downloads(monkeypatch, registry, {})
     sibling = same_weights_as_lora(monkeypatch)
-    weights = modal_app.module_for(LORA_DEFINITION).weights_repo
+    weights = asyncio.run(modal_app.module_for(LORA_DEFINITION)).weights_repo
 
     async def run() -> None:
         await registry.put(f"model_assets_ready:{LORA_DEFINITION}:{weights}@", 1.0)
@@ -379,13 +398,17 @@ def test_ready_weights_skip_the_download_until_the_revision_changes(
     modal_app = importlib.import_module("spindle.providers.modal.app")
     registry = InMemoryKeyValueStore()
     spawned = weight_downloads(monkeypatch, registry, {})
-    original = modal_app.module_for(LORA_DEFINITION)
+    original = asyncio.run(modal_app.module_for(LORA_DEFINITION))
     definition = original
-    monkeypatch.setattr(modal_app, "module_for", lambda definition_id: definition)
+
+    async def module_for(definition_id):
+        return definition
+
+    monkeypatch.setattr(modal_app, "module_for", module_for)
 
     async def run() -> None:
         nonlocal definition
-        await registry.put(modal_app._weights_ready_key(LORA_DEFINITION), 1.0)
+        await registry.put(await modal_app._weights_ready_key(LORA_DEFINITION), 1.0)
         assert await modal_app._start_weights_download(LORA_DEFINITION) is None
         assert await modal_app._weights_download(LORA_DEFINITION) is None
         assert spawned == []
@@ -420,7 +443,7 @@ def test_download_started_by_another_server_is_joined(monkeypatch) -> None:
     registry = InMemoryKeyValueStore()
     calls = {}
     spawned = weight_downloads(monkeypatch, registry, calls)
-    key = modal_app._weights_call_key(LORA_DEFINITION)
+    key = asyncio.run(modal_app._weights_call_key(LORA_DEFINITION))
     spawn = modal_app.prepare_model_assets.spawn.aio
 
     async def racing_spawn(definition_id: str):
@@ -505,11 +528,11 @@ def test_execute_sample_waits_for_weights_and_deploys_the_base_pool(
         if not downloading or "wait" in events:
             return None
         await registry.put(
-            modal_app._weights_call_key(definition_id),
+            await modal_app._weights_call_key(definition_id),
             {
                 "call_id": "fc-1",
                 "started_at": 1.0,
-                "weights": modal_app._weights_id(definition_id),
+                "weights": await modal_app._weights_id(definition_id),
             },
         )
         return 1.0
@@ -576,12 +599,13 @@ def test_prepare_model_assets_marks_weights_ready_after_commit(monkeypatch) -> N
 
     asyncio.run(modal_app.prepare_model_assets.local(FULL_DEFINITION))
 
-    definition = modal_app.module_for(FULL_DEFINITION)
+    definition = asyncio.run(modal_app.module_for(FULL_DEFINITION))
     assert events == [
         ("download", definition.model, None, definition.asset_path),
         ("commit",),
     ]
-    assert asyncio.run(registry.get(modal_app._weights_ready_key(FULL_DEFINITION)))
+    key = asyncio.run(modal_app._weights_ready_key(FULL_DEFINITION))
+    assert asyncio.run(registry.get(key))
 
 
 def test_ensure_pool_sizes_latest_pool_from_model_rollout_config(monkeypatch) -> None:
@@ -901,6 +925,18 @@ def test_cleaner_loses_models_on_removed_definitions(monkeypatch) -> None:
     modal_app = importlib.import_module("spindle.providers.modal.app")
     kv = InMemoryKeyValueStore()
     registry = InMemoryKeyValueStore()
+    recipe = load(config_path("qwen35-9b-fft-64k"))
+    recipe.name = "added-after-startup"
+    added = DeploymentConfig.create(recipe)
+    register_recipes(
+        modal_app,
+        modal_app.deployment_kv(),
+        *[
+            DeploymentConfig.create(load(config_path(name)))
+            for name in ("qwen35-9b-lora-16k", "qwen35-4b-fft-64k")
+        ],
+        added,
+    )
     stopped = []
     monkeypatch.setattr(modal_app, "shared_kv", lambda: kv)
     monkeypatch.setattr(modal_app, "fft_pool_kv", lambda: registry)
@@ -927,17 +963,19 @@ def test_cleaner_loses_models_on_removed_definitions(monkeypatch) -> None:
 
     async def run() -> None:
         await seed(FULL_DEFINITION, "live")
+        await seed(added.definition_id, "added")
         await seed("removed_definition", "orphan")
         assert await modal_app._lose_undefined_models() == ("orphan",)
         assert await modal_app._cleanup_fft_pools() == (pools["orphan"].app_name,)
-        assert await kv.get(placement_key("live")) is not None
-        assert await kv.get(trainer_demand_key("live")) is not None
+        for model_id in ("live", "added"):
+            assert await kv.get(placement_key(model_id)) is not None
+            assert await kv.get(trainer_demand_key(model_id)) is not None
         assert await kv.get(placement_key("orphan")) is None
         assert await kv.get(trainer_demand_key("orphan")) is None
 
     asyncio.run(run())
     assert stopped == [pools["orphan"].app_name]
-    assert modal_app.parameterization_for("removed_definition") is None
+    assert asyncio.run(modal_app.parameterization_for("removed_definition")) is None
 
 
 def test_checkpoint_volume_listing_and_delete(tmp_path, monkeypatch) -> None:
