@@ -105,7 +105,7 @@ class FutureResolutionStatus(StrEnum):
 
 
 STARTING_AFTER_S = 30
-TRAINER_SLOT_WAIT_LIMIT_S = 30 * 60
+SLOT_WAIT_WARN_AFTER_S = 60 * 60
 WAITER_POLLED_WITHIN_S = 30
 SLOT_WAIT_POLL_REFRESH_S = 10
 QUEUE_SNAPSHOT_MAX_AGE_S = 2.0
@@ -159,17 +159,9 @@ def trainer_slot_reason(model: str, position: int | None, waited: float) -> str:
     )
 
 
-def trainer_slot_timeout(model: str, trainers: int, waited: float) -> str:
-    busy = (
-        "the trainer is busy" if trainers == 1 else f"all {trainers} trainers are busy"
-    )
-    return f"waited {_elapsed(waited)} for a trainer slot for {model}; {busy}"
-
-
 class TrainerSlotsBusy(Exception):
-    def __init__(self, position: int | None, trainers: int, waited: float) -> None:
+    def __init__(self, position: int | None, waited: float) -> None:
         self.position = position
-        self.trainers = trainers
         self.waited = waited
 
 
@@ -185,6 +177,7 @@ class FutureResolution:
     error: str | None = None
     category: str = "server"
     reason: str | None = None
+    queue_state: str = "starting"
 
 
 @dataclass(frozen=True)
@@ -1388,16 +1381,11 @@ class ControlPlane:
         self, request_id: str, model: ModelRecord, busy: TrainerSlotsBusy
     ) -> FutureResolution:
         base_model = str(model.spec.get("base_model") or model.engine_definition_id)
-        if busy.waited >= TRAINER_SLOT_WAIT_LIMIT_S:
-            return FutureResolution(
-                request_id,
-                FutureResolutionStatus.FAILED,
-                error=trainer_slot_timeout(base_model, busy.trainers, busy.waited),
-            )
         return FutureResolution(
             request_id,
             FutureResolutionStatus.PENDING,
             reason=trainer_slot_reason(base_model, busy.position, busy.waited),
+            queue_state="paused_capacity",
         )
 
     async def _record_slot_wait(self, model: ModelRecord) -> float:
@@ -1408,7 +1396,17 @@ class ControlPlane:
             record = {"model_id": model.model_id, "since": now, "polled_at": now}
             await self.kv.put(key, record)
         elif now - float(record["polled_at"]) >= SLOT_WAIT_POLL_REFRESH_S:
-            await self.kv.put(key, {**record, "polled_at": now})
+            record = {**record, "polled_at": now}
+            waited = now - float(record["since"])
+            if waited >= SLOT_WAIT_WARN_AFTER_S and not record.get("warned"):
+                logging.getLogger(__name__).warning(
+                    "model %s has waited %s for a trainer slot on %s",
+                    model.model_id,
+                    _elapsed(waited),
+                    model.engine_definition_id,
+                )
+                record["warned"] = True
+            await self.kv.put(key, record)
         return now - float(record["since"])
 
     async def _place_in_line(self, model: ModelRecord) -> tuple[int, int] | None:
@@ -1550,12 +1548,8 @@ class ControlPlane:
                 and all_instances_full
             ):
                 waited = await self._record_slot_wait(model)
-                if waited >= TRAINER_SLOT_WAIT_LIMIT_S:
-                    await self.kv.delete(trainer_demand_key(model.model_id))
                 line = await self._place_in_line(model)
-                raise TrainerSlotsBusy(
-                    line[0] + 1 if line else None, len(instances), waited
-                )
+                raise TrainerSlotsBusy(line[0] + 1 if line else None, waited)
             return None
         record = PlacementRecord(
             model_id=model.model_id,

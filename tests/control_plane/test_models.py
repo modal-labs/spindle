@@ -526,6 +526,7 @@ def test_model_creation_waits_in_line_for_a_trainer_slot() -> None:
 
         waiting = await plane.retrieve(third.request_id)
         assert waiting.status == FutureResolutionStatus.PENDING
+        assert waiting.queue_state == "paused_capacity"
         assert waiting.reason == (
             f"all trainer slots for {DEFINITION} are in use; waiting for one to "
             "free up (2nd in line, 0s so far)"
@@ -569,26 +570,6 @@ def test_waiter_that_stopped_polling_does_not_hold_the_line() -> None:
         assert (
             await plane.retrieve(waiting.request_id)
         ).status == FutureResolutionStatus.COMPLETE
-
-    asyncio.run(run())
-
-
-def test_model_creation_fails_after_waiting_too_long_for_a_slot() -> None:
-    async def run() -> None:
-        plane, now = await full_trainer_plane()
-        first, waiting = [await new_model(plane, now) for _ in range(2)]
-        await plane.retrieve(first.request_id)
-        assert (
-            await plane.retrieve(waiting.request_id)
-        ).status == FutureResolutionStatus.PENDING
-
-        await advance(plane, now, 30 * 60, first, waiting)
-        resolution = await plane.retrieve(waiting.request_id)
-        assert resolution.status == FutureResolutionStatus.FAILED
-        assert resolution.error == (
-            f"waited 30m 00s for a trainer slot for {DEFINITION}; the trainer is busy"
-        )
-        assert await plane.kv.get(trainer_demand_key(waiting.model.model_id)) is None
 
     asyncio.run(run())
 

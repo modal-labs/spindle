@@ -164,7 +164,7 @@ All configs deployed together must share platform settings. Use a shared parent 
 
 One frontend serves all models through Tinker’s `base_model`. If several recipes serve the same model, requests by model name go to the one with the longest context. To use a specific recipe, pass its name as `base_model`. `get_server_capabilities` lists every recipe and its context length.
 
-`GET /api/v1/spindle/queues` describes each recipe's training queue. Each trainer holds up to `trainer_max_clients_per_instance` training clients, and a recipe runs at most `trainer_max_instances` trainers. When every slot is in use, a new client waits in line instead of failing. The client that has waited longest gets the next free slot. After 30 minutes in line, model creation fails with `waited 30m 00s for a trainer slot`.
+`GET /api/v1/spindle/queues` describes each recipe's training queue. Each trainer holds up to `trainer_max_clients_per_instance` training clients, and a recipe runs at most `trainer_max_instances` trainers. When every slot is in use, a new client waits in line instead of failing. The client that has waited longest gets the next free slot. It keeps waiting until a slot frees, with no time limit.
 
 ```json
 {"name": "qwen35_2b_lora_32k", "base_model": "Qwen/Qwen3.5-2B", "parameterization": "lora",

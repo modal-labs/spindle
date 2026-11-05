@@ -695,7 +695,7 @@ def create_control_plane_app(
                 "queue_state": "active",
             }
             if resolution.reason:
-                content["queue_state"] = "starting"
+                content["queue_state"] = resolution.queue_state
                 content["queue_state_reason"] = resolution.reason
             return JSONResponse(status_code=408, content=content)
         if response is not None:
