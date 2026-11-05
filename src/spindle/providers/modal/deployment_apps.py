@@ -60,6 +60,19 @@ def image_for(backend, name=""):
     if not modal.is_local():
         return modal.Image.debian_slim()
     if name:
+        if name == "miles-deterministic-fa3":
+            from pathlib import Path
+            from .miles_fa3_image import with_deterministic_fa3
+            from .miles_image import runtime_image
+
+            artifacts = os.environ.get("SPINDLE_MILES_FA3_ARTIFACTS")
+            if not artifacts:
+                raise ValueError(
+                    "miles-deterministic-fa3 requires SPINDLE_MILES_FA3_ARTIFACTS; see docs/deterministic-training.md"
+                )
+            return with_deterministic_fa3(
+                runtime_image, Path(artifacts)
+            ).add_local_python_source("spindle", ignore=ignore_config_source)
         if name not in TRAINER_IMAGES:
             raise ValueError(
                 f"unknown trainer image {name!r}; choose from {sorted(TRAINER_IMAGES)}"

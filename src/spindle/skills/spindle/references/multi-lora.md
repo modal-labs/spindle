@@ -7,4 +7,4 @@
 - Pricing: `GPU $/output token = GPU $/s ÷ output TPS`. Raising useful TPS is the only lever.
 - Routing: all `num_samples` of one request go to one replica for prefix reuse. Multi-turn: set `cache_affinity_key` (≤256 chars, e.g. per trajectory) so each turn hits the same replica; absent it, the route derives from the prompt after the first reply.
 - `target_tokens` accepts shape `[seq]` or `[seq, choices]`; logprobs return in the same shape and weights/advantages/logprobs must match. Dense and CSR both work. Scoring cost grows with `num_choices`. Megatron backends reject 2D targets.
-- Deterministic training (experimental): `SPINDLE_MILES_FA3_ARTIFACTS` dir + `qwen3_5_9b_base_miles_lora_deterministic` definition. Bitwise parity with single-tenant on small runs; has a throughput cost.
+- Deterministic training (experimental): `qwen35-9b-lora-16k-deterministic` requires `SPINDLE_MILES_FA3_ARTIFACTS`; `qwen3-8b-lora-32k-deterministic` uses native FA3 for smaller heads. Requires DP1/CP1, fixed topology and inputs. See `docs/deterministic-training.md` and `scripts/check_deterministic_training_gpu.py`; historical Lilo parity is not current cross-model validation.

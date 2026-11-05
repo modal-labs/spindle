@@ -96,6 +96,10 @@ class MilesBackendConfig:
     align_sequences_to_parallel_layout: bool = False
     extra_args: tuple[str, ...] = ()
     cli_options: dict[str, Any] = field(default_factory=dict)
+    # Experimental batch-invariant multi-LoRA path (Lilo PR #28).
+    deterministic_training: bool = False
+    deterministic_gdn: bool = False
+    tp_reduce_precision: str | None = None
 
     @property
     def world_size(self) -> int:
@@ -123,6 +127,15 @@ class MilesBackendConfig:
         return tuple(targets)
 
     def validate(self) -> None:
+        if self.tp_reduce_precision not in (None, "float32", "float64"):
+            raise ValueError("tp_reduce_precision must be float32, float64, or None")
+        if (
+            type(self.deterministic_training) is not bool
+            or type(self.deterministic_gdn) is not bool
+        ):
+            raise ValueError("deterministic training options must be booleans")
+        if self.deterministic_gdn and not self.deterministic_training:
+            raise ValueError("deterministic_gdn requires deterministic_training")
         if self.megatron_to_hf_mode not in ("bridge", "raw"):
             raise ValueError("megatron_to_hf_mode must be bridge or raw")
         positive = {
@@ -166,6 +179,32 @@ class MilesBackendConfig:
                 "actor_num_nodes * actor_num_gpus_per_node must be a multiple of "
                 "tensor_model_parallel_size * context_parallel_size"
             )
+        if self.deterministic_training:
+            if self.data_parallel_size != 1 or self.context_parallel_size != 1:
+                raise ValueError(
+                    "deterministic_training currently requires DP=1 and CP=1"
+                )
+            if not self.dynamic_batch_size or self.lora_dropout:
+                raise ValueError(
+                    "deterministic_training requires dynamic batching and zero LoRA dropout"
+                )
+            if (
+                self.expert_model_parallel_size != 1
+                or self.expert_tensor_parallel_size != 1
+            ):
+                raise ValueError(
+                    "deterministic_training does not yet support expert parallelism"
+                )
+            if self.tp_reduce_precision != "float64":
+                raise ValueError(
+                    "deterministic_training requires tp_reduce_precision='float64'"
+                )
+            if self.cli_options.get("enable_mtp_training") or self.cli_options.get(
+                "calculate_per_token_loss"
+            ):
+                raise ValueError(
+                    "deterministic_training requires summed losses without MTP"
+                )
         if (
             self.actor_num_nodes > 1
             and self.actor_num_gpus_per_node % self.tensor_model_parallel_size != 0

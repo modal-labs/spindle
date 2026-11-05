@@ -105,7 +105,7 @@ DSA_KERNEL_INSTALL = (
 )
 
 
-image = (
+runtime_image = (
     modal.Image.from_registry(BASE_IMAGE)
     .entrypoint([])
     .env(
@@ -145,5 +145,6 @@ image = (
         "'forward_only', 'optim_step', 'save_slot', 'export_slot'))\"",
     )
     .run_commands(DSA_KERNEL_INSTALL)
-    .add_local_python_source("spindle", ignore=ignore_config_source)
 )
+
+image = runtime_image.add_local_python_source("spindle", ignore=ignore_config_source)

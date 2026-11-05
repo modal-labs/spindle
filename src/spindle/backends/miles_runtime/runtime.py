@@ -258,6 +258,9 @@ class MilesRuntime:
             else:
                 args = parse_args(entry="serve")
         self._args = args
+        args.spindle_tp_reduce_precision = self.config.tp_reduce_precision
+        args.spindle_deterministic_training = self.config.deterministic_training
+        args.spindle_deterministic_gdn = self.config.deterministic_gdn
 
         # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
         args.lora_A_init_method = "kaiming"
@@ -350,6 +353,11 @@ class MilesRuntime:
 
 
 _WORKER_ENV_VARS = (
+    "CUBLAS_WORKSPACE_CONFIG",
+    "NCCL_ALGO",
+    "NCCL_PROTO",
+    "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
+    "SPINDLE_PARITY_FA3_HD256",
     "SPINDLE_CHECKPOINT_VOLUME",
     "SPINDLE_BULLETIN_VOLUME",
     "SPINDLE_BULLETIN_ROOT",

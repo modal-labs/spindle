@@ -106,10 +106,36 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
 
     def init(self, args, role, **kwargs):
         _use_distributed_timeout_for_gloo(args.distributed_timeout_minutes)
+        deterministic = getattr(args, "spindle_deterministic_training", False)
+        self._spindle_adapter_seed = args.seed if deterministic else None
+        if getattr(args, "spindle_tp_reduce_precision", None):
+            from .precision import install_tp_reductions
+
+            install_tp_reductions(args.spindle_tp_reduce_precision)
+        if deterministic:
+            if torch.cuda.get_device_capability() != (9, 0):
+                raise ValueError(
+                    "deterministic_training is currently restricted to Hopper SM90"
+                )
+            from .batching import configure_deterministic_batching
+            from .loss_scaling import configure_deterministic_loss_scaling
+            from .precision import (
+                configure_deterministic_attention,
+                configure_deterministic_gdn,
+                configure_deterministic_losses,
+            )
+
+            torch.use_deterministic_algorithms(True)
+            configure_deterministic_attention(head_dim=args.kv_channels)
+            configure_deterministic_losses()
+            configure_deterministic_loss_scaling()
+            if args.spindle_deterministic_gdn:
+                configure_deterministic_gdn()
+            configure_deterministic_batching()
         # Miles's LoRA builder inherits checkpoint MTP heads without honoring
         # enable_mtp_training. Qwen3.5 then injects an auxiliary backward loss
         # even for a client datum whose weights are all zero.
-        if args.enable_mtp_training:
+        if args.enable_mtp_training and not deterministic:
             result = super().init(args, role, **kwargs)
             _mark_actor_initialized()
             return result
@@ -117,6 +143,12 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
 
         def provider_without_mtp(bridge, *provider_args, **provider_kwargs):
             provider = original(bridge, *provider_args, **provider_kwargs)
+            if deterministic:
+                if getattr(provider, "num_moe_experts", None):
+                    raise ValueError(
+                        "deterministic_training has not been validated for MoE models"
+                    )
+                provider.batch_invariant_mode = True
             provider.mtp_num_layers = None
             provider.mtp_hybrid_override_pattern = None
             return provider
@@ -162,9 +194,13 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
     ):
         if ckpt_path:
             _sync_checkpoint_volume("reload")
-        result = super().load_slot(
-            slot, rank, alpha, ckpt_path=ckpt_path, load_optimizer=load_optimizer
-        )
+        from .initialization import seeded_slot_initialization
+
+        seed = getattr(self, "_spindle_adapter_seed", None) if not ckpt_path else None
+        with seeded_slot_initialization(seed):
+            result = super().load_slot(
+                slot, rank, alpha, ckpt_path=ckpt_path, load_optimizer=load_optimizer
+            )
         if ckpt_path and expert_lora_compat.enabled():
             expert_lora_compat.restore_factory_weights(
                 self.model,
