@@ -46,6 +46,7 @@ KEY_STORES = {
     "placement_claim": "models",
     "trainer_demand": "models",
     "queue_event": "queue_events",
+    "trainer_slot_wait": "models",
     "engine_instance": "engines",
     "model_assets_ready": "engines",
     "model_assets_call": "engines",

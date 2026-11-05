@@ -15,7 +15,6 @@ from pathlib import PurePosixPath
 from spindle.encoding import fingerprint
 from spindle.engine.api import EngineApi, FutureStatus
 from spindle.errors import (
-    EngineSaturated,
     ModelLost,
     RecordNotFound,
     RecordUnavailable,
@@ -48,7 +47,9 @@ from .keys import (
     session_key,
     session_last_seen_key,
     trainer_demand_key,
+    trainer_slot_wait_key,
 )
+from .queues import SharedSnapshot, read_queues, record_queue_event
 from .records import (
     ModelCreationRecord,
     ModelRecord,
@@ -63,7 +64,6 @@ from .records import (
     SessionLastSeenRecord,
     SessionRecord,
 )
-from .queues import record_queue_event
 
 
 def request_id_for(model_id: str, seq_id: int) -> str:
@@ -105,6 +105,12 @@ class FutureResolutionStatus(StrEnum):
 
 
 STARTING_AFTER_S = 30
+SLOT_WAIT_WARN_AFTER_S = 60 * 60
+WAITER_POLLED_WITHIN_S = 30
+SLOT_WAIT_POLL_REFRESH_S = 10
+# The Tinker SDK re-polls a pending future at once, so slow down waiting clients.
+SLOT_WAIT_RETRY_AFTER_S = 2.0
+QUEUE_SNAPSHOT_MAX_AGE_S = 2.0
 # Pools scale to zero after five idle minutes by default.
 SAMPLER_WARM_FOR_S = 300
 SAMPLER_WARM_REFRESH_S = 60
@@ -141,6 +147,26 @@ def gpu_capacity_reason(role: str, model: str, gpus: str, waited: float) -> str:
     )
 
 
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
+def trainer_slot_reason(model: str, position: int | None, waited: float) -> str:
+    place = f"{_ordinal(position)} in line, " if position else ""
+    return (
+        f"all trainer slots for {model} are in use; waiting for one to free up "
+        f"({place}{_elapsed(waited)} so far)"
+    )
+
+
+class TrainerSlotsBusy(Exception):
+    def __init__(self, position: int | None, waited: float) -> None:
+        self.position = position
+        self.waited = waited
+
+
 def sampler_pool_key(session: SamplingSessionRecord) -> str:
     return sampler_warm_key(session.engine_definition_id or session.base_model)
 
@@ -153,6 +179,7 @@ class FutureResolution:
     error: str | None = None
     category: str = "server"
     reason: str | None = None
+    queue_state: str = "starting"
 
 
 @dataclass(frozen=True)
@@ -186,6 +213,7 @@ class ControlPlane:
         checkpoint_root: str = "/checkpoints",
         creation_error: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_gpu_wait: Callable[[str], Awaitable[str | None]] | None = None,
+        trainer_slots: Callable[[str], int | None] = lambda _: None,
     ) -> None:
         self.kv = kv
         self.engines = engines
@@ -205,6 +233,12 @@ class ControlPlane:
         self.checkpoint_root = checkpoint_root
         self.creation_error = creation_error
         self.trainer_gpu_wait = trainer_gpu_wait
+        self.trainer_slots = trainer_slots
+        self._queue = SharedSnapshot(
+            lambda _: read_queues(self.kv, self.engines),
+            lambda: self.clock(),
+            QUEUE_SNAPSHOT_MAX_AGE_S,
+        )
         self._session_touches: dict[str, asyncio.Task] = {}
         self._route_reads: dict[str, asyncio.Task] = {}
         self._sampler_warm_at: dict[str, float] = {}
@@ -834,7 +868,7 @@ class ControlPlane:
                 )
             else:
                 await self.kv.delete(placement_key(model.model_id))
-        await self.kv.delete(trainer_demand_key(model.model_id))
+        await self._forget_demand(model.model_id)
         return model
 
     async def retrieve(
@@ -854,7 +888,7 @@ class ControlPlane:
             return await self._retrieve_sample(request_id, model_id, seq_id, timeout)
         model = await self.get_model(model_id)
         if seq_id == 0:
-            return await self._retrieve_creation(request_id, model)
+            return await self._retrieve_creation(request_id, model, timeout)
         export = await self._sampler_export_submission(model_id, seq_id)
         if export is not None:
             completed = await self._completed_sampler_export(export)
@@ -1296,6 +1330,7 @@ class ControlPlane:
         self,
         request_id: str,
         model: ModelRecord,
+        timeout: float = 0.0,
     ) -> FutureResolution:
         try:
             placement = await self._place(model)
@@ -1312,12 +1347,9 @@ class ControlPlane:
                 FutureResolutionStatus.LOST,
                 error="model lost before producing a result",
             )
-        except EngineSaturated as exc:
-            return FutureResolution(
-                request_id,
-                FutureResolutionStatus.FAILED,
-                error=str(exc),
-            )
+        except TrainerSlotsBusy as busy:
+            await asyncio.sleep(min(timeout, SLOT_WAIT_RETRY_AFTER_S))
+            return self._waiting_for_slot(request_id, model, busy)
         except ValueError as exc:
             return FutureResolution(
                 request_id,
@@ -1326,6 +1358,7 @@ class ControlPlane:
                 category="user",
             )
         if placement is None:
+            await self._record_slot_wait(model, start=False)
             return FutureResolution(
                 request_id, FutureResolutionStatus.PENDING, reason=reason
             )
@@ -1347,6 +1380,64 @@ class ControlPlane:
                 "model_id": model.model_id,
             },
         )
+
+    def _waiting_for_slot(
+        self, request_id: str, model: ModelRecord, busy: TrainerSlotsBusy
+    ) -> FutureResolution:
+        base_model = str(model.spec.get("base_model") or model.engine_definition_id)
+        return FutureResolution(
+            request_id,
+            FutureResolutionStatus.PENDING,
+            reason=trainer_slot_reason(base_model, busy.position, busy.waited),
+            queue_state="paused_capacity",
+        )
+
+    async def _record_slot_wait(self, model: ModelRecord, start: bool = True) -> float:
+        """Mark a slot waiter as still polling; start its wait unless start=False."""
+        key = trainer_slot_wait_key(model.model_id)
+        now = self.clock()
+        record = await self.kv.get(key)
+        if record is None:
+            if not start:
+                return 0.0
+            record = {"model_id": model.model_id, "since": now, "polled_at": now}
+            await self.kv.put(key, record)
+        elif now - float(record["polled_at"]) >= SLOT_WAIT_POLL_REFRESH_S:
+            record = {**record, "polled_at": now}
+            waited = now - float(record["since"])
+            if waited >= SLOT_WAIT_WARN_AFTER_S and not record.get("warned"):
+                logging.getLogger(__name__).warning(
+                    "model %s has waited %s for a trainer slot on %s",
+                    model.model_id,
+                    _elapsed(waited),
+                    model.engine_definition_id,
+                )
+                record["warned"] = True
+            await self.kv.put(key, record)
+        return now - float(record["since"])
+
+    async def _place_in_line(self, model: ModelRecord) -> tuple[int, int] | None:
+        """Live waiters created before this model, and free trainer slots."""
+        slots = self.trainer_slots(model.engine_definition_id)
+        if slots is None:
+            return None
+        try:
+            _, view = await self._queue.get()
+        except Exception:
+            logging.getLogger(__name__).exception("read trainer queue")
+            return None
+        mine = (model.created_at, model.model_id)
+        ahead = sum(
+            (waiter.created_at, waiter.model_id) < mine
+            and waiter.polled_at is not None
+            and self.clock() - waiter.polled_at < WAITER_POLLED_WITHIN_S
+            for waiter in view.waiting.get(model.engine_definition_id, [])
+        )
+        return ahead, view.free_slots(model.engine_definition_id, slots)
+
+    async def _forget_demand(self, model_id: str) -> None:
+        await self.kv.delete(trainer_demand_key(model_id))
+        await self.kv.delete(trainer_slot_wait_key(model_id))
 
     async def _lost(self, model_id: str) -> bool:
         return await self.kv.get(trainer_demand_key(model_id)) is None
@@ -1403,7 +1494,14 @@ class ControlPlane:
         all_instances_full = bool(instances) and all(
             instance.state == "running" for instance in active
         )
-        for instance in instances:
+        # Skip the queue read until this frontend has seen a backlog.
+        known = self._queue.latest
+        line = None
+        if instances and known and known[1].waiting.get(definition_id):
+            line = await self._place_in_line(model)
+        ahead, free = line or (0, 0)
+        held_back = ahead > 0 and ahead >= free
+        for instance in [] if held_back else instances:
             try:
                 accepted = await self.engines.client(instance.instance_id).accept_model(
                     model.model_id, model.spec
@@ -1426,7 +1524,11 @@ class ControlPlane:
             has_capacity = await self.reconcile_trainers(definition_id)
             if self.trainer_autoscaling(definition_id) and has_capacity:
                 return None
-        if accepted_instance is None and self.session_idle_timeout is not None:
+        if (
+            accepted_instance is None
+            and self.session_idle_timeout is not None
+            and not held_back
+        ):
             for instance in instances:
                 reclaimed = await self._reclaim_idle_models(
                     instance.instance_id,
@@ -1456,7 +1558,9 @@ class ControlPlane:
                 and has_capacity is False
                 and all_instances_full
             ):
-                raise EngineSaturated("trainer capacity exhausted")
+                waited = await self._record_slot_wait(model)
+                line = await self._place_in_line(model)
+                raise TrainerSlotsBusy(line[0] + 1 if line else None, waited)
             return None
         record = PlacementRecord(
             model_id=model.model_id,
@@ -1470,6 +1574,7 @@ class ControlPlane:
             record.model_dump(mode="json"),
         )
         if inserted.created:
+            await self.kv.delete(trainer_slot_wait_key(model.model_id))
             await record_queue_event(
                 self.kv,
                 "placed",
@@ -1543,7 +1648,7 @@ class ControlPlane:
             else:
                 await self._release_placement(model_id, incumbent.engine_definition_id)
             # Its session is closed, so it no longer waits for a slot.
-            await self.kv.delete(trainer_demand_key(model_id))
+            await self._forget_demand(model_id)
             reclaimed.append(model_id)
         return tuple(reclaimed)
 
@@ -1619,7 +1724,7 @@ class ControlPlane:
                 await self.sampling_task_stores.delete_session(session_id)
             for model in models:
                 await self.kv.delete(model_key(model.model_id))
-                await self.kv.delete(trainer_demand_key(model.model_id))
+                await self._forget_demand(model.model_id)
             for key in creations_by_session[session_id]:
                 await self.kv.delete(key)
             await self.kv.delete(session_last_seen_key(session_id))
@@ -1751,7 +1856,7 @@ class ControlPlane:
             or placement.engine_boot_id not in ("", instance.boot_id)
         ):
             await self.kv.delete(placement_key(placement.model_id))
-            await self.kv.delete(trainer_demand_key(placement.model_id))
+            await self._forget_demand(placement.model_id)
             raise ModelLost(placement.model_id)
         return instance
 

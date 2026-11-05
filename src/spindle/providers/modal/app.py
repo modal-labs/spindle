@@ -555,6 +555,11 @@ async def parameterization_for(definition_id: str) -> Parameterization | None:
     return None if definition is None else definition.parameterization
 
 
+def trainer_slots(definition_id: str) -> int | None:
+    recipe = getattr(DEPLOYMENTS.cached(definition_id), "recipe", None)
+    return None if recipe is None else recipe.trainer_max_clients_per_instance
+
+
 @app.function(
     image=image,
     max_containers=1,
@@ -752,6 +757,7 @@ def _plane():
         reconcile_trainers=kick_trainers,
         # Every Modal recipe autoscales; this also covers recipes added after startup.
         trainer_autoscaling=lambda _: True,
+        trainer_slots=trainer_slots,
         trainer_gpu_wait=gpu_wait(_trainer_function, _trainer_gpus),
     )
 
