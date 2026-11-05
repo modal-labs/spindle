@@ -77,6 +77,16 @@ def test_definitions_come_only_from_the_configured_records() -> None:
     }
 
 
+def test_trainer_slots_come_from_the_loaded_recipe() -> None:
+    modal_app = importlib.import_module("spindle.providers.modal.app")
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION)).recipe
+    assert (
+        modal_app.trainer_slots(LORA_DEFINITION)
+        == recipe.trainer_max_clients_per_instance
+    )
+    assert modal_app.trainer_slots("unregistered") is None
+
+
 @pytest.mark.parametrize(
     ("state", "available"),
     [("starting", True), ("draining", True), ("running", False)],

@@ -124,6 +124,10 @@ class DeploymentRoutes:
     def _exact(definitions: Iterable[Routable], definition_id: str) -> Routable | None:
         return next((d for d in definitions if d.definition_id == definition_id), None)
 
+    def cached(self, definition_id: str) -> Routable | None:
+        """The recipe under this exact id from the last registry read, without I/O."""
+        return self._exact(self._definitions, definition_id)
+
     async def get(self, definition_id: str) -> Routable | None:
         definitions = await self._load()
         found = self._exact(definitions, definition_id)
