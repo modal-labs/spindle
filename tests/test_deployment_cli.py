@@ -17,8 +17,7 @@ from spindle import deployment_cli as cli
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.modal import deployment_configs
 from spindle.providers.modal.deployment_configs import (
-    CONFIGS_FILE_ENV,
-    PLATFORM_ENV,
+    FRONTEND_SETTINGS_ENV,
     deployed_configs,
 )
 from spindle.providers.modal.fft_pool import FFTPoolSpec
@@ -66,11 +65,22 @@ def deployed(monkeypatch):
         state.calls.append("frontend")
         if state.fail == "frontend":
             raise subprocess.CalledProcessError(1, command)
-        state.configs = json.loads(Path(env[CONFIGS_FILE_ENV]).read_text())
-        state.platform = json.loads(env[PLATFORM_ENV])
+        state.platform = json.loads(env[FRONTEND_SETTINGS_ENV])["platform"]
         state.env = env
 
+    def write_registry(frontend, environment, configs, *, keep_existing=()):
+        if state.platform is None:
+            return False  # the frontend is not deployed yet
+        registry = {row["recipe"]["name"]: row for row in state.configs}
+        for row in keep_existing:
+            registry.setdefault(row["recipe"]["name"], row)
+        for row in configs:
+            registry[row["recipe"]["name"]] = row
+        state.configs = list(registry.values())
+        return True
+
     monkeypatch.setattr(cli, "deployed_configs", read_configs)
+    monkeypatch.setattr(cli, "write_registry", write_registry)
     monkeypatch.setattr(cli, "deployed_pools", lambda *args: state.pools)
     monkeypatch.setattr(cli, "deployed_platform", lambda *args: state.platform)
     monkeypatch.setattr(modal.App, "lookup", lookup)
@@ -501,6 +511,42 @@ def test_conflicting_platforms_fail_before_deployment(deployed):
     second.recipe.platform["secrets"]["api"] = "different-api"
     with pytest.raises(ValueError, match="share platform settings"):
         cli.deploy([first, second])
+    assert deployed.calls == []
+
+
+def served_elsewhere(name="unlisted-but-served"):
+    row = DeploymentConfig.create(load(config_path("qwen35-4b-fft-64k")))
+    data = row.model_dump(mode="json")
+    data["recipe"]["name"] = name
+    return data
+
+
+def test_deploy_adds_listed_configs_and_keeps_unlisted_ones(deployed):
+    cli.deploy([deployment()])
+    other = served_elsewhere()
+    deployed.configs.append(other)
+    deployed.calls.clear()
+    cli.deploy([deployment()])
+    assert other in deployed.configs
+    assert deployed.calls == ["frontend"]
+
+
+def test_deploy_carries_over_a_pre_registry_frontends_recipes(deployed):
+    other = served_elsewhere()
+    deployed.configs = [other]
+    deployed.platform = deployment().recipe.platform
+    cli.deploy([deployment()])
+    assert {row["recipe"]["name"] for row in deployed.configs} == {
+        "unlisted-but-served",
+        deployment().name,
+    }
+
+
+def test_platform_change_refuses_to_strand_unlisted_recipes(deployed):
+    deployed.configs = [served_elsewhere()]
+    deployed.platform = {**deployment().recipe.platform, "url_label": "old"}
+    with pytest.raises(ValueError, match="unlisted-but-served"):
+        cli.deploy([deployment()])
     assert deployed.calls == []
 
 
