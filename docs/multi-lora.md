@@ -162,9 +162,10 @@ time and memory do not grow with `num_choices`. Batches that mix widths score
 each column separately, and their vocabulary work and memory grow with
 `num_choices`.
 
-# Deterministic Training (Experimental) 
+# Deterministic Training (Experimental)
 
-The deterministic path aims to give each client repeatable training results while sharing a trainer. Its default keeps clients in separate microbatches and uses deterministic attention kernels, fixed reduction layouts, and ordered per-client gradient accumulation. Cross-client packing remains an explicit experiment because it still changes gradients on the current Qwen3-8B TP4 stack. Deterministic inference is a separate requirement for reproducing rollouts.
-
-Use the `qwen35-9b-lora-16k-deterministic` or `qwen3-8b-lora-32k-deterministic` recipe. The Qwen3.5 recipe requires the patched FA3 artifacts selected by `SPINDLE_MILES_FA3_ARTIFACTS`. See [setup, scope, and exact replay validation](deterministic-training.md). The old `qwen3_5_9b_base_miles_lora_deterministic` definition belonged to the unmerged Lilo experiment. Historical small-run parity does not establish determinism on the current stack or across models. Deterministic kernels and FP64 reductions have a throughput cost.
-
+Use the `qwen3-8b-lora-32k-deterministic` or
+`qwen35-9b-lora-16k-deterministic` recipe. The Qwen3.5 recipe requires patched FA3
+artifacts selected by `SPINDLE_MILES_FA3_ARTIFACTS`. Both require Hopper SM90 and
+DP1/CP1, and keep clients in separate microbatches by default. Tinker training
+code stays the same. See [deterministic recipes and setup](deterministic-training.md).

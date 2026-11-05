@@ -53,9 +53,6 @@ Client-observed training, publication, and rollout timings:
 
 ### Deterministic Training
 
-The results below are historical Lilo experiments, not certification of the
-current Spindle stack. See [the current experimental path and replay checks](deterministic-training.md).
-
 One experimental path we've been working on is having multi-tenant runs be fully deterministic. On the inference side, this reduces to the existing batch-invariant implementations that SGlang already has, but on the training side, this means that the forward_backward and optimizer step passes are completely batch-invariant as well such that a client's forward_backward executes with the exact same numerical results no matter how its batches are scheduled through multi-tenant heterogeneous trainer batches. We are able to show preliminary results of deterministic training runs where results are bitwise-identical with single-tenant LoRA on gsm8k + dapo-math: 
 
 ![Six-client numerical parity](assets/lora-validation/qwen3-5-9b-parity.png)
