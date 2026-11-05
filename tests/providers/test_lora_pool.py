@@ -17,6 +17,12 @@ def test_lora_pool_is_shared_by_every_adapter_for_definition() -> None:
         "SPINDLE_LORA_POOL_APP_NAME": first.app_name,
         "SPINDLE_LORA_POOL_DEFINITION_ID": first.definition_id,
     }
+    named = LoraPoolSpec("qwen35-9b-lora-16k", "my-spindle")
+    assert named.app_name == "my-spindle-lora-qwen35-9b-lora-16k"
+    assert LoraPoolSpec.from_dict(named.as_dict()) == named
+    assert (
+        LoraPoolSpec.from_dict({"definition_id": "old"}).app_name == "spindle-lora-old"
+    )
 
 
 def test_stop_already_stopped_lora_pool_succeeds_but_real_failure_propagates(

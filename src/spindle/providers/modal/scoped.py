@@ -453,6 +453,7 @@ def build_app(
             definition_id=engine.name,
             name=engine.name,
             model=engine.model,
+            weights_repo=engine.model,
             parameterization="full",
             max_context_length=engine.training.seq_length,
         )

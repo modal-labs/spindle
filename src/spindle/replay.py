@@ -124,6 +124,8 @@ def sample_with_replay(
     """
     if not (return_routed_experts or return_sampling_mask):
         raise ValueError("request at least one replay type")
+    if hasattr(client, "result"):  # tinker >= 0.38 returns a future of the client
+        client = client.result()
 
     async def sample():
         seq_id = client._request_id_counter

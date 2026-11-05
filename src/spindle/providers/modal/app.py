@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -11,9 +12,10 @@ from huggingface_hub import snapshot_download
 from stitch.pools.modal_flash import ModalFlashPool
 
 from spindle.control_plane import ControlPlane, create_control_plane_app
+from spindle.control_plane.deployments import DeploymentRoutes
 from spindle.control_plane.keys import model_key, placement_key, trainer_demand_key
+from spindle.control_plane.queues import RECENT_WINDOW_S, prune_queue_events
 from spindle.control_plane.records import ModelRecord
-from spindle.deployments import validate_frontend
 from spindle.inference.sampling import sample_task
 from spindle.providers.contracts import (
     Parameterization,
@@ -30,11 +32,8 @@ from .checkpoint_storage import (
 )
 from .deployment import trainer_deployment_env
 from .deployment_configs import (
-    CONFIGS_FILE_ENV,
-    CONFIGS_IMAGE_PATH,
-    PLATFORM_ENV,
-    configs_from_env,
-    platform_from_env,
+    FRONTEND_SETTINGS_ENV,
+    frontend_settings_from_env,
 )
 from .engines import EngineInstanceRecord, ModalEnginePlatform
 from .fft_pool import (
@@ -53,6 +52,7 @@ from .image_dependencies import (
 from .kv import (
     ModalSessionKeyValueStores,
     current_app_id,
+    deployment_kv,
     fft_pool_kv,
     shared_kv,
 )
@@ -70,6 +70,7 @@ from .lora_pool import (
     stop_pool as stop_lora_pool,
 )
 from .sampling import ModalSamplingTaskPlatform
+from .router_image import with_router
 from .trainer_reconciler import (
     TRANSIENT_POLL_ERRORS,
     complete_reconcile,
@@ -79,34 +80,34 @@ from .trainer_reconciler import (
     request_reconcile,
 )
 
-DEFINITIONS = tuple(configs_from_env())
-validate_frontend([definition.recipe for definition in DEFINITIONS])
-SETTINGS = DEFINITIONS[0]
-PLATFORM = platform_from_env()
+
+SETTINGS = frontend_settings_from_env()
+PLATFORM = SETTINGS.platform
+DEPLOYMENTS = DeploymentRoutes(lambda: deployment_kv())
 APP_NAME = PLATFORM["frontend"]
 # Placement for the CPU-only frontend; trainers and samplers keep their own
 # (unpinned by default) placement.
 FRONTEND_REGION = PLATFORM["modal"]["region"] or "us-east"
 MODEL_ASSET_ROOT = "/assets"
-SESSION_IDLE_TIMEOUT = SETTINGS.recipe.session_idle_timeout_s
-FFT_POOL_IDLE_TIMEOUT = LORA_POOL_IDLE_TIMEOUT = SETTINGS.recipe.pool_idle_timeout_s
+SESSION_IDLE_TIMEOUT = SETTINGS.session_idle_timeout_s
+FFT_POOL_IDLE_TIMEOUT = LORA_POOL_IDLE_TIMEOUT = SETTINGS.pool_idle_timeout_s
 FFT_POOL_TOUCH_INTERVAL = 60.0
 LORA_POOL_CHECK_INTERVAL = 60.0
-SWEEP_PERIOD = modal.Period(seconds=SETTINGS.recipe.sweep_interval_s)
+SWEEP_PERIOD = modal.Period(seconds=SETTINGS.sweep_interval_s)
 CHECKPOINT_READ_LOCK = asyncio.Lock()
 _pool_touches: dict[str, float] = {}
 _lora_pool_gateways: dict[str, tuple[float, str]] = {}
 _lora_pool_checks: dict[str, asyncio.Lock] = {}
 _weights_ready: set[str] = set()
 _weights_starts: dict[str, asyncio.Lock] = {}
+_routers = {}
 CHECKPOINT_VOLUME_NAME = PLATFORM["storage"]["checkpoints"]
 checkpoint_volume = modal.Volume.from_name(
     CHECKPOINT_VOLUME_NAME, create_if_missing=True, version=2
 )
 TRAINER_DEPLOYMENT_ENV = {
     **trainer_deployment_env(),
-    CONFIGS_FILE_ENV: CONFIGS_IMAGE_PATH,
-    PLATFORM_ENV: os.environ.get(PLATFORM_ENV, ""),
+    FRONTEND_SETTINGS_ENV: json.dumps(asdict(SETTINGS)),
     "SPINDLE_APP_NAME": APP_NAME,
     COMMIT_ENV: source_commit() or "",
 }
@@ -131,20 +132,22 @@ async def _delete_checkpoint(uri: str) -> None:
     ).delete(uri)
 
 
-image = (
+base_image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .pip_install(*CORE_PACKAGES, TINKER_PACKAGE)
     .pip_install(STITCH_PACKAGE, "huggingface-hub")
-    .add_local_file(os.environ[CONFIGS_FILE_ENV], CONFIGS_IMAGE_PATH, copy=True)
-    .env(TRAINER_DEPLOYMENT_ENV)
-    .add_local_python_source("spindle", ignore=ignore_config_source)
 )
 
 
-@app.function(image=image)
-def deployed_configs():
-    return [row.model_dump(mode="json") for row in configs_from_env()]
+def _frontend_image(base):
+    return base.env(TRAINER_DEPLOYMENT_ENV).add_local_python_source(
+        "spindle", ignore=ignore_config_source
+    )
+
+
+image = _frontend_image(base_image)
+sample_image = _frontend_image(with_router(base_image))
 
 
 @app.function(image=image)
@@ -181,11 +184,11 @@ proxy_secret = modal.Secret.from_name(
     volumes={MODEL_ASSET_ROOT: model_assets},
     secrets=[modal.Secret.from_name(HF_SECRET_NAME)] if HF_SECRET_NAME else [],
     timeout=4 * 60 * 60,
-    max_containers=1,
+    max_containers=4,
     retries=2,
 )
 async def prepare_model_assets(definition_id: str) -> None:
-    definition = module_for(definition_id)
+    definition = await module_for(definition_id)
     checkpoint = os.path.normpath(definition.asset_path)
     if (
         os.path.commonpath((MODEL_ASSET_ROOT, checkpoint)) != MODEL_ASSET_ROOT
@@ -203,13 +206,13 @@ async def prepare_model_assets(definition_id: str) -> None:
     StartupTimeline("model-assets", origin=started, labels={"path": checkpoint}).mark(
         "assets_ready"
     )
-    await shared_kv().put(_weights_ready_key(definition_id), time.time())
+    await shared_kv().put(await _weights_ready_key(definition_id), time.time())
 
 
 @app.function(image=image)
 async def start_weights_download(definition_id: str) -> bool:
     """Start the base-weight download for `spindle deploy`; True while it runs."""
-    module_for(definition_id)
+    await module_for(definition_id)
     return await _start_weights_download(definition_id) is not None
 
 
@@ -261,27 +264,42 @@ class WeightsDownloadFailed(ValueError):
     pass
 
 
-def _weights_id(definition_id: str) -> str:
-    # A changed weights repo or revision is a new download.
-    definition = module_for(definition_id)
-    revision = definition.recipe.weights_revision
-    return f"{definition_id}:{definition.weights_repo}@{revision}"
+def _weights_of(definition) -> str:
+    return f"{definition.asset_path}@{definition.recipe.weights_revision}"
 
 
-def _weights_ready_key(definition_id: str) -> str:
-    return f"model_assets_ready:{_weights_id(definition_id)}"
+async def _weights_id(definition_id: str) -> str:
+    return _weights_of(await module_for(definition_id))
 
 
-def _weights_call_key(definition_id: str) -> str:
-    return f"model_assets_call:{_weights_id(definition_id)}"
+async def _weights_ready_key(definition_id: str) -> str:
+    return f"model_assets_ready:{await _weights_id(definition_id)}"
+
+
+async def _weights_call_key(definition_id: str) -> str:
+    # Revisions of one repo download into the same folder, so one runs at a time.
+    return f"model_assets_call:{(await module_for(definition_id)).asset_path}"
+
+
+async def _legacy_weights_ready(store, weights: str) -> bool:
+    for d in await DEPLOYMENTS.definitions():
+        revision = d.recipe.weights_revision
+        key = f"model_assets_ready:{d.definition_id}:{d.weights_repo}@{revision}"
+        if _weights_of(d) == weights and await store.get(key) is not None:
+            return True
+    return False
 
 
 async def _weights_are_ready(definition_id: str) -> bool:
-    weights = _weights_id(definition_id)
+    weights = await _weights_id(definition_id)
     if weights in _weights_ready:
         return True
-    if await shared_kv().get(_weights_ready_key(definition_id)) is None:
-        return False
+    store = shared_kv()
+    key = await _weights_ready_key(definition_id)
+    if await store.get(key) is None:
+        if not await _legacy_weights_ready(store, weights):
+            return False
+        await store.put(key, time.time())
     _weights_ready.add(weights)
     return True
 
@@ -304,9 +322,11 @@ async def _weights_download(definition_id: str) -> float | None:
     """When the running base-weight download started, or None if none is running."""
     if await _weights_are_ready(definition_id):
         return None
-    record = await shared_kv().get(_weights_call_key(definition_id))
+    record = await shared_kv().get(await _weights_call_key(definition_id))
     if record is None:
         return None
+    if record["weights"] != await _weights_id(definition_id):
+        return await _start_weights_download(definition_id)
     try:
         running = await _call_running(record["call_id"])
     except Exception as exc:
@@ -320,12 +340,14 @@ async def _weights_download(definition_id: str) -> float | None:
 
 async def _start_weights_download(definition_id: str) -> float | None:
     """Join the running download, or start one unless the weights are ready."""
-    lock = _weights_starts.setdefault(definition_id, asyncio.Lock())
+    lock = _weights_starts.setdefault(
+        (await module_for(definition_id)).asset_path, asyncio.Lock()
+    )
     async with lock:
         if await _weights_are_ready(definition_id):
             return None
         store = shared_kv()
-        key = _weights_call_key(definition_id)
+        key = await _weights_call_key(definition_id)
         stale = await store.get(key)
         if stale is not None:
             try:
@@ -338,7 +360,11 @@ async def _start_weights_download(definition_id: str) -> float | None:
             if await _weights_are_ready(definition_id):
                 return None
         call = await prepare_model_assets.spawn.aio(definition_id)
-        record = {"call_id": call.object_id, "started_at": time.time()}
+        record = {
+            "call_id": call.object_id,
+            "started_at": time.time(),
+            "weights": await _weights_id(definition_id),
+        }
         inserted = await store.put_if_absent(key, record)
         if not inserted.created:
             existing = inserted.value
@@ -352,17 +378,18 @@ async def _start_weights_download(definition_id: str) -> float | None:
 
 async def _ensure_weights_ready(definition_id: str) -> None:
     """Join or start the base-weight download and wait for it to finish."""
-    if await _start_weights_download(definition_id) is None:
-        return
-    record = await shared_kv().get(_weights_call_key(definition_id))
-    try:
-        await modal.FunctionCall.from_id(record["call_id"]).get.aio()
-    except Exception as exc:
-        if await _weights_are_ready(definition_id):
-            return
-        raise WeightsDownloadFailed(
-            f"Downloading weights for {definition_id} failed: {exc}"
-        ) from exc
+    while await _start_weights_download(definition_id) is not None:
+        record = await shared_kv().get(await _weights_call_key(definition_id))
+        try:
+            await modal.FunctionCall.from_id(record["call_id"]).get.aio()
+        except Exception as exc:
+            if await _weights_are_ready(definition_id):
+                return
+            if record["weights"] != await _weights_id(definition_id):
+                continue
+            raise WeightsDownloadFailed(
+                f"Downloading weights for {definition_id} failed: {exc}"
+            ) from exc
 
 
 async def _trainer_booted(registry, definition_id: str) -> bool:
@@ -404,7 +431,7 @@ async def _ready_lora_pool(spec: LoraPoolSpec) -> str:
 
 
 @app.function(
-    image=image,
+    image=sample_image,
     min_containers=0,
     timeout=60 * 60,
     retries=2,
@@ -420,10 +447,10 @@ async def execute_sample(task: dict) -> dict:
 
 async def _execute_sample(task: dict, stats: dict) -> dict:
     definition_id = str(task["engine_definition_id"])
-    parameterization = parameterization_for(definition_id)
+    parameterization = await parameterization_for(definition_id)
     if parameterization not in {"full", "lora"}:
         raise ValueError(f"unsupported sampling definition: {definition_id}")
-    definition = module_for(definition_id)
+    definition = await module_for(definition_id)
     rollout_world_size = definition.recipe.inference_gpus_per_node
     rollout_tensor_parallel_size = definition.rollout_tensor_parallel_size
     if rollout_world_size % rollout_tensor_parallel_size:
@@ -433,8 +460,27 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
     if task["model_id"] is None:
         await _ensure_weights_ready(definition_id)
     if parameterization == "lora":
-        spec = LoraPoolSpec(definition_id)
+        spec = LoraPoolSpec(definition_id, APP_NAME)
         gateway = await _ready_lora_pool(spec)
+        router = None
+        if definition.recipe.inference_lora_routing == "cache_wait":
+            if spec.app_name not in _routers:
+                # The Rust extension exists only in the Modal image; `modal
+                # deploy` imports this module locally.
+                from .router import create_router
+
+                settings = definition.inference_settings
+                _routers[spec.app_name] = create_router(
+                    spec.app_name,
+                    gateway,
+                    capacity=settings["max_running_requests"]
+                    + settings["max_queued_requests"],
+                    prefill_tokens_per_second=definition.recipe.inference_routing_prefill_tokens_per_second,
+                    balance_absolute=definition.recipe.inference_routing_balance_absolute,
+                    balance_relative=definition.recipe.inference_routing_balance_relative,
+                    cache_threshold=definition.recipe.inference_routing_cache_threshold,
+                )
+            router = _routers[spec.app_name]
 
         async def keep_pool_ready() -> None:
             # Retries can outlive the cached readiness check. The pool's URL
@@ -448,17 +494,19 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
             headers=proxy_auth_headers(),
             context_length=definition.max_context_length,
             stop_token_ids_only=stop_token_ids_only,
+            router=router,
             on_wait=keep_pool_ready,
             stats=stats,
         )
     spec = (
-        FFTPoolSpec.base(definition_id)
+        FFTPoolSpec.base(definition_id, APP_NAME)
         if task["model_id"] is None
         else FFTPoolSpec(
             definition_id=definition_id,
             model_id=str(task["model_id"]),
             latest=bool(task.get("latest")),
             version=int(task["publish_version"]),
+            frontend=APP_NAME,
         )
     )
     # ensure_pool skips the base pool while weights download; deploy it here if
@@ -486,6 +534,7 @@ def _latest_pool(model) -> FFTPoolSpec:
         model.model_id,
         True,
         0,
+        frontend=APP_NAME,
         **(model.spec.get("rollout") or {}),
     )
 
@@ -494,22 +543,23 @@ async def _model_record(kv, model_id: str):
     return ModelRecord.model_validate(await kv.get(model_key(model_id)))
 
 
-def module_for(definition_id: str):
-    for definition in DEFINITIONS:
-        if definition.definition_id == definition_id:
-            return definition
-    raise KeyError(definition_id)
+async def module_for(definition_id: str):
+    definition = await DEPLOYMENTS.get(definition_id)
+    if definition is None:
+        raise KeyError(definition_id)
+    return definition
 
 
-def parameterization_for(definition_id: str) -> Parameterization | None:
-    try:
-        return module_for(definition_id).parameterization
-    except KeyError:
+async def parameterization_for(definition_id: str) -> Parameterization | None:
+    definition = await DEPLOYMENTS.get(definition_id)
+    return None if definition is None else definition.parameterization
+
+
+async def trainer_slots(definition_id: str) -> int | None:
+    definition = await DEPLOYMENTS.get(definition_id)
+    if definition is None:
         return None
-
-
-def trainer_autoscaling(definition_id: str) -> bool:
-    return parameterization_for(definition_id) is not None
+    return definition.recipe.trainer_max_clients_per_instance
 
 
 @app.function(
@@ -524,7 +574,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
     call_id = modal.current_function_call_id()
 
     async def run(definition_id: str, token: str) -> None:
-        parameterization = parameterization_for(definition_id)
+        parameterization = await parameterization_for(definition_id)
         if (
             parameterization is None
             or await deployment_error(definition_id)
@@ -532,7 +582,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
         ):
             await complete_reconcile(definition_id, token)
             return
-        module = module_for(definition_id)
+        module = await module_for(definition_id)
         maximum_instances = module.recipe.trainer_max_instances
         try:
             await reconcile_trainers(
@@ -542,7 +592,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
                 revision=None,
                 maximum_instances=maximum_instances,
                 models_per_instance=module.recipe.trainer_max_clients_per_instance,
-                scale_up=trainer_autoscaling(definition_id),
+                scale_up=True,
             )
         except Exception:
             logging.getLogger(__name__).exception(
@@ -565,7 +615,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
 
 
 async def kick_trainer_reconciler(definition_id: str) -> None:
-    if parameterization_for(definition_id) is None:
+    if await parameterization_for(definition_id) is None:
         return
 
     async def spawn(delay_seconds: float) -> str:
@@ -578,22 +628,24 @@ async def kick_trainer_reconciler(definition_id: str) -> None:
 async def _spawn_engine(definition_id: str, instance_id: str) -> str:
     if error := await deployment_error(definition_id):
         raise ValueError(error)
-    call = await _trainer_function(definition_id).spawn.aio(
-        instance_id, module_for(definition_id).model_dump_json(), current_app_id()
+    call = await (await _trainer_function(definition_id)).spawn.aio(
+        instance_id,
+        (await module_for(definition_id)).model_dump_json(),
+        current_app_id(),
     )
     return call.object_id
 
 
-def _trainer_function(definition_id: str) -> modal.Function:
+async def _trainer_function(definition_id: str) -> modal.Function:
     return modal.Function.from_name(
-        module_for(definition_id).trainer_app_name,
+        (await module_for(definition_id)).trainer_app_name,
         "trainer",
         environment_name=PLATFORM["modal"]["environment"],
     )
 
 
-def _trainer_gpus(definition_id: str) -> str:
-    recipe = module_for(definition_id).recipe
+async def _trainer_gpus(definition_id: str) -> str:
+    recipe = (await module_for(definition_id)).recipe
     return gpu_label(
         recipe.trainer_gpu, recipe.trainer_gpus_per_node, recipe.trainer_nodes
     )
@@ -613,7 +665,7 @@ async def deployment_error(definition_id: str) -> str | None:
 
 @app.function(image=image)
 async def clear_deployment_failure(definition_id: str) -> None:
-    module_for(definition_id)
+    await module_for(definition_id)
     await shared_kv().delete(f"deployment_failure:{definition_id}")
     await kick_trainer_reconciler(definition_id)
 
@@ -628,7 +680,7 @@ def _plane():
         return call.object_id
 
     async def prepare_model(model) -> None:
-        parameterization = parameterization_for(model.engine_definition_id)
+        parameterization = await parameterization_for(model.engine_definition_id)
         if parameterization is None:
             return
         if await _start_weights_download(model.engine_definition_id) is not None:
@@ -638,12 +690,12 @@ def _plane():
         elif await _trainer_booted(kv, model.engine_definition_id):
             # Otherwise the trainer deploys the pool once it boots.
             await ensure_lora_pool.spawn.aio(
-                LoraPoolSpec(model.engine_definition_id).as_dict()
+                LoraPoolSpec(model.engine_definition_id, APP_NAME).as_dict()
             )
 
     async def ensure_pool(session) -> None:
         definition_id = session.engine_definition_id
-        parameterization = parameterization_for(definition_id)
+        parameterization = await parameterization_for(definition_id)
         if parameterization is None:
             return
         if (
@@ -652,10 +704,10 @@ def _plane():
         ):
             return
         if parameterization == "lora":
-            await _ready_lora_pool(LoraPoolSpec(definition_id))
+            await _ready_lora_pool(LoraPoolSpec(definition_id, APP_NAME))
             return
         if session.model_id is None:
-            pool = FFTPoolSpec.base(definition_id)
+            pool = FFTPoolSpec.base(definition_id, APP_NAME)
         elif session.publish_version is None:
             return
         else:
@@ -664,6 +716,7 @@ def _plane():
                 model_id=session.model_id,
                 latest=session.latest,
                 version=session.publish_version,
+                frontend=APP_NAME,
             )
         registry = fft_pool_kv()
         key = f"fft_pool:{pool.app_name}"
@@ -677,9 +730,9 @@ def _plane():
 
     async def kick_trainers(definition_id: str) -> bool:
         await kick_trainer_reconciler(definition_id)
-        if not trainer_autoscaling(definition_id):
+        if await parameterization_for(definition_id) is None:
             return False
-        maximum = module_for(definition_id).recipe.trainer_max_instances
+        maximum = (await module_for(definition_id)).recipe.trainer_max_instances
         instances = [
             instance
             for instance in await engines.list_instances()
@@ -704,7 +757,9 @@ def _plane():
         delete_checkpoint=_delete_checkpoint,
         checkpoint_root=CHECKPOINT_ROOT,
         reconcile_trainers=kick_trainers,
-        trainer_autoscaling=trainer_autoscaling,
+        # Every Modal recipe autoscales; this also covers recipes added after startup.
+        trainer_autoscaling=lambda _: True,
+        trainer_slots=trainer_slots,
         trainer_gpu_wait=gpu_wait(_trainer_function, _trainer_gpus),
     )
 
@@ -719,11 +774,14 @@ def _plane():
     secrets=[modal.Secret.from_name(API_SECRET_NAME, required_keys=["TINKER_API_KEY"])],
 )
 @modal.concurrent(max_inputs=128, target_inputs=16)
-@modal.asgi_app(requires_proxy_auth=False)
+@modal.asgi_app(
+    requires_proxy_auth=PLATFORM.get("requires_proxy_auth", False),
+    label=PLATFORM.get("url_label"),
+)
 def server():
     return create_control_plane_app(
         _plane(),
-        DEFINITIONS,
+        DEPLOYMENTS,
         api_key=os.environ["TINKER_API_KEY"],
         checkpoint_volume=CHECKPOINT_VOLUME_NAME,
     )
@@ -734,7 +792,7 @@ async def _lose_undefined_models() -> tuple[str, ...]:
     lost = []
     for _, value in await kv.list_items("model:"):
         model = ModelRecord.model_validate(value)
-        if parameterization_for(model.engine_definition_id) is not None:
+        if await parameterization_for(model.engine_definition_id) is not None:
             continue
         await kv.delete(placement_key(model.model_id))
         await kv.delete(trainer_demand_key(model.model_id))
@@ -749,10 +807,11 @@ async def _cleanup_fft_pools() -> tuple[str, ...]:
             model.model_id,
             True,
             0,
+            frontend=APP_NAME,
         ).app_name
         for _, value in await shared_kv().list_items("model:")
         for model in (ModelRecord.model_validate(value),)
-        if parameterization_for(model.engine_definition_id) == "full"
+        if await parameterization_for(model.engine_definition_id) == "full"
     }
     stopped = []
     registry = fft_pool_kv()
@@ -793,10 +852,10 @@ async def _cleanup_fft_pools() -> tuple[str, ...]:
 async def _cleanup_lora_pools() -> tuple[str, ...]:
     registry = shared_kv()
     active = {
-        LoraPoolSpec(model.engine_definition_id).app_name
+        LoraPoolSpec(model.engine_definition_id, APP_NAME).app_name
         for _, value in await registry.list_items("model:")
         for model in (ModelRecord.model_validate(value),)
-        if parameterization_for(model.engine_definition_id) == "lora"
+        if await parameterization_for(model.engine_definition_id) == "lora"
     }
     stopped = []
     for key, value in await registry.list_items("lora_pool:"):
@@ -821,6 +880,10 @@ async def _cleanup_lora_pools() -> tuple[str, ...]:
 def cleaner():
     async def run() -> None:
         plane = _plane()
+        try:
+            await prune_queue_events(plane.kv, plane.clock() - RECENT_WINDOW_S)
+        except Exception:
+            logging.getLogger(__name__).exception("prune queue events")
         await plane.sweep_idle_sessions(SESSION_IDLE_TIMEOUT)
         await plane.sweep_idle_models(SESSION_IDLE_TIMEOUT)
         await plane.sweep_idle_engines()

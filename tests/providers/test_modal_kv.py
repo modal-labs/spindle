@@ -164,13 +164,20 @@ def test_lora_pool_registry_supports_publication_and_cleanup():
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("key", ["model_assets_ready:test", "sampler_warm:pool"])
-def test_engine_keys_route_to_the_engine_store(key):
+@pytest.mark.parametrize(
+    ("key", "store"),
+    [
+        ("model_assets_ready:test", "engines"),
+        ("sampler_warm:pool", "engines"),
+        ("queue_event:added:m1", "queue_events"),
+    ],
+)
+def test_keys_route_to_their_store(key, store):
     async def run():
         stores = {name: InMemoryKeyValueStore() for name in kv.STORE_NAMES}
         routed = kv.RoutedKeyValueStore(stores)
         await routed.put(key, 1.0)
         assert await routed.get(key) == 1.0
-        assert await stores["engines"].get(key) == 1.0
+        assert await stores[store].get(key) == 1.0
 
     asyncio.run(run())

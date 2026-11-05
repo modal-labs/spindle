@@ -23,12 +23,13 @@ Below, we detail how to setup your own Spindle server. See [here](https://modal.
 
 ## Install Spindle
 
-Spindle requires Python 3.12. With [uv](https://docs.astral.sh/uv/), create a project and install the library:
+Spindle requires Python 3.12. With [uv](https://docs.astral.sh/uv/), create a project, install the library, and install its agent skills:
 
 ```bash
 uv init --python 3.12 my-spindle-project
 cd my-spindle-project
-uv add 'modal-spindle @ git+https://github.com/modal-projects/spindle.git@v0.1.2'
+uv add 'modal-spindle @ git+https://github.com/modal-projects/spindle.git@v0.1.5'
+uv run spindle skills install
 ```
 
 This pins a release tag. Releases and their changes are listed in [CHANGELOG.md](CHANGELOG.md), and `uv run spindle --version` prints the installed version and commit.
@@ -388,9 +389,13 @@ models and their latest sampler pools. Check that cleanup has finished in the Mo
 modal app list
 ```
 
-To tear down the deployment, stop its `spindle-fft-...` sampler apps first, then the frontend app (`spindle`
-by default, or whatever you passed to `--app`) with `modal app stop <app-id>`. Stopping the frontend does not
-stop sampler apps.
+To tear down a deployment, run `spindle stop`. It stops the frontend app, then every trainer, inference, and
+sampler app the deployment created, and ends any runs still using them. Pass the same `--app` and `--env` you
+deployed with:
+
+```bash
+uv run spindle stop --app my-spindle --env dev
+```
 
 ## Next steps
 

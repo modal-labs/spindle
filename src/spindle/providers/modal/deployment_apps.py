@@ -37,7 +37,11 @@ from .image_dependencies import (
     TINKER_PACKAGE,
     ignore_config_source,
 )
-from .kernel_cache import KERNEL_CACHE_ENV, KERNEL_CACHE_ROOT, kernel_cache_volume
+from .kernel_cache import (
+    KERNEL_CACHE_ENV,
+    KERNEL_CACHE_ROOT,
+    kernel_cache_volume,
+)
 from .kv import shared_kv
 from .lora_pool import LoraPoolSpec
 from .lora_pool import deploy_pool as deploy_lora
@@ -165,7 +169,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         run_trainer(saved, instance_id, platform)
 
     if recipe.trainer_nodes > 1:
-        trainer = modal.experimental.clustered(recipe.trainer_nodes, rdma=True)(trainer)
+        trainer = modal.clustered(size=recipe.trainer_nodes, rdma=True)(trainer)
     trainer = app.function(
         name="trainer",
         serialized=True,
@@ -260,7 +264,7 @@ def _warm_lora_pool(frontend: str, definition_id: str) -> None:
     """Deploy the sampler pool now that a trainer has GPUs, not while it queues."""
     try:
         modal.Function.from_name(frontend, "ensure_lora_pool").spawn(
-            LoraPoolSpec(definition_id).as_dict()
+            LoraPoolSpec(definition_id, frontend).as_dict()
         )
     except Exception:
         logging.getLogger(__name__).exception("warm LoRA pool %s", definition_id)
@@ -297,7 +301,18 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         ephemeral_disk=recipe.inference_disk_mib or None,
         volumes=volumes_for(platform),
         secrets=secrets_for(platform),
-        env=deployment_env(recipe.inference_env),
+        env=deployment_env(
+            # Split-K speeds up decode-sized LoRA batches on H200 and B200.
+            ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
+            | recipe.inference_env
+            | (
+                {
+                    "SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1",
+                }
+                if lora and recipe.inference_lora_routing == "cache_wait"
+                else {}
+            )
+        ),
         min_containers=minimum,
         max_containers=maximum,
         target_concurrency=recipe.inference_target_concurrency,

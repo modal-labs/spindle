@@ -13,8 +13,8 @@ def gpu_label(gpu: str | list[str], gpus_per_node: int, nodes: int = 1) -> str:
 
 
 def gpu_wait(
-    function_for: Callable[[str], modal.Function],
-    label_for: Callable[[str], str],
+    function_for: Callable[[str], Awaitable[modal.Function]],
+    label_for: Callable[[str], Awaitable[str]],
     clock: Callable[[], float] = time.monotonic,
 ) -> Callable[[str], Awaitable[str | None]]:
     """Report the requested GPUs while a function has queued inputs and no containers.
@@ -28,9 +28,10 @@ def gpu_wait(
         cached = checked.get(definition_id)
         if cached is not None and clock() - cached[0] < CHECK_INTERVAL_S:
             return cached[1]
-        stats = await function_for(definition_id).get_current_stats.aio()
+        function = await function_for(definition_id)
+        stats = await function.get_current_stats.aio()
         queued = stats.backlog > 0 and stats.num_total_runners == 0
-        result = label_for(definition_id) if queued else None
+        result = await label_for(definition_id) if queued else None
         checked[definition_id] = (clock(), result)
         return result
 

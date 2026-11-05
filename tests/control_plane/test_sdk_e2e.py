@@ -478,6 +478,7 @@ def test_real_sdk_lost_model_fails_fast(tmp_path, monkeypatch) -> None:
     with serve(app) as url:
         service = tinker.ServiceClient(base_url=url, api_key=API_KEY)
         training = service.create_lora_training_client(base_model=BASE_MODEL, rank=32)
+        training.get_info()  # the model exists once this returns
         [instance] = asyncio.run(plane.engines.list_instances())
         asyncio.run(plane.engines.mark_dead(instance.instance_id))
 
@@ -577,6 +578,22 @@ def test_real_sdk_forward_only(base_url: str) -> None:
     result = training.forward([datum], "cross_entropy").result(timeout=30)
     assert result.metrics["loss:sum"] == 1.25
     assert len(result.loss_fn_outputs) == 1
+
+
+def test_finished_session_is_closed(base_url: str) -> None:
+    headers = {"x-api-key": API_KEY}
+    with httpx.Client(base_url=base_url, headers=headers) as client:
+        session_id = client.post("/api/v1/create_session", json={}).json()["session_id"]
+        finish = {"reason": {"type": "success"}, "detail": None}
+        url = f"/api/v1/sessions/{session_id}/finish"
+        assert client.post(url, json=finish).status_code == 200
+        assert client.post(url, json=finish).status_code == 200
+        heartbeat = {"session_id": session_id}
+        assert (
+            client.post("/api/v1/session_heartbeat", json=heartbeat).status_code == 409
+        )
+        missing = client.post("/api/v1/sessions/missing/finish", json=finish)
+        assert missing.status_code == 404
 
 
 def test_dynamic_config_requires_api_key(base_url: str) -> None:

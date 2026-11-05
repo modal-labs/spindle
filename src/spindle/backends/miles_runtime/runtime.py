@@ -14,6 +14,9 @@ from itertools import count
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import torch
+
 from spindle.backends.miles_arguments import defer_config_overrides
 from spindle.backends.miles_config import MilesBackendConfig
 from spindle.errors import BackendFailed
@@ -237,6 +240,7 @@ class MilesRuntime:
         _configure_actor_spec(train_specs)
         if create_trainer_handles is None:
             _allow_context_parallel_multi_lora(lora_arguments)
+        _allow_allgather_cp_bshd_multi_lora(lora_arguments)
         architecture = (
             shlex.split(load_model_args(self.config.model_type))
             if self.config.model_type
@@ -311,9 +315,7 @@ class MilesRuntime:
             )
             await self._trainer.init()
         startup.mark("trainer_actors_initialized")
-        self._bridge = tinker_runtime.MilesBackend(
-            self._trainer, router_url="", dp_size=1
-        )
+        self._bridge = _array_bridge(self._trainer)
         startup.mark("miles_backend_ready")
 
     async def _close(self) -> None:
@@ -356,6 +358,56 @@ _WORKER_ENV_VARS = (
     "TILELANG_CACHE_DIR",
     "EXPERT_LORA_COMPAT",
 )
+
+
+def _array_bridge(trainer):
+    """Miles's ``_execute_batch`` builds per-token Python lists and returns log
+    probabilities with ``.tolist()``; this keeps rows and outputs as arrays."""
+
+    class ArrayBackend(tinker_runtime.MilesBackend):
+        async def _execute_batch(
+            self, method, batch_id, slot_datums, loss_fn, loss_fn_config
+        ):
+            train_data = tinker_runtime._build_train_data(slot_datums)
+            # Data-parallel padding rows come from pad_slot_rows with zero weights.
+            train_data["loss_masks"] = [
+                np.ones(row["target_len"], np.int32) for _, row in slot_datums
+            ]
+            # Miles slices these per context-parallel rank with list ``+`` or
+            # ``torch.cat``; an array would reach ``torch.cat``.
+            for key in ("loss_weights", "advantages", "rollout_log_probs"):
+                if key in train_data:
+                    train_data[key] = [
+                        torch.as_tensor(values) for values in train_data[key]
+                    ]
+            train_data["loss_fn"] = loss_fn
+            train_data["loss_fn_config"] = loss_fn_config
+            store = object_store.get_instance()
+            data_ref = store.put(
+                value=train_data, value_spec=tinker_runtime.ROLLOUT_DATA_VALUE_SPEC
+            )
+            try:
+                worker_results = await getattr(self.trainer, method)(
+                    batch_id=batch_id, data_ref=data_ref
+                )
+            finally:
+                store.remove(data_ref)
+            outputs: dict[int, dict] = {}
+            for worker_result in worker_results:
+                if "error" in worker_result:
+                    return worker_result
+                for datum_output in worker_result["per_datum"]:
+                    index = int(datum_output["sample_index"])
+                    if index not in outputs:
+                        outputs[index] = {
+                            "loss": float(datum_output["loss"]),
+                            "logprobs": torch.as_tensor(datum_output["logprobs"])
+                            .float()
+                            .numpy(),
+                        }
+            return [outputs[index] for index in range(len(slot_datums))]
+
+    return ArrayBackend(trainer, router_url="", dp_size=1)
 
 
 def _worker_env() -> dict[str, str]:
@@ -432,6 +484,28 @@ def _configure_actor_spec(train_specs) -> None:
 
     compute._spindle_actor_spec = True
     train_specs._compute_spec_trainer = compute
+
+
+def _allow_allgather_cp_bshd_multi_lora(lora_arguments) -> None:
+    """Miles rejects multi-LoRA with all-gather CP. With bshd rows the actor's
+    allgather_cp_lora patch counts each adapter's tokens, so skip that check."""
+    original = lora_arguments.validate_multi_lora_args
+    if getattr(original, "__spindle_allows_allgather_bshd__", False):
+        return
+
+    @wraps(original)
+    def validate(args) -> None:
+        allgather_cp = getattr(args, "allgather_cp", False)
+        if not (allgather_cp and getattr(args, "qkv_format", "thd") == "bshd"):
+            return original(args)
+        args.allgather_cp = False
+        try:
+            original(args)
+        finally:
+            args.allgather_cp = allgather_cp
+
+    validate.__spindle_allows_allgather_bshd__ = True
+    lora_arguments.validate_multi_lora_args = validate
 
 
 def _allow_context_parallel_multi_lora(lora_arguments) -> None:

@@ -7,7 +7,7 @@ MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
 MILES_BRANCH = "spindle-miles-v0.1.2"
 # Head of MILES_BRANCH. Modal caches this layer by command, so fetching the branch
 # by name would keep serving an older head.
-MILES_COMMIT = "11286edcb5a74b6bc48187ce7ada563f6a84fc4c"
+MILES_COMMIT = "f2f8447c33ac0755a0988c30d413d334dea0a26a"
 
 image = release_image.run_commands(
     f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {MILES_COMMIT}"

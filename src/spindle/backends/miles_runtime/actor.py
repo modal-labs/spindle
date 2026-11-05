@@ -20,7 +20,11 @@ from miles_plugins.models import qwen3_vl as miles_qwen3_vl
 
 try:
     from miles.backends.training_utils.checkpoint import io as checkpoint_io
-    from miles.backends.training_utils.loss.hub import logit_processors, tinker_losses
+    from miles.backends.training_utils.loss.hub import (
+        logit_processors,
+        math_utils,
+        tinker_losses,
+    )
     from miles.backends.training_utils.replay.data import fill_replay_data
 
     tinker_cp = None
@@ -28,14 +32,18 @@ except ImportError:
     # Miles v0.1.1: older module paths, and its Tinker losses need tinker_cp to
     # gather log probabilities across context-parallel ranks (v0.1.2 does it itself).
     from miles.backends.training_utils import checkpoint_io
-    from miles.backends.training_utils.loss_hub import logit_processors, tinker_losses
+    from miles.backends.training_utils.loss_hub import (
+        logit_processors,
+        math_utils,
+        tinker_losses,
+    )
     from miles.backends.training_utils.replay_data import fill_replay_data
 
     from . import tinker_cp
 
 from spindle.startup_timing import timeline
 
-from . import expert_lora_compat, host_syncs
+from . import allgather_cp_lora, expert_lora_compat, host_syncs
 from .volumes import install_cross_node_checkpoint_publish, sync_checkpoint_volume
 from .profiling import RankProfiler, TorchProfileConfig
 from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
@@ -50,6 +58,7 @@ install_replay_hooks(
     lora_model=lora_model,
     logit_processors=logit_processors,
     tinker_losses=tinker_losses,
+    math_utils=math_utils,
     fill_replay_data=fill_replay_data,
     manager=routing_replay_manager,
 )
@@ -59,6 +68,7 @@ install_qwen3_vl_cp_position_ids(
 )
 
 host_syncs.install()
+allgather_cp_lora.install(megatron_model)
 
 
 def _publish_checkpoints_across_nodes() -> None:

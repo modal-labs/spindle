@@ -47,6 +47,14 @@ def trainer_demand_key(model_id: str) -> str:
     return f"trainer_demand:{_model_part(model_id)}"
 
 
+def queue_event_key(kind: str, model_id: str) -> str:
+    return f"queue_event:{_part(kind)}:{_model_part(model_id)}"
+
+
+def trainer_slot_wait_key(model_id: str) -> str:
+    return f"trainer_slot_wait:{_model_part(model_id)}"
+
+
 def sampling_session_creation_key(session_id: str, seq_id: int) -> str:
     if seq_id < 0:
         raise ValueError("seq_id must be non-negative")

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -18,6 +20,7 @@ from rich.table import Table
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig, load
+from spindle.providers.modal.deployment_configs import deployed_configs
 
 CONFIG_DIR = Path(__file__).with_name("configs")
 SERVED_TIMEOUT_S = 20
@@ -227,26 +230,28 @@ def ask(question):
     return answer
 
 
-def check_served(frontend: str, environment: str | None):
-    try:
-        return modal.Function.from_name(
-            frontend, "deployed_configs", environment_name=environment
-        ).spawn()
-    except modal.exception.NotFoundError:
-        return None
+def check_served(frontend: str, environment: str | None) -> Future:
+    """Start reading what the frontend serves while the user picks models."""
+    future = Future()
+
+    def run():
+        try:
+            future.set_result(deployed_configs(frontend, environment))
+        except BaseException as exc:
+            future.set_exception(exc)
+
+    threading.Thread(target=run, daemon=True).start()
+    return future
 
 
-def served_configs(console: Console, call) -> list[str] | None:
-    """Names the current frontend serves, or None if it doesn't answer in time."""
-    if call is None:
-        return []
+def served_configs(console: Console, served: Future) -> list[str] | None:
+    """Names the current frontend serves, or None if they can't be read in time."""
     with console.status("Checking what's already deployed..."):
         try:
-            rows = call.get(timeout=SERVED_TIMEOUT_S)
-        except (TimeoutError, modal.exception.TimeoutError):
-            call.cancel()
+            rows = served.result(timeout=SERVED_TIMEOUT_S)
+        except (TimeoutError, ValueError):
             return None
-    return [DeploymentConfig.model_validate(row).name for row in rows]
+    return [DeploymentConfig.from_registry(row).name for row in rows]
 
 
 def choose(console: Console, frontend: str, environment: str | None) -> list[Preset]:
@@ -346,7 +351,9 @@ def deploy_command(chosen: list[Preset]) -> str:
 
 
 def stop_command(frontend: str, environment: str | None) -> str:
-    return f"modal app stop {frontend}" + (f" -e {environment}" if environment else "")
+    return f"spindle stop --app {frontend}" + (
+        f" --env {environment}" if environment else ""
+    )
 
 
 def show_plan(
@@ -377,11 +384,12 @@ def show_plan(
             f"If it's broken, stop it with `{stop}`, then run spindle deploy again.[/yellow]"
         )
         served = []
-    dropped = sorted(set(served) - {preset.name for preset in chosen})
-    if dropped:
+    kept = sorted(set(served) - {preset.name for preset in chosen})
+    if kept:
         console.print(
-            f"[yellow]This replaces the current deployment: {len(dropped)} config(s) "
-            "not picked here will stop being served.[/yellow]"
+            f"Already deployed and kept serving: {', '.join(kept)}. "
+            "Stop the whole deployment with "
+            f"`{stop}` to remove them.\n"
         )
     console.print(
         f"Skip these prompts next time with:\n  [bold]{deploy_command(chosen)}[/bold]\n"

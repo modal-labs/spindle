@@ -5,7 +5,12 @@ import pytest
 
 from tests.support import EchoExecutor
 from spindle.control_plane import ControlPlane, FutureResolutionStatus
-from spindle.control_plane.keys import model_key, placement_key, trainer_demand_key
+from spindle.control_plane.keys import (
+    model_key,
+    placement_key,
+    trainer_demand_key,
+    trainer_slot_wait_key,
+)
 from spindle.engine import OperationKind
 from spindle.errors import (
     RecordNotFound,
@@ -477,42 +482,148 @@ def test_prepare_model_failure_leaves_no_runnable_model() -> None:
     asyncio.run(run())
 
 
-def test_model_creation_reports_saturation_at_trainer_cap() -> None:
+async def full_trainer_plane() -> tuple[ControlPlane, list[float]]:
+    """One running trainer with one slot, at its recipe's trainer limit."""
+
     async def no_capacity(definition_id: str) -> bool:
         return False
 
+    engines = LocalEnginePlatform(DEFINITION, EchoExecutor, max_models=1)
+    await engines.spawn_instance(DEFINITION)
+    now = [1000.0]
+
+    async def one_slot(_):
+        return 1
+
+    plane = ControlPlane(
+        InMemoryKeyValueStore(),
+        engines,
+        reconcile_trainers=no_capacity,
+        trainer_autoscaling=lambda _: True,
+        trainer_slots=one_slot,
+        session_idle_timeout=300,
+        clock=lambda: now[0],
+    )
+    return plane, now
+
+
+async def new_model(plane: ControlPlane, now: list[float]):
+    now[0] += 1
+    session = await plane.create_session()
+    return await plane.create_model(
+        session_id=session.session_id,
+        model_seq_id=0,
+        definition_id=DEFINITION,
+        spec={"rank": 32},
+    )
+
+
+async def advance(plane: ControlPlane, now: list[float], seconds: float, *live):
+    now[0] += seconds
+    for creation in live:
+        await plane.heartbeat(creation.model.session_id)
+
+
+def test_model_creation_waits_in_line_for_a_trainer_slot() -> None:
     async def run() -> None:
-        kv = InMemoryKeyValueStore()
+        plane, now = await full_trainer_plane()
+        first, second, third = [await new_model(plane, now) for _ in range(3)]
+        assert (
+            await plane.retrieve(first.request_id)
+        ).status == FutureResolutionStatus.COMPLETE
+        await plane.retrieve(second.request_id)
+
+        waiting = await plane.retrieve(third.request_id)
+        assert waiting.status == FutureResolutionStatus.PENDING
+        assert waiting.queue_state == "paused_capacity"
+        assert waiting.reason == (
+            f"all trainer slots for {DEFINITION} are in use; waiting for one to "
+            "free up (2nd in line, 0s so far)"
+        )
+
+        await plane.unload_model(first.model.model_id)
+        assert (
+            await plane.retrieve(third.request_id)
+        ).status == FutureResolutionStatus.PENDING
+        assert (
+            await plane.retrieve(second.request_id)
+        ).status == FutureResolutionStatus.COMPLETE
+        assert await plane.kv.get(trainer_slot_wait_key(second.model.model_id)) is None
+
+        await advance(plane, now, 5, second, third)
+        waiting = await plane.retrieve(third.request_id)
+        assert waiting.reason == (
+            f"all trainer slots for {DEFINITION} are in use; waiting for one to "
+            "free up (1st in line, 5s so far)"
+        )
+        await plane.unload_model(second.model.model_id)
+        assert (
+            await plane.retrieve(third.request_id)
+        ).status == FutureResolutionStatus.COMPLETE
+
+    asyncio.run(run())
+
+
+def test_waiter_that_stopped_polling_does_not_hold_the_line() -> None:
+    async def run() -> None:
+        plane, now = await full_trainer_plane()
+        first, gone, waiting = [await new_model(plane, now) for _ in range(3)]
+        await plane.retrieve(first.request_id)
+        await plane.retrieve(gone.request_id)
+        await plane.retrieve(waiting.request_id)
+
+        await plane.unload_model(first.model.model_id)
+        assert (
+            await plane.retrieve(waiting.request_id)
+        ).status == FutureResolutionStatus.PENDING
+        await advance(plane, now, 31, gone, waiting)
+        assert (
+            await plane.retrieve(waiting.request_id)
+        ).status == FutureResolutionStatus.COMPLETE
+
+    asyncio.run(run())
+
+
+def test_model_creation_waits_for_a_trainer_that_starts_during_placement() -> None:
+    async def run() -> None:
         engines = LocalEnginePlatform(DEFINITION, EchoExecutor, max_models=1)
-        await engines.spawn_instance(DEFINITION)
+        first = await engines.spawn_instance(DEFINITION)
+        second = await engines.spawn_instance(DEFINITION)
+        await engines.client(first.instance_id).accept_model("occupied", {"rank": 32})
+        await engines.set_instance_state(second.instance_id, "starting")
+        promote = False
+
+        async def reconcile(definition_id: str) -> bool:
+            if promote:
+                await engines.set_instance_state(second.instance_id, "running")
+            instances = await engines.list_instances()
+            return any(i.state in {"starting", "draining"} for i in instances) or (
+                len(instances) < 2
+            )
+
         plane = ControlPlane(
-            kv,
+            InMemoryKeyValueStore(),
             engines,
-            reconcile_trainers=no_capacity,
+            reconcile_trainers=reconcile,
             trainer_autoscaling=lambda _: True,
-            session_idle_timeout=300,
         )
         session = await plane.create_session()
-        first = await plane.create_model(
+        creation = await plane.create_model(
             session_id=session.session_id,
             model_seq_id=0,
             definition_id=DEFINITION,
             spec={"rank": 32},
         )
+        promote = True
         assert (
-            await plane.retrieve(first.request_id)
+            await plane.retrieve(creation.request_id)
+        ).status == FutureResolutionStatus.PENDING
+        assert (
+            await plane.retrieve(creation.request_id)
         ).status == FutureResolutionStatus.COMPLETE
-
-        overflow = await plane.create_model(
-            session_id=session.session_id,
-            model_seq_id=1,
-            definition_id=DEFINITION,
-            spec={"rank": 32},
+        assert await engines.client(second.instance_id).model_ids() == (
+            creation.model.model_id,
         )
-        resolution = await plane.retrieve(overflow.request_id)
-        assert resolution.status == FutureResolutionStatus.FAILED
-        assert resolution.error == "engine refused work: trainer capacity exhausted"
-        assert resolution.category == "server"
 
     asyncio.run(run())
 

@@ -15,10 +15,10 @@ from rich.console import Console
 from spindle import deploy_wizard
 from spindle import deployment_cli as cli
 from spindle.deployments import DeploymentConfig, config_path, load
+from spindle.providers.local import InMemoryKeyValueStore
 from spindle.providers.modal import deployment_configs
 from spindle.providers.modal.deployment_configs import (
-    CONFIGS_FILE_ENV,
-    PLATFORM_ENV,
+    FRONTEND_SETTINGS_ENV,
     deployed_configs,
 )
 from spindle.providers.modal.fft_pool import FFTPoolSpec
@@ -49,7 +49,7 @@ def deployed(monkeypatch):
             self.name = name
             self.role = role
 
-        def deploy(self, environment_name=None):
+        def deploy(self, environment_name=None, tag=""):
             state.calls.append(self.role)
             if state.fail == self.role:
                 raise RuntimeError(f"{self.role} deploy failed")
@@ -66,11 +66,22 @@ def deployed(monkeypatch):
         state.calls.append("frontend")
         if state.fail == "frontend":
             raise subprocess.CalledProcessError(1, command)
-        state.configs = json.loads(Path(env[CONFIGS_FILE_ENV]).read_text())
-        state.platform = json.loads(env[PLATFORM_ENV])
+        state.platform = json.loads(env[FRONTEND_SETTINGS_ENV])["platform"]
         state.env = env
 
+    def write_registry(frontend, environment, configs, *, keep_existing=()):
+        if state.platform is None:
+            return False  # the frontend is not deployed yet
+        registry = {row["recipe"]["name"]: row for row in state.configs}
+        for row in keep_existing:
+            registry.setdefault(row["recipe"]["name"], row)
+        for row in configs:
+            registry[row["recipe"]["name"]] = row
+        state.configs = list(registry.values())
+        return True
+
     monkeypatch.setattr(cli, "deployed_configs", read_configs)
+    monkeypatch.setattr(cli, "write_registry", write_registry)
     monkeypatch.setattr(cli, "deployed_pools", lambda *args: state.pools)
     monkeypatch.setattr(cli, "deployed_platform", lambda *args: state.platform)
     monkeypatch.setattr(modal.App, "lookup", lookup)
@@ -126,7 +137,15 @@ def test_deploy_all_deploys_bundled_configs(tmp_path, monkeypatch, deployed):
     assert max(len(value) for value in deployed.env.values()) < 131_072
 
 
+def registry(monkeypatch, rows, app_id="ap-1"):
+    """Point deployed_configs at an in-memory registry folder."""
+    store = InMemoryKeyValueStore({row["recipe"]["name"]: row for row in rows})
+    monkeypatch.setattr(deployment_configs, "frontend_app_id", lambda *a: app_id)
+    monkeypatch.setattr(deployment_configs, "deployment_kv", lambda *a: store)
+
+
 def test_unresponsive_frontend_fails_fast(monkeypatch):
+    registry(monkeypatch, [])
     cancelled = []
 
     class Call:
@@ -383,7 +402,18 @@ def test_existing_frontend_without_deployment_metadata_can_be_updated(deployed):
     assert deployed.configs[0]["recipe"]["name"] == row.name
 
 
-def test_read_configs_from_deployed_function(monkeypatch):
+def test_read_configs_from_the_registry_without_calling_the_frontend(monkeypatch):
+    row = {"recipe": {"name": "qwen"}}
+    registry(monkeypatch, [row])
+    lookup = Mock(side_effect=AssertionError("the frontend was called"))
+    monkeypatch.setattr(modal.Function, "from_name", lookup)
+    assert deployed_configs("my-app", "dev") == [row]
+    registry(monkeypatch, [row], app_id=None)
+    assert deployed_configs("my-app", "dev") == []
+
+
+def test_frontend_from_before_the_registry_reports_its_configs(monkeypatch):
+    registry(monkeypatch, [])
     call = SimpleNamespace(get=Mock(return_value=[{"configuration": "saved"}]))
     function = SimpleNamespace(spawn=Mock(return_value=call))
     lookup = Mock(return_value=function)
@@ -502,3 +532,121 @@ def test_conflicting_platforms_fail_before_deployment(deployed):
     with pytest.raises(ValueError, match="share platform settings"):
         cli.deploy([first, second])
     assert deployed.calls == []
+
+
+def served_elsewhere(name="unlisted-but-served"):
+    row = DeploymentConfig.create(load(config_path("qwen35-4b-fft-64k")))
+    data = row.model_dump(mode="json")
+    data["recipe"]["name"] = name
+    return data
+
+
+def test_deploy_adds_listed_configs_and_keeps_unlisted_ones(deployed):
+    cli.deploy([deployment()])
+    other = served_elsewhere()
+    deployed.configs.append(other)
+    deployed.calls.clear()
+    cli.deploy([deployment()])
+    assert other in deployed.configs
+    assert deployed.calls == ["frontend"]
+
+
+def test_deploy_carries_over_a_pre_registry_frontends_recipes(deployed):
+    other = served_elsewhere()
+    deployed.configs = [other]
+    deployed.platform = deployment().recipe.platform
+    cli.deploy([deployment()])
+    assert {row["recipe"]["name"] for row in deployed.configs} == {
+        "unlisted-but-served",
+        deployment().name,
+    }
+
+
+def test_platform_change_refuses_to_strand_unlisted_recipes(deployed):
+    deployed.configs = [served_elsewhere()]
+    deployed.platform = {**deployment().recipe.platform, "url_label": "old"}
+    with pytest.raises(ValueError, match="unlisted-but-served"):
+        cli.deploy([deployment()])
+    assert deployed.calls == []
+
+
+def test_lifecycle_change_refuses_to_reset_unlisted_recipes(deployed):
+    other = served_elsewhere()
+    other["recipe"]["session_idle_timeout_s"] = 86_400
+    deployed.configs = [other]
+    deployed.platform = deployment().recipe.platform
+    with pytest.raises(
+        ValueError, match=r"session_idle_timeout_s for \['unlisted-but-served'\]"
+    ):
+        cli.deploy([deployment()])
+    assert deployed.calls == []
+
+
+def test_app_flag_names_every_app_after_the_frontend(deployed):
+    cli.main(["deploy", "qwen35-9b-lora-16k", "--app", "my-spindle", "--env", "dev"])
+    assert deployed.apps == {
+        "my-spindle-trainer-qwen35-9b-lora-16k",
+        "my-spindle-inference-qwen35-9b-lora-16k",
+    }
+    assert deployed.env["SPINDLE_APP_NAME"] == "my-spindle"
+    assert deployed.images == [("my-spindle", "dev")]
+    # A pool from a release that named every pool spindle-... is not refreshed.
+    old = LoraPoolSpec("qwen35-9b-lora-16k")
+    deployed.apps.add(old.app_name)
+    deployed.pools = [old.as_dict()]
+    deployed.calls.clear()
+    cli.main(["deploy", "qwen35-9b-lora-16k", "--app", "my-spindle", "--env", "dev"])
+    assert deployed.calls == ["frontend"]
+
+
+def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, capsys):
+    listed = [
+        ("my-spindle-lora-qwen35-9b-lora-16k", "deployed"),
+        ("my-spindle-trainer-qwen35-9b-lora-16k", "deployed"),
+        ("my-spindle-trainer-qwen3-8b-lora-32k", "stopped"),
+        ("my-spindle-inference-qwen35-9b-lora-16k", "deployed"),
+        ("my-spindle-fft-0123456789abcdef-latest", "deployed"),
+        ("my-spindle", "deployed"),
+        ("my-spindle-2", "deployed"),
+        ("spindle-trainer-qwen35-9b-lora-16k", "deployed"),
+        (None, "ephemeral"),
+    ]
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command[3:])
+        if command[3:5] == ["app", "list"]:
+            rows = [{"description": name, "state": state} for name, state in listed]
+            return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+        if command[5].endswith("-latest"):
+            return subprocess.CompletedProcess(
+                command, 1, "", "App is already stopped."
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    deleted = []
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(cli, "frontend_app_id", lambda frontend, env: f"ap-{frontend}")
+    monkeypatch.setattr(
+        cli, "delete_registry", lambda app_id, env: deleted.append((app_id, env))
+    )
+    cli.main(["stop", "--app", "my-spindle", "--env", "dev"])
+    assert deleted == [("ap-my-spindle", "dev")]
+    assert [command[3] for command in calls[1:]] == [
+        "my-spindle",
+        "my-spindle-inference-qwen35-9b-lora-16k",
+        "my-spindle-fft-0123456789abcdef-latest",
+        "my-spindle-lora-qwen35-9b-lora-16k",
+        "my-spindle-trainer-qwen35-9b-lora-16k",
+    ]
+    assert calls[:2] == [
+        ["app", "list", "--json", "--env", "dev"],
+        ["app", "stop", "-y", "my-spindle", "--env", "dev"],
+    ]
+    assert capsys.readouterr().out.count("Stopped ") == 5
+    calls.clear()
+    listed[:] = [("my-spindle", "stopped")]
+    cli.main(["stop", "--app", "my-spindle"])
+    assert calls == [["app", "list", "--json"]]
+    assert len(deleted) == 1
+    assert "No running apps for my-spindle" in capsys.readouterr().out

@@ -12,7 +12,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "huggingface-hub>=0.34",
-    "modal>=1.5.3",
+    "modal>=1.6.3",
     "numpy>=1.26",
     "protobuf>=5.29",
     "pydantic>=2.13.4",
@@ -30,8 +30,15 @@ version = { attr = "spindle.__version__" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+spindle = ["skills/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.data-files]
+"share/spindle/router" = ["rust/router/Cargo.toml", "rust/router/Cargo.lock", "rust/router/pyproject.toml"]
+"share/spindle/router/src" = ["rust/router/src/lib.rs", "rust/router/src/native.rs", "rust/router/src/cache_wait.rs"]
 
 [tool.ruff]
 extend-exclude = ["*.md", "src/spindle/proto/*_pb2.py"]

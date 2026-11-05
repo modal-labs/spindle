@@ -1,7 +1,7 @@
 import argparse
-import asyncio
 import json
 import sys
+import time
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,7 +19,9 @@ from spindle.backends.miles_arguments import (
 from spindle.configs.qwen35_9b_lora_16k import Config as Parent
 from spindle.configuration import BaseConfig
 from spindle.control_plane import ControlPlane, create_control_plane_app
-from spindle.control_plane.deployments import DeploymentRoutes
+from spindle.control_plane.deployments import (
+    DeploymentRoutes,
+)
 from spindle.control_plane.keys import model_key
 from spindle.deployments import (
     DeploymentConfig,
@@ -44,6 +46,28 @@ def recipe(preset="qwen35-9b-lora-16k", **changes):
 
 def resolved(spec=None, **changes):
     return DeploymentConfig.create(spec or recipe(**changes))
+
+
+class CountingStore(InMemoryKeyValueStore):
+    """An in-memory registry that counts full reads and single-file lookups."""
+
+    def __init__(self, values=None):
+        super().__init__(values)
+        self.reads = 0
+        self.gets = 0
+
+    async def list_keys(self, prefix):
+        self.reads += 1
+        return await super().list_keys(prefix)
+
+    async def get(self, key):
+        self.gets += 1
+        return await super().get(key)
+
+
+def routes_for(*deployments):
+    kv = CountingStore({d.name: d.model_dump(mode="json") for d in deployments})
+    return DeploymentRoutes(lambda: kv), kv
 
 
 @pytest.mark.parametrize("preset", ["qwen35-9b-lora-16k", "qwen35-4b-fft-64k"])
@@ -126,9 +150,7 @@ def test_deepseek_v41_lora_recipe():
     ) == (16, 1, 1, 16, 1)
     arguments = miles.miles_arguments()
     assert arguments[arguments.index("--megatron-to-hf-mode") + 1] == "raw"
-    assert arguments[arguments.index("--micro-batch-size") + 1] == "1"
-    assert "--use-dynamic-batch-size" not in arguments
-    assert miles.cli_options["qkv_format"] == "bshd"
+    assert arguments[arguments.index("--max-tokens-per-gpu") + 1] == "8192"
     assert miles.cli_options["moe_router_freeze_gate"] is True
     assert lora_target_flags(miles.target_modules) == (True, True, False)
 
@@ -153,17 +175,31 @@ def test_deepseek_v41_lora_recipe():
     assert json.loads(serving["json_model_override_args"])["vision_n_layers"] == 0
 
 
-def test_deepseek_v41_lora_32k_recipe_shards_attention_across_tp8():
-    row = resolved(recipe("deepseek-v41-flash-lora-32k"))
+@pytest.mark.parametrize(
+    "name, tp",
+    [("deepseek-v41-flash-lora-32k", 4), ("deepseek-v41-flash-lora-32k-b300", 2)],
+)
+def test_deepseek_v41_lora_32k_recipes_keep_tensor_parallelism(name, tp):
+    row = resolved(recipe(name))
     miles = MilesBackendConfig(**row.trainer_settings["miles"])
     assert (miles.tensor_model_parallel_size, miles.expert_model_parallel_size) == (
-        8,
+        tp,
         16,
     )
     assert row.inference_settings["context_length"] == 32768
 
 
-@pytest.mark.parametrize("context, tp", [("8k", 1), ("32k", 8)])
+@pytest.mark.parametrize(
+    "name", ["deepseek-v41-flash-lora-64k", "deepseek-v41-flash-lora-128k"]
+)
+def test_deepseek_v41_long_context_recipes_train_one_row_per_micro_batch(name):
+    miles = MilesBackendConfig(**resolved(recipe(name)).trainer_settings["miles"])
+    arguments = miles.miles_arguments()
+    assert arguments[arguments.index("--micro-batch-size") + 1] == "1"
+    assert miles.cli_options["qkv_format"] == "bshd"
+
+
+@pytest.mark.parametrize("context, tp", [("8k", 1), ("32k", 4)])
 def test_deepseek_v41_1017_recipes_load_the_1017_release(context, tp):
     row = resolved(recipe(f"deepseek-v41-flash-1017-lora-{context}"))
     miles = MilesBackendConfig(**row.trainer_settings["miles"])
@@ -195,41 +231,105 @@ def test_model_weights_override_assets_but_not_the_served_model():
     assert row.inference_identity() != resolved().inference_identity()
 
 
+@pytest.mark.parametrize(
+    ("changes", "match"),
+    [
+        (dict(inference_lora_routing="nearest"), "unknown inference_lora_routing"),
+        (
+            dict(inference_routing_prefill_tokens_per_second=0),
+            "prefill_tokens_per_second",
+        ),
+        *(
+            (dict(inference_lora_routing="cache_wait", **change), match)
+            for change, match in [
+                (dict(sglang_cfg__dp_size=2), "data-parallel"),
+                (dict(inference_routing_balance_relative=0.5), "balance_relative"),
+                (dict(inference_routing_balance_absolute=-1), "balance_absolute"),
+                (dict(inference_routing_cache_threshold=1.5), "cache_threshold"),
+            ]
+        ),
+    ],
+)
+def test_invalid_routing_fails_at_deploy(changes, match):
+    with pytest.raises(ValueError, match=match):
+        resolved(**changes)
+
+
+@pytest.mark.parametrize(
+    ("preset", "changes", "routing"),
+    [
+        ("qwen35-9b-lora-16k", {}, "cache_wait"),
+        ("qwen35-9b-lora-16k", dict(sglang_cfg__dp_size=2), "affinity"),
+        ("qwen35-4b-fft-64k", {}, "affinity"),
+        ("qwen35-9b-lora-16k", dict(inference_lora_routing="affinity"), "affinity"),
+    ],
+)
+def test_lora_pools_with_one_data_parallel_rank_default_to_cache_wait(
+    preset, changes, routing
+):
+    row = resolved(recipe(preset, **changes))
+    assert row.recipe.inference_lora_routing == routing
+
+
+@pytest.mark.parametrize(
+    ("running", "absolute"), [(4, 4), (32, 13), (80, 32), (128, 51)]
+)
+def test_cache_wait_balance_scales_with_running_requests(running, absolute):
+    row = resolved(sglang_cfg__max_running_requests=running)
+    assert row.recipe.inference_routing_balance_absolute == absolute
+    assert row.recipe.inference_routing_prefill_tokens_per_second is None
+    configured = resolved(
+        sglang_cfg__max_running_requests=running, inference_routing_balance_absolute=7
+    )
+    assert configured.recipe.inference_routing_balance_absolute == 7
+
+
+def test_switching_routing_redeploys_the_pool():
+    # Only cache_wait pools run the observer.
+    affinity = resolved(inference_lora_routing="affinity")
+    assert affinity.inference_identity() != resolved().inference_identity()
+
+
 def test_trainer_image_is_part_of_trainer_identity():
     trainer = resolved(recipe(trainer_image="trainer-x"))
     assert trainer.trainer_identity() != resolved().trainer_identity()
     assert trainer.inference_identity() == resolved().inference_identity()
 
 
-def test_routing_uses_deployment_order():
-    small = resolved()
-    large = resolved(recipe("qwen35-9b-lora-64k"))
-    routes = DeploymentRoutes([small, large])
-    assert routes.select(small.model, "lora").definition_id == small.definition_id
-    assert routes.capabilities()[0]["max_context_length"] == 16384
+@pytest.mark.anyio
+async def test_routing_prefers_longest_context():
+    small = resolved(recipe("deepseek-v41-flash-lora-8k"))
+    large = resolved(recipe("deepseek-v41-flash-lora-32k"))
+    routes, _ = routes_for(small, large)
+    assert (await routes.select(small.model, "lora")).definition_id == large.name
+    assert (await routes.select(small.name)).definition_id == small.name
+    assert (await routes.capabilities())[0] == {
+        "model_name": small.model,
+        "max_context_length": 32768,
+    }
     validate_frontend([small.recipe, large.recipe])
 
-    routes = DeploymentRoutes([large])
-    assert routes.select(small.model, "lora").definition_id == large.definition_id
-    assert routes.capabilities()[0]["max_context_length"] == 65536
+    twin = resolved(recipe("deepseek-v41-flash-lora-8k", name="twin"))
+    routes, _ = routes_for(small, twin)
+    assert (await routes.select(small.model, "lora")).definition_id == small.name
 
     other = resolved(recipe(name="other", model="org/other"))
-    routes = DeploymentRoutes([other])
-    assert routes.select(other.model, "lora").definition_id == other.definition_id
-    assert {row["model_name"] for row in routes.capabilities()} == {other.model}
+    routes, _ = routes_for(other)
+    assert (await routes.select(other.model, "lora")).definition_id == other.name
 
 
-def test_sampling_uses_order_and_training_filters_parameterization():
+@pytest.mark.anyio
+async def test_sampling_prefers_longest_context_and_training_filters_parameterization():
     lora = resolved()
     fft = resolved(recipe("qwen35-4b-fft-64k", model=lora.model))
-    for first, second in ((lora, fft), (fft, lora)):
-        routes = DeploymentRoutes([first, second])
-        assert routes.select(lora.model).definition_id == first.definition_id
-        assert routes.select(lora.model, "lora").definition_id == lora.definition_id
-        assert routes.select(lora.model, "full").definition_id == fft.definition_id
-        assert routes.select(second.definition_id).definition_id == second.definition_id
-        assert routes.select("missing") is None
-        assert routes.select(lora.definition_id, "full") is None
+    for deployments in ((lora, fft), (fft, lora)):
+        routes, _ = routes_for(*deployments)
+        assert (await routes.select(lora.model)).name == fft.name
+        assert (await routes.select(lora.model, "lora")).name == lora.name
+        assert (await routes.select(lora.model, "full")).name == fft.name
+        assert (await routes.select(deployments[1].name)).name == deployments[1].name
+        assert await routes.select("missing") is None
+        assert await routes.select(lora.name, "full") is None
 
 
 def test_native_false_list_aliases_and_scalar_overrides():
@@ -268,40 +368,208 @@ def test_deferred_overrides_see_arguments_added_after_hook():
     assert argv == ["--qkv-format", "bshd", "--qkv-format=thd"]
 
 
-def test_multiple_models_same_http_service_and_old_binding_survives_switch():
-    async def run():
-        store = InMemoryKeyValueStore()
-        plane = ControlPlane(store, SimpleNamespace())
-        first = resolved()
-        other = resolved(recipe(name="other", model="org/other-model"))
-        app = create_control_plane_app(plane, [first, other], api_key="test")
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            base_url="http://one-frontend",
-            headers={"x-api-key": "test"},
-        ) as client:
-            session = (await client.post("/api/v1/create_session", json={})).json()[
-                "session_id"
-            ]
-            for seq, row in enumerate([first, other]):
-                response = await client.post(
-                    "/api/v1/create_model",
-                    json={
-                        "session_id": session,
-                        "model_seq_id": seq,
-                        "base_model": row.model,
-                        "lora_config": {"rank": 32},
-                    },
-                )
-                assert response.status_code == 200, response.text
-                record = await store.get(model_key(response.json()["model_id"]))
-                assert record["engine_definition_id"] == row.definition_id
-            configs = await client.get("/api/v1/spindle/deployments")
-            assert len(configs.json()["deployments"]) == 2
-            client.headers.clear()
-            assert (await client.get("/api/v1/spindle/deployments")).status_code == 401
+@pytest.mark.anyio
+async def test_multiple_models_same_http_service_and_old_binding_survives_switch():
+    store = InMemoryKeyValueStore()
+    plane = ControlPlane(store, SimpleNamespace())
+    first = resolved()
+    other = resolved(recipe(name="other", model="org/other-model"))
+    app = create_control_plane_app(plane, [first, other], api_key="test")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://one-frontend",
+        headers={"x-api-key": "test"},
+    ) as client:
+        session = (await client.post("/api/v1/create_session", json={})).json()[
+            "session_id"
+        ]
+        for seq, row in enumerate([first, other]):
+            response = await client.post(
+                "/api/v1/create_model",
+                json={
+                    "session_id": session,
+                    "model_seq_id": seq,
+                    "base_model": row.model,
+                    "lora_config": {"rank": 32},
+                },
+            )
+            assert response.status_code == 200, response.text
+            record = await store.get(model_key(response.json()["model_id"]))
+            assert record["engine_definition_id"] == row.definition_id
+        configs = await client.get("/api/v1/spindle/deployments")
+        assert len(configs.json()["deployments"]) == 2
+        client.headers.clear()
+        assert (await client.get("/api/v1/spindle/deployments")).status_code == 401
 
-    asyncio.run(run())
+
+async def names(routes):
+    return [d.name for d in await routes.definitions()]
+
+
+@pytest.mark.anyio
+async def test_requests_for_cached_recipes_and_models_never_read_the_registry():
+    base = resolved()
+    routes, store = routes_for(base)
+    await routes.definitions()
+    before = (store.reads, store.gets)
+    assert (await routes.select(base.model)).name == base.name
+    assert (await routes.select(base.name)).name == base.name
+    assert await routes.select("Unknown/Model") is None
+    assert (store.reads, store.gets) == before
+
+
+@pytest.mark.anyio
+async def test_a_newly_registered_recipe_is_found_on_its_first_request():
+    base = resolved()
+    routes, store = routes_for(base)
+    await routes.definitions()
+    reads = store.reads
+    new = resolved(recipe(name="new-name", max_context_length=32768))
+    await store.put(new.name, new.model_dump(mode="json"))
+    assert (await routes.select(new.name)).name == new.name
+    assert store.reads == reads + 1
+
+
+@pytest.mark.anyio
+async def test_a_stale_cache_is_served_while_one_refresh_runs_in_the_background():
+    base = resolved()
+    routes, store = routes_for(base)
+    await routes.definitions()
+    added = resolved(recipe(name="added", max_context_length=32768))
+    await store.put(added.name, added.model_dump(mode="json"))
+    routes._loaded_at = time.monotonic() - 6
+    reads = store.reads
+    assert await names(routes) == [base.name]
+    assert await names(routes) == [base.name]
+    await routes._refresh
+    assert store.reads == reads + 1
+    assert set(await names(routes)) == {base.name, added.name}
+
+
+@pytest.mark.anyio
+async def test_a_failed_refresh_keeps_the_last_recipe_list():
+    base = resolved()
+    routes, store = routes_for(base)
+    await routes.definitions()
+
+    async def unavailable(prefix):
+        raise ConnectionError("volume unavailable")
+
+    store.list_keys = unavailable
+    routes._loaded_at = time.monotonic() - 6
+    assert await names(routes) == [base.name]
+    await routes._refresh
+    assert await names(routes) == [base.name]
+
+
+@pytest.mark.anyio
+async def test_unreadable_registry_files_are_skipped_and_kept():
+    base = resolved()
+    routes, store = routes_for(base)
+    await store.put("invalid", {"recipe": {"name": "invalid"}})
+    await store.put("not-json", {})
+    read = store.get
+
+    async def get(key):
+        if key == "not-json":
+            raise json.JSONDecodeError("truncated", "{", 1)
+        return await read(key)
+
+    store.get = get
+    assert await names(routes) == [base.name]
+    assert await read("invalid") is not None
+    assert await read("not-json") is not None
+
+
+@pytest.mark.anyio
+async def test_the_registry_ignores_fields_a_newer_spindle_wrote():
+    base = resolved()
+    routes, store = routes_for(base)
+    row = {**base.model_dump(mode="json"), "added_in_a_later_release": True}
+    await store.put(base.name, row)
+    with pytest.raises(ValueError):
+        DeploymentConfig.model_validate(row)
+    assert await names(routes) == [base.name]
+
+
+def client_for(routes, store=None):
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(
+            app=create_control_plane_app(
+                ControlPlane(store or InMemoryKeyValueStore(), SimpleNamespace()),
+                routes,
+                api_key="test",
+            )
+        ),
+        base_url="http://frontend",
+        headers={"x-api-key": "test"},
+    )
+
+
+@pytest.mark.anyio
+async def test_every_recipe_routes_by_name_and_plain_models_pick_the_longest():
+    kv = InMemoryKeyValueStore()
+    base = resolved()
+    longer = resolved(recipe(name="longer", max_context_length=65536))
+    routes, _ = routes_for(base, longer)
+    assert (await routes.select(base.model)).definition_id == "longer"
+    assert (await routes.select(base.name)).definition_id == base.definition_id
+    assert await routes.capabilities() == [
+        {"model_name": base.model, "max_context_length": 65536},
+        {"model_name": "longer", "max_context_length": 65536},
+        {"model_name": base.name, "max_context_length": base.max_context_length},
+    ]
+    async with client_for(routes, kv) as client:
+        session_id = (await client.post("/api/v1/create_session", json={})).json()[
+            "session_id"
+        ]
+        for seq, model_name, expected in (
+            (0, base.model, "longer"),
+            (1, base.name, base.definition_id),
+        ):
+            response = await client.post(
+                "/api/v1/create_model",
+                json={
+                    "session_id": session_id,
+                    "model_seq_id": seq,
+                    "base_model": model_name,
+                    "lora_config": {"rank": 32},
+                },
+            )
+            assert response.status_code == 200, response.text
+            row = await kv.get(model_key(response.json()["model_id"]))
+            assert row["engine_definition_id"] == expected
+
+
+@pytest.mark.anyio
+async def test_queues_report_each_recipe():
+    async def list_instances():
+        return ()
+
+    plane = ControlPlane(
+        InMemoryKeyValueStore(), SimpleNamespace(list_instances=list_instances)
+    )
+    spec = recipe(trainer_max_instances=3, trainer_max_clients_per_instance=4)
+    app = create_control_plane_app(plane, [resolved(spec)], api_key="test")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://frontend",
+        headers={"x-api-key": "test"},
+    ) as client:
+        response = await client.get("/api/v1/spindle/queues")
+        assert response.status_code == 200, response.text
+        [queue] = response.json()["queues"]
+        assert queue["name"] == spec.name
+        assert queue["backlog"] == {"count": 0, "oldest_age_s": None}
+        assert queue["slots"] == {"used": 0, "free": 0, "per_trainer": 4}
+        assert queue["trainers"] == {"running": 0, "starting": 0, "max": 3}
+        assert queue["recent"] == {
+            "window_s": 3600.0,
+            "added": 0,
+            "placed": 0,
+            "released": 0,
+            "wait_s": {"p50": None, "p95": None, "max": None},
+        }
 
 
 def test_native_boolean_opposite_flags_and_optional_value():
@@ -475,6 +743,9 @@ def test_recipe_app_names_follow_the_recipe_name():
     base = resolved()
     assert base.trainer_app_name == f"spindle-trainer-{base.name}"
     assert base.inference_app_name == f"spindle-inference-{base.name}"
+    named = resolved(recipe(platform__frontend="my-spindle"))
+    assert named.trainer_app_name == f"my-spindle-trainer-{base.name}"
+    assert named.inference_app_name == f"my-spindle-inference-{base.name}"
 
     inference = resolved(recipe(sglang_cfg__max_running_requests=24))
     assert inference.trainer_app_name == base.trainer_app_name

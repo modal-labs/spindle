@@ -12,6 +12,7 @@ import modal
 from stitch.pools.modal_flash import ModalFlashPool
 
 from spindle.startup_timing import StartupTimeline
+from spindle.version import deployment_tag
 
 from .deployment_configs import (
     PLATFORM_ENV,
@@ -25,6 +26,7 @@ from .deployment_configs import (
 @dataclass(frozen=True)
 class LoraPoolSpec:
     definition_id: str
+    frontend: str = "spindle"
 
     def __post_init__(self) -> None:
         if Path(self.definition_id).name != self.definition_id:
@@ -32,11 +34,14 @@ class LoraPoolSpec:
 
     @classmethod
     def from_dict(cls, value: dict) -> LoraPoolSpec:
-        return cls(definition_id=str(value["definition_id"]))
+        return cls(
+            definition_id=str(value["definition_id"]),
+            frontend=str(value.get("frontend", "spindle")),
+        )
 
     @property
     def app_name(self) -> str:
-        return f"spindle-lora-{self.definition_id}"
+        return f"{self.frontend}-lora-{self.definition_id}"
 
     def as_dict(self) -> dict[str, str]:
         return asdict(self)
@@ -80,6 +85,8 @@ def deploy_pool(spec: LoraPoolSpec, *, config=None, platform=None) -> str:
         "spindle.providers.modal.deployment_pool_app",
         "--name",
         spec.app_name,
+        "--tag",
+        deployment_tag(),
     ]
     environment = platform["modal"]["environment"]
     if environment:

@@ -5,6 +5,7 @@ import json
 import logging
 import uuid
 from collections.abc import Iterable, Mapping
+from dataclasses import asdict
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -31,7 +32,8 @@ from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
 from spindle.version import __version__, source_commit
 
-from .deployments import DeploymentRoutes
+from .deployments import DeploymentRoutes, Routable
+from .queues import QueueLimits, SharedSnapshot, describe_queues
 from .service import ControlPlane, FutureResolutionStatus
 
 ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
@@ -54,6 +56,15 @@ class CreateSessionBody(BaseModel):
 
 class SessionHeartbeatBody(BaseModel):
     session_id: str
+
+
+class FinishReason(BaseModel):
+    type: str
+
+
+class FinishSessionBody(BaseModel):
+    reason: FinishReason
+    detail: str | None = None
 
 
 class RolloutPoolBody(BaseModel):
@@ -173,26 +184,33 @@ def _training_envelope(
     return body, identity
 
 
+def _deployment_summary(definition: Routable) -> dict[str, object]:
+    return {
+        "name": definition.name,
+        "definition_id": definition.definition_id,
+        "base_model": definition.model,
+        "weights_repo": definition.weights_repo,
+        "parameterization": definition.parameterization,
+        "max_context_length": definition.max_context_length,
+    }
+
+
 def create_control_plane_app(
     control_plane: ControlPlane,
-    definitions: Iterable[Any],
+    definitions: DeploymentRoutes | Iterable[Any],
     *,
     api_key: str | None = None,
     retrieve_window: float = 30.0,
     checkpoint_volume: str = "spindle-checkpoints",
 ) -> FastAPI:
-    definitions = tuple(definitions)
+    routes = (
+        definitions
+        if isinstance(definitions, DeploymentRoutes)
+        else DeploymentRoutes.from_definitions(definitions)
+    )
 
-    routes = DeploymentRoutes(definitions)
-
-    def definition_for(model_name, parameterization):
-        selected = routes.select(model_name, parameterization)
-        return selected.definition_id if selected else None
-
-    def supports_model(model_name: str) -> bool:
-        return any(definition.model == model_name for definition in definitions) or any(
-            definition.definition_id == model_name for definition in definitions
-        )
+    async def supports_model(model_name: str) -> bool:
+        return await routes.select(model_name) is not None
 
     async def authorize(request: Request) -> None:
         if api_key is not None and request.headers.get("x-api-key") != api_key:
@@ -280,7 +298,7 @@ def create_control_plane_app(
     @app.get("/api/v1/get_server_capabilities")
     async def get_server_capabilities() -> dict[str, object]:
         return {
-            "supported_models": routes.capabilities(),
+            "supported_models": await routes.capabilities(),
             "spindle_version": __version__,
             "spindle_commit": source_commit(),
         }
@@ -288,17 +306,43 @@ def create_control_plane_app(
     @app.get("/api/v1/spindle/deployments")
     async def list_deployments():
         return {
-            "deployments": [
+            "deployments": [_deployment_summary(d) for d in await routes.definitions()]
+        }
+
+    async def trained_recipes():
+        definitions = await routes.definitions()
+        return [d for d in definitions if getattr(d, "recipe", None) is not None]
+
+    async def read_queues(now):
+        limits = [
+            QueueLimits(
+                d.definition_id,
+                slots_per_trainer=d.recipe.trainer_max_clients_per_instance,
+                max_trainers=d.recipe.trainer_max_instances,
+            )
+            for d in await trained_recipes()
+        ]
+        return await describe_queues(
+            control_plane.kv, control_plane.engines, limits, now
+        )
+
+    queue_snapshot = SharedSnapshot(read_queues, lambda: control_plane.clock())
+
+    @app.get("/api/v1/spindle/queues")
+    async def queues():
+        observed_at, snapshot = await queue_snapshot.get()
+        return {
+            "observed_at": observed_at,
+            "queues": [
                 {
                     "name": d.name,
-                    "definition_id": d.definition_id,
                     "base_model": d.model,
-                    "weights_repo": d.weights_repo,
                     "parameterization": d.parameterization,
-                    "max_context_length": d.max_context_length,
+                    **asdict(snapshot[d.definition_id]),
                 }
-                for d in definitions
-            ]
+                for d in await trained_recipes()
+                if d.definition_id in snapshot
+            ],
         }
 
     @app.post("/api/v1/client/config")
@@ -335,9 +379,13 @@ def create_control_plane_app(
         await control_plane.heartbeat(body.session_id)
         return {"type": "session_heartbeat"}
 
+    @app.post("/api/v1/sessions/{session_id}/finish")
+    async def finish_session(session_id: str, body: FinishSessionBody) -> None:
+        await control_plane.close_session(session_id, body.reason.type)
+
     @app.post("/api/v1/create_model")
     async def create_model(body: CreateModelBody) -> dict[str, object]:
-        if not supports_model(body.base_model):
+        if not await supports_model(body.base_model):
             raise HTTPException(
                 status_code=400,
                 detail=f"unsupported base_model: {body.base_model}",
@@ -370,8 +418,8 @@ def create_control_plane_app(
             raise ValueError("lora parameterization is configured through lora_config")
         if body.rollout is not None and parameterization != "full":
             raise ValueError("rollout is only configurable for full parameterization")
-        definition_id = definition_for(body.base_model, parameterization)
-        if definition_id is None:
+        selected = await routes.select(body.base_model, parameterization)
+        if selected is None:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -382,11 +430,9 @@ def create_control_plane_app(
         creation = await control_plane.create_model(
             session_id=body.session_id,
             model_seq_id=body.model_seq_id,
-            definition_id=definition_id,
+            definition_id=selected.definition_id,
             spec={
-                "base_model": next(
-                    d.model for d in definitions if d.definition_id == definition_id
-                ),
+                "base_model": selected.model,
                 "lora_config": body.lora_config,
                 "parameterization": {"type": parameterization},
                 "rollout": body.rollout and body.rollout.model_dump(exclude_none=True),
@@ -407,9 +453,11 @@ def create_control_plane_app(
                 status_code=400,
                 detail="base_model or model_path is required",
             )
-        selected = routes.select(body.base_model) if body.base_model else None
-        definition_id = selected.definition_id if selected else None
-        if body.model_path is None and definition_id is None:
+        selected = await routes.select(body.base_model) if body.base_model else None
+        if body.model_path and selected and selected.model == body.base_model:
+            # A plain model name defers to the recipe the adapter was trained on.
+            selected = None
+        if body.model_path is None and selected is None:
             raise HTTPException(
                 status_code=400,
                 detail=f"unsupported base_model: {body.base_model}",
@@ -417,15 +465,11 @@ def create_control_plane_app(
         session = await control_plane.create_sampling_session(
             session_id=body.session_id,
             sampling_session_seq_id=body.sampling_session_seq_id,
-            base_model=(
-                next(d.model for d in definitions if d.definition_id == definition_id)
-                if definition_id
-                else body.base_model
-            ),
+            base_model=selected.model if selected else body.base_model,
             model_path=body.model_path,
-            engine_definition_id=definition_id,
+            engine_definition_id=selected.definition_id if selected else None,
         )
-        if not supports_model(session.base_model):
+        if not await supports_model(session.base_model):
             raise HTTPException(
                 status_code=400,
                 detail=f"unsupported base_model: {session.base_model}",
@@ -525,7 +569,7 @@ def create_control_plane_app(
                 base_model=body.base_model,
                 user_metadata=body.user_metadata,
                 optimizer=body.optimizer,
-                definition_ids={d.definition_id for d in definitions},
+                definition_ids={d.definition_id for d in await routes.definitions()},
             )
             return {
                 "request_id": creation.request_id,
@@ -645,7 +689,7 @@ def create_control_plane_app(
                 "queue_state": "active",
             }
             if resolution.reason:
-                content["queue_state"] = "starting"
+                content["queue_state"] = resolution.queue_state
                 content["queue_state_reason"] = resolution.reason
             return JSONResponse(status_code=408, content=content)
         if response is not None:
