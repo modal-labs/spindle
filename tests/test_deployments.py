@@ -20,6 +20,8 @@ from spindle.configs.qwen35_9b_lora_16k import Config as Parent
 from spindle.configuration import BaseConfig
 from spindle.control_plane import ControlPlane, create_control_plane_app
 from spindle.control_plane.deployments import (
+    DeploymentConflict,
+    DeploymentRequest,
     DeploymentRoutes,
 )
 from spindle.control_plane.keys import model_key
@@ -492,13 +494,14 @@ async def test_the_registry_ignores_fields_a_newer_spindle_wrote():
     assert await names(routes) == [base.name]
 
 
-def client_for(routes, store=None):
+def client_for(routes, store=None, apps_deployed=None):
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(
             app=create_control_plane_app(
                 ControlPlane(store or InMemoryKeyValueStore(), SimpleNamespace()),
                 routes,
                 api_key="test",
+                apps_deployed=apps_deployed,
             )
         ),
         base_url="http://frontend",
@@ -894,3 +897,151 @@ def test_override_values_replace_dictionaries_and_lists():
     )
     assert config.inference_gpu == "H200"
     assert config.sglang_cfg == {}
+
+
+@pytest.mark.anyio
+async def test_api_adds_take_a_base_or_a_recipe_under_frontend_settings():
+    base = resolved()
+    routes, store = routes_for(base)
+    variant = await routes.build(
+        DeploymentRequest(
+            name="variant", base=base.name, overrides={"trainer_gpu": "H200"}
+        )
+    )
+    assert variant.name == "variant" and variant.recipe.trainer_gpu == "H200"
+    assert variant.model == base.model
+    file_recipe = {**vars(recipe()), "platform": {"frontend": "elsewhere"}}
+    from_file = await routes.build(
+        DeploymentRequest(name="from-file", recipe=file_recipe)
+    )
+    assert from_file.recipe.platform == base.recipe.platform
+    for name, overrides, kwargs, match in (
+        ("x", {}, {"base": "missing"}, "unknown base"),
+        ("x", {}, {"base": base.name, "recipe": {}}, "exactly one"),
+        ("x", {"trainer_gpuu": "H200"}, {"base": base.name}, "trainer_gpuu"),
+        ("x", {"platform.modal.region": "r"}, {"base": base.name}, "platform"),
+        ("x", {"max_context_length": "big"}, {"base": base.name}, "integer"),
+        ("x", {"sweep_interval_s": 1}, {"base": base.name}, "lifecycle"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            await routes.build(
+                DeploymentRequest(name=name, overrides=overrides, **kwargs)
+            )
+    assert set(store._values) == {base.name}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"overrides": {"trainer_gpuu": "H200"}},
+        {"overrides": {"platform": {}}},
+        {"overrides": {"trainer_gpus_per_node": "2"}},
+        {"overrides": {"trainer_gpu": 5}},
+        {"overrides": {"trainer_disk_mib": 5}},
+        {"base": "missing", "overrides": {}},
+        {"base": None, "overrides": {}},
+        {"name": "Bad Name", "overrides": {}},
+    ],
+)
+@pytest.mark.anyio
+async def test_api_add_invalid_requests_fail_before_the_registry_write(body):
+    base = resolved()
+    routes, store = routes_for(base)
+    request = {"name": "variant", "base": base.name, **body}
+    if "base" in body and body["base"] is None:
+        del request["base"]
+    async with client_for(routes) as client:
+        response = await client.post("/api/v1/spindle/deployments", json=request)
+    assert response.status_code == 400, response.text
+    assert "Traceback" not in response.json()["message"]
+    assert set(store._values) == {base.name}
+
+
+@pytest.mark.anyio
+async def test_api_add_routes_at_once_conflicts_409_and_identical_adds_are_idempotent():
+    base = resolved()
+    routes, store = routes_for(base)
+    async with client_for(routes) as client:
+
+        async def post(name, overrides):
+            return await client.post(
+                "/api/v1/spindle/deployments",
+                json={"name": name, "base": base.name, "overrides": overrides},
+            )
+
+        await routes.definitions()
+        first = await post("variant", {"trainer_gpu": "H200"})
+        assert first.status_code == 201, first.text
+        # Listed straight away, without waiting for the cache to expire.
+        assert "variant" in [d.name for d in await routes.definitions()]
+        assert first.json()["deployment"]["name"] == "variant"
+        assert first.json()["config"]["recipe"]["trainer_gpu"] == "H200"
+        assert (await routes.get("variant")).recipe.trainer_gpu == "H200"
+        identical = await post("variant", {"trainer_gpu": "H200"})
+        conflict = await post("variant", {"trainer_gpu": "B200"})
+        base_conflict = await post(base.name, {"trainer_gpu": "B200"})
+        listed = (await client.get("/api/v1/spindle/deployments")).json()
+    assert identical.status_code == 201
+    assert conflict.status_code == base_conflict.status_code == 409
+    assert conflict.json()["error"] == "conflict"
+    assert "different settings" in conflict.json()["message"]
+    assert sorted(d["name"] for d in listed["deployments"]) == [
+        base.name,
+        "variant",
+    ]
+    assert store._values["variant"]["recipe"]["trainer_gpu"] == "H200"
+    with pytest.raises(DeploymentConflict):
+        await routes.add(
+            await routes.build(
+                DeploymentRequest(
+                    name="variant", base=base.name, overrides={"trainer_gpu": "B200"}
+                )
+            )
+        )
+
+
+@pytest.mark.anyio
+async def test_api_remove_stops_routing_and_unknown_names_are_404():
+    base = resolved()
+    routes, store = routes_for(base)
+    async with client_for(routes) as client:
+        added = await client.post(
+            "/api/v1/spindle/deployments",
+            json={"name": "variant", "base": base.name, "overrides": {}},
+        )
+        assert added.status_code == 201, added.text
+        assert await routes.get("variant") is not None
+        removed = await client.delete("/api/v1/spindle/deployments/variant")
+        assert removed.status_code == 200, removed.text
+        assert removed.json()["deployment"]["name"] == "variant"
+        listed = (await client.get("/api/v1/spindle/deployments")).json()
+        assert [d["name"] for d in listed["deployments"]] == [base.name]
+        assert "variant" not in store._values
+        assert await routes.get("variant") is None
+        missing = await client.delete("/api/v1/spindle/deployments/variant")
+        assert missing.status_code == 404
+        assert missing.json()["error"] == "not_found"
+
+
+@pytest.mark.anyio
+async def test_listing_reports_whether_each_configs_apps_are_deployed():
+    base = resolved()
+    routes, store = routes_for(base)
+
+    async def apps_deployed(definition):
+        return definition.name == base.name
+
+    async with client_for(routes, store, apps_deployed) as client:
+        added = await client.post(
+            "/api/v1/spindle/deployments",
+            json={"name": "variant", "base": base.name, "overrides": {}},
+        )
+        assert added.status_code == 201, added.text
+        listed = (await client.get("/api/v1/spindle/deployments")).json()
+    assert {d["name"]: d["apps"] for d in listed["deployments"]} == {
+        base.name: "deployed",
+        "variant": "missing",
+    }
+    async with client_for(routes, store) as client:
+        listed = (await client.get("/api/v1/spindle/deployments")).json()
+    assert all("apps" not in d for d in listed["deployments"])

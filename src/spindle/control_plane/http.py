@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import asdict
 from pathlib import PurePosixPath
 from typing import Any
@@ -32,7 +32,13 @@ from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
 from spindle.version import __version__, source_commit
 
-from .deployments import DeploymentRoutes, Routable
+from .deployments import (
+    DeploymentConflict,
+    DeploymentNotFound,
+    DeploymentRequest,
+    DeploymentRoutes,
+    Routable,
+)
 from .queues import QueueLimits, SharedSnapshot, describe_queues
 from .service import ControlPlane, FutureResolutionStatus
 
@@ -42,6 +48,8 @@ ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
     (SequenceConflict, 409, "conflict"),
     (RecordUnavailable, 409, "conflict"),
     (RecordNotFound, 404, "not_found"),
+    (DeploymentConflict, 409, "conflict"),
+    (DeploymentNotFound, 404, "not_found"),
     (RequestValidationError, 400, "invalid_request"),
     (ValueError, 400, "invalid_request"),
     (httpx.TransportError, 503, "engine_unreachable"),
@@ -202,6 +210,7 @@ def create_control_plane_app(
     api_key: str | None = None,
     retrieve_window: float = 30.0,
     checkpoint_volume: str = "spindle-checkpoints",
+    apps_deployed: Callable[[Routable], Awaitable[bool]] | None = None,
 ) -> FastAPI:
     routes = (
         definitions
@@ -305,9 +314,23 @@ def create_control_plane_app(
 
     @app.get("/api/v1/spindle/deployments")
     async def list_deployments():
-        return {
-            "deployments": [_deployment_summary(d) for d in await routes.definitions()]
-        }
+        definitions = await routes.definitions()
+        rows = [_deployment_summary(d) for d in definitions]
+        if apps_deployed is not None:
+            deployed = await asyncio.gather(*(apps_deployed(d) for d in definitions))
+            for row, ok in zip(rows, deployed):
+                row["apps"] = "deployed" if ok else "missing"
+        return {"deployments": rows}
+
+    @app.post("/api/v1/spindle/deployments", status_code=201)
+    async def add_deployment(body: DeploymentRequest):
+        deployment = await routes.build(body)
+        config = await routes.add(deployment)
+        return {"deployment": _deployment_summary(deployment), "config": config}
+
+    @app.delete("/api/v1/spindle/deployments/{name}")
+    async def remove_deployment(name: str):
+        return {"deployment": _deployment_summary(await routes.remove(name))}
 
     async def trained_recipes():
         definitions = await routes.definitions()

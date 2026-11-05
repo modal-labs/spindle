@@ -55,11 +55,6 @@ def _ask_frontend(frontend, name, environment, missing, *args):
 
 
 def deployed_configs(frontend, environment=None):
-    """The configs a deployed frontend serves, read from its registry folder.
-
-    A frontend from before the registry has no folder; only it still defines a
-    `deployed_configs` function, which returns the configs it was built with.
-    """
     app_id = frontend_app_id(frontend, environment)
     if app_id is None:
         return []
@@ -70,12 +65,6 @@ def deployed_configs(frontend, environment=None):
 
 
 def write_registry(frontend, environment, configs, *, keep_existing=()):
-    """Write configs into a deployed frontend's registry, one file per recipe.
-
-    Configs in `keep_existing` are written only where no file exists yet, so
-    recipes an older frontend served without a registry carry over.
-    Returns False when the frontend is not deployed yet.
-    """
     app_id = frontend_app_id(frontend, environment)
     if app_id is None:
         return False

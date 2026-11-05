@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from collections.abc import Callable, Iterable
 from typing import Any, Protocol, TypedDict
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig
@@ -17,6 +19,35 @@ logger = logging.getLogger(__name__)
 
 REGISTRY_TTL_S = 5.0
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
+RECIPE_FIELDS = frozenset(key for key in vars(BaseConfig) if not key.startswith("_"))
+
+
+class DeploymentConflict(ValueError):
+    """A recipe name is already registered with different settings."""
+
+
+class DeploymentNotFound(KeyError):
+    """No recipe is registered under that name."""
+
+    def __str__(self) -> str:
+        return self.args[0] if self.args else ""
+
+
+class DeploymentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
+    base: str | None = None
+    recipe: dict[str, Any] | None = None
+    overrides: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check(self) -> DeploymentRequest:
+        if (self.base is None) == (self.recipe is None):
+            raise ValueError("pass exactly one of base or recipe")
+        if any(key.split(".")[0] == "platform" for key in self.overrides):
+            raise ValueError("platform settings come from the frontend")
+        return self
 
 
 class Platform(TypedDict):
@@ -106,9 +137,6 @@ class DeploymentRoutes:
             return
         definitions, skipped = [], set()
         for name, row in zip(names, rows):
-            # One bad file must not take down routing for every recipe, and it
-            # is never deleted: during a deploy the frontend may be older than
-            # the CLI that wrote it.
             try:
                 if isinstance(row, BaseException):
                     raise row
@@ -133,14 +161,12 @@ class DeploymentRoutes:
             or "/" in definition_id
             or any(d.model == definition_id for d in definitions)
         ):
-            # Recipe names never contain "/", and a cached base model is no recipe.
             return found
-        # A recipe registered since the last read: check for its file alone.
         checked = time.monotonic()
         try:
             exists = await self.kv().get(definition_id) is not None
         except (ValueError, TypeError):
-            exists = True  # unreadable; the reload will skip and log it
+            exists = True
         except Exception:
             logger.exception("Registry lookup of %r failed", definition_id)
             return None
@@ -163,6 +189,61 @@ class DeploymentRoutes:
 
     async def definitions(self) -> list[Routable]:
         return list(await self._load())
+
+    async def build(self, request: DeploymentRequest) -> DeploymentConfig:
+        """Compile a request into a config under this frontend's settings."""
+        recipe = request.recipe
+        if recipe is None:
+            parent = await self.get(request.base)
+            if not isinstance(parent, DeploymentConfig):
+                raise ValueError("unknown base deployment")
+            recipe = vars(parent.recipe)
+        registered = [d for d in await self._load() if isinstance(d, DeploymentConfig)]
+        if not registered:
+            raise ValueError("this frontend has no registered configs")
+        frontend = FrontendSettings.from_recipe(registered[0].recipe)
+        settings = {**asdict(frontend), **recipe, "platform": frontend.platform}
+        try:
+            deployment = DeploymentConfig.create(
+                BaseConfig(
+                    **settings, overrides={**request.overrides, "name": request.name}
+                )
+            )
+        except (ArithmeticError, AttributeError, KeyError, TypeError) as exc:
+            raise ValueError(f"invalid config: {exc}") from exc
+        if FrontendSettings.from_recipe(deployment.recipe) != frontend:
+            raise ValueError(
+                "deployments on one frontend must share lifecycle settings"
+            )
+        return deployment
+
+    async def add(self, deployment: DeploymentConfig) -> dict[str, Any]:
+        """Register a config; the same config again is a no-op."""
+        store, config = self._store(), deployment.model_dump(mode="json")
+        current = await store.get(deployment.name)
+        if current is None:
+            await store.put(deployment.name, config)
+            await self._reload(newer_than=time.monotonic())
+        elif current != config:
+            raise DeploymentConflict(
+                f"deployment {deployment.name!r} already exists with different settings"
+            )
+        return config
+
+    async def remove(self, name: str) -> DeploymentConfig:
+        """Unregister a config; its apps scale down on their own."""
+        store = self._store()
+        row = await store.get(name)
+        if row is None:
+            raise DeploymentNotFound(f"no deployment named {name!r}")
+        await store.delete(name)
+        await self._reload(newer_than=time.monotonic())
+        return DeploymentConfig.from_registry(row)
+
+    def _store(self) -> KeyValueStore:
+        if self.kv is None:
+            raise ValueError("this frontend serves a fixed set of recipes")
+        return self.kv()
 
     async def capabilities(self) -> list[dict[str, Any]]:
         definitions = await self.definitions()

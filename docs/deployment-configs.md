@@ -190,6 +190,26 @@ Every recipe a frontend serves is one `<app_id>/<recipe>.json` config file in th
 
 Upgrading a frontend that still ships a configs file needs no extra step: `spindle deploy` on the new version writes every recipe the old frontend serves to the registry before the swap, so nothing drops out and unchanged apps are not deployed again.
 
+## Add or remove a config through the API
+
+`POST /api/v1/spindle/deployments` writes a config into a running frontend's registry without redeploying the frontend. Send a new `name` with either the deployed config to start from as `base` plus the settings to change as `overrides` (the same dotted keys as a config's `overrides`), or a full `recipe`:
+
+~~~bash
+curl -sS -i -X POST "$TINKER_BASE_URL/api/v1/spindle/deployments" \
+  -H "X-API-Key: $TINKER_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "qwen35-9b-lora-16k-h200",
+       "base": "qwen35-9b-lora-16k",
+       "overrides": {"trainer_gpu": "H200", "miles_cfg.max_tokens_per_gpu": 8192}}'
+~~~
+
+`DELETE /api/v1/spindle/deployments/{name}` removes a config, and `GET /api/v1/spindle/deployments` lists them.
+
+Configs deployed before this API are already registered and listed. To move a config kept in a Python file onto the API, send its fields as `recipe` (`vars(config)`).
+
+Each listed config reports `"apps": "deployed"` or `"missing"`. A config with missing apps routes but can't train until someone with Modal credentials runs a `spindle deploy` that lists it.
+
+Anyone with the frontend's API key can add and remove configs.
+
 ## Update isolation
 
 Trainer apps are named `{frontend}-trainer-{name}` and inference apps `{frontend}-inference-{name}`, where `{frontend}` is the frontend app name (`spindle` by default, or the `--app` value). An inference-only change reuses the trainer app. A trainer-only change reuses the inference app. Source-only upgrades use `--refresh-trainer` / `--refresh-inference`. Updating inference settings also redeploys existing pools for that recipe before publishing the new frontend configuration. An interrupted pool update can be retried with the same command. Changes to region, storage, or secrets refresh both worker apps.

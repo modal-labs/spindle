@@ -782,7 +782,19 @@ def server():
         DEPLOYMENTS,
         api_key=os.environ["TINKER_API_KEY"],
         checkpoint_volume=CHECKPOINT_VOLUME_NAME,
+        apps_deployed=_apps_deployed,
     )
+
+
+async def _apps_deployed(definition) -> bool:
+    for name in (definition.trainer_app_name, definition.inference_app_name):
+        try:
+            await modal.App.lookup.aio(
+                name, environment_name=PLATFORM["modal"]["environment"]
+            )
+        except modal.exception.NotFoundError:
+            return False
+    return True
 
 
 async def _lose_undefined_models() -> tuple[str, ...]:

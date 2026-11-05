@@ -1362,3 +1362,18 @@ def test_trainer_gpu_wait_reports_the_recipes_gpus(monkeypatch) -> None:
         recipe.recipe.trainer_gpus_per_node,
         recipe.recipe.trainer_nodes,
     )
+
+
+def test_apps_deployed_needs_both_the_trainer_and_the_inference_app(monkeypatch):
+    modal_app = importlib.import_module("spindle.providers.modal.app")
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
+    deployed = {recipe.trainer_app_name, recipe.inference_app_name}
+
+    async def lookup(name, **kwargs):
+        if name not in deployed:
+            raise modal.exception.NotFoundError(name)
+
+    monkeypatch.setattr(modal.App, "lookup", SimpleNamespace(aio=lookup))
+    assert asyncio.run(modal_app._apps_deployed(recipe))
+    deployed.discard(recipe.inference_app_name)
+    assert not asyncio.run(modal_app._apps_deployed(recipe))
