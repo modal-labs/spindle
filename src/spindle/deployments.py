@@ -85,6 +85,15 @@ class DeploymentConfig(BaseModel):
         return vars(recipe)
 
     @classmethod
+    def from_registry(cls, row: object) -> DeploymentConfig:
+        """Load a stored config, ignoring fields a newer Spindle wrote."""
+        if not isinstance(row, dict):
+            raise TypeError(f"expected a config object, got {type(row).__name__}")
+        return cls.model_validate(
+            {k: v for k, v in row.items() if k in cls.model_fields}
+        )
+
+    @classmethod
     def create(cls, recipe: BaseConfig) -> DeploymentConfig:
         """Copy the recipe and attach backend settings."""
         _validate_recipe(recipe)

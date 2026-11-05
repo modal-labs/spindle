@@ -32,7 +32,7 @@ from spindle.providers.modal.deployment_apps import (
     build_sampler_image,
     build_trainer_app,
 )
-from spindle.control_plane.deployments import FrontendSettings
+from spindle.control_plane.deployments import FRONTEND_FIELDS, FrontendSettings
 from spindle.providers.modal.deployment_configs import (
     FRONTEND_SETTINGS_ENV,
     delete_registry,
@@ -122,7 +122,7 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
     platform = configs[0].recipe.platform
     environment = platform["modal"]["environment"]
     served = deployed_configs(platform["frontend"], environment)
-    current_configs = [DeploymentConfig.model_validate(row) for row in served]
+    current_configs = [DeploymentConfig.from_registry(row) for row in served]
     unlisted = [row for row in served if row["recipe"]["name"] not in names]
     current_platform = deployed_platform(platform["frontend"], environment)
     if current_platform is not None and current_platform != platform:
@@ -135,6 +135,28 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
             )
         trainers.update(names)
         inference.update(names)
+    # The frontend's idle timeouts and sweep interval come from the listed recipes,
+    # so they must match the recipes this deploy leaves serving.
+    changed = {
+        field: sorted(
+            current.name
+            for current in current_configs
+            if current.name not in names
+            and getattr(current.recipe, field) != getattr(configs[0].recipe, field)
+        )
+        for field in FRONTEND_FIELDS
+    }
+    if any(changed.values()):
+        raise ValueError(
+            "This deploy changes frontend-wide settings that recipes it does not "
+            "list rely on: "
+            + "; ".join(
+                f"{field} for {recipes}"
+                for field, recipes in changed.items()
+                if recipes
+            )
+            + ". Match their settings or list them in this deploy too."
+        )
     trainers, inference = apps_to_publish(
         configs, current_configs, environment, trainers, inference
     )

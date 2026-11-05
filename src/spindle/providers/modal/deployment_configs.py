@@ -122,7 +122,7 @@ def start_weights_download(frontend, environment, definition_id):
 
 def pool_config(definition_id):
     row = deployment_kv().read(definition_id)
-    return None if row is None else DeploymentConfig.model_validate(row)
+    return None if row is None else DeploymentConfig.from_registry(row)
 
 
 def provision_pool(deployment, pool, platform):

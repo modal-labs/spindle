@@ -127,6 +127,17 @@ def test_unresponsive_frontend_names_the_app_to_stop():
     assert deploy_wizard.stop_command("spindle", None) == "spindle stop --app spindle"
 
 
+def test_plan_says_unpicked_configs_keep_serving():
+    console = Console(record=True, width=160)
+    presets = deploy_wizard.bundled_presets()
+    chosen = [deploy_wizard.pick(presets, "Qwen/Qwen3.5-9B-Base", "lora", 16_384)]
+    stop = deploy_wizard.stop_command("spindle", "dev")
+    deploy_wizard.show_plan(console, chosen, 16_384, ["other-recipe"], stop)
+    output = console.export_text()
+    assert "Already deployed and kept serving: other-recipe" in output
+    assert "stop being served" not in output
+
+
 def test_setup_check_lists_every_missing_secret_with_a_fix(monkeypatch):
     present = {"spindle-api": {"TINKER_API_KEY"}, "huggingface-secret": {"OTHER"}}
 

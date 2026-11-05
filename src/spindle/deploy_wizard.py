@@ -251,7 +251,7 @@ def served_configs(console: Console, served: Future) -> list[str] | None:
             rows = served.result(timeout=SERVED_TIMEOUT_S)
         except (TimeoutError, ValueError):
             return None
-    return [DeploymentConfig.model_validate(row).name for row in rows]
+    return [DeploymentConfig.from_registry(row).name for row in rows]
 
 
 def choose(console: Console, frontend: str, environment: str | None) -> list[Preset]:
@@ -384,11 +384,12 @@ def show_plan(
             f"If it's broken, stop it with `{stop}`, then run spindle deploy again.[/yellow]"
         )
         served = []
-    dropped = sorted(set(served) - {preset.name for preset in chosen})
-    if dropped:
+    kept = sorted(set(served) - {preset.name for preset in chosen})
+    if kept:
         console.print(
-            f"[yellow]This replaces the current deployment: {len(dropped)} config(s) "
-            "not picked here will stop being served.[/yellow]"
+            f"Already deployed and kept serving: {', '.join(kept)}. "
+            "Stop the whole deployment with "
+            f"`{stop}` to remove them.\n"
         )
     console.print(
         f"Skip these prompts next time with:\n  [bold]{deploy_command(chosen)}[/bold]\n"

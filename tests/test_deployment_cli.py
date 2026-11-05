@@ -570,6 +570,18 @@ def test_platform_change_refuses_to_strand_unlisted_recipes(deployed):
     assert deployed.calls == []
 
 
+def test_lifecycle_change_refuses_to_reset_unlisted_recipes(deployed):
+    other = served_elsewhere()
+    other["recipe"]["session_idle_timeout_s"] = 86_400
+    deployed.configs = [other]
+    deployed.platform = deployment().recipe.platform
+    with pytest.raises(
+        ValueError, match=r"session_idle_timeout_s for \['unlisted-but-served'\]"
+    ):
+        cli.deploy([deployment()])
+    assert deployed.calls == []
+
+
 def test_app_flag_names_every_app_after_the_frontend(deployed):
     cli.main(["deploy", "qwen35-9b-lora-16k", "--app", "my-spindle", "--env", "dev"])
     assert deployed.apps == {

@@ -16,6 +16,7 @@ from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.errors import RecordNotFound
 from spindle.providers.local import InMemoryKeyValueStore
 from spindle.providers.modal import fft_pool
+from spindle.providers.modal.capacity import gpu_label, gpu_wait
 from spindle.providers.modal.engines import EngineInstanceRecord
 from spindle.providers.modal.fft_pool import FFTPoolSpec
 from spindle.providers.modal.lora_pool import LoraPoolSpec
@@ -35,7 +36,7 @@ def register_recipes(modal_app, store, *definitions):
     async def seed():
         for definition in definitions:
             await store.put(definition.name, definition.model_dump(mode="json"))
-        await modal_app.DEPLOYMENTS._load(refresh=True)
+        await modal_app.DEPLOYMENTS._reload()
 
     asyncio.run(seed())
 
@@ -1337,3 +1338,27 @@ def test_startup_failure_expires_so_transient_errors_do_not_disable_training(
         assert await registry.get(key) is None
 
     asyncio.run(check())
+
+
+def test_trainer_gpu_wait_reports_the_recipes_gpus(monkeypatch) -> None:
+    modal_app = importlib.import_module("spindle.providers.modal.app")
+
+    async def stats():
+        return SimpleNamespace(backlog=1, num_total_runners=0)
+
+    looked_up = []
+
+    def from_name(app_name, name, **kwargs):
+        looked_up.append((app_name, name))
+        return SimpleNamespace(get_current_stats=SimpleNamespace(aio=stats))
+
+    monkeypatch.setattr(modal.Function, "from_name", from_name)
+    wait = gpu_wait(modal_app._trainer_function, modal_app._trainer_gpus)
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
+    label = asyncio.run(wait(LORA_DEFINITION))
+    assert looked_up == [(recipe.trainer_app_name, "trainer")]
+    assert label == gpu_label(
+        recipe.recipe.trainer_gpu,
+        recipe.recipe.trainer_gpus_per_node,
+        recipe.recipe.trainer_nodes,
+    )

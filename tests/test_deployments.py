@@ -49,15 +49,20 @@ def resolved(spec=None, **changes):
 
 
 class CountingStore(InMemoryKeyValueStore):
-    """An in-memory registry that counts full reads."""
+    """An in-memory registry that counts full reads and single-file lookups."""
 
     def __init__(self, values=None):
         super().__init__(values)
         self.reads = 0
+        self.gets = 0
 
-    async def list_items(self, *prefixes):
+    async def list_keys(self, prefix):
         self.reads += 1
-        return await super().list_items(*prefixes)
+        return await super().list_keys(prefix)
+
+    async def get(self, key):
+        self.gets += 1
+        return await super().get(key)
 
 
 def routes_for(*deployments):
@@ -397,8 +402,24 @@ async def test_multiple_models_same_http_service_and_old_binding_survives_switch
         assert (await client.get("/api/v1/spindle/deployments")).status_code == 401
 
 
+async def names(routes):
+    return [d.name for d in await routes.definitions()]
+
+
 @pytest.mark.anyio
-async def test_registry_cache_ttl_and_exact_name_miss_bypass():
+async def test_requests_for_cached_recipes_and_models_never_read_the_registry():
+    base = resolved()
+    routes, store = routes_for(base)
+    await routes.definitions()
+    before = (store.reads, store.gets)
+    assert (await routes.select(base.model)).name == base.name
+    assert (await routes.select(base.name)).name == base.name
+    assert await routes.select("Unknown/Model") is None
+    assert (store.reads, store.gets) == before
+
+
+@pytest.mark.anyio
+async def test_a_newly_registered_recipe_is_found_on_its_first_request():
     base = resolved()
     routes, store = routes_for(base)
     await routes.definitions()
@@ -407,19 +428,68 @@ async def test_registry_cache_ttl_and_exact_name_miss_bypass():
     await store.put(new.name, new.model_dump(mode="json"))
     assert (await routes.select(new.name)).name == new.name
     assert store.reads == reads + 1
-    routes._loaded_at = time.monotonic() - 6
-    await routes.definitions()
-    assert store.reads == reads + 2
 
 
 @pytest.mark.anyio
-async def test_an_invalid_registry_file_is_removed():
+async def test_a_stale_cache_is_served_while_one_refresh_runs_in_the_background():
     base = resolved()
     routes, store = routes_for(base)
-    await store.put("broken", {"recipe": {"name": "broken"}})
-    assert [d.name for d in await routes.definitions()] == [base.name]
-    assert await store.get("broken") is None
-    assert [d.name for d in await routes.definitions()] == [base.name]
+    await routes.definitions()
+    added = resolved(recipe(name="added", max_context_length=32768))
+    await store.put(added.name, added.model_dump(mode="json"))
+    routes._loaded_at = time.monotonic() - 6
+    reads = store.reads
+    assert await names(routes) == [base.name]
+    assert await names(routes) == [base.name]
+    await routes._refresh
+    assert store.reads == reads + 1
+    assert set(await names(routes)) == {base.name, added.name}
+
+
+@pytest.mark.anyio
+async def test_a_failed_refresh_keeps_the_last_recipe_list():
+    base = resolved()
+    routes, store = routes_for(base)
+    await routes.definitions()
+
+    async def unavailable(prefix):
+        raise ConnectionError("volume unavailable")
+
+    store.list_keys = unavailable
+    routes._loaded_at = time.monotonic() - 6
+    assert await names(routes) == [base.name]
+    await routes._refresh
+    assert await names(routes) == [base.name]
+
+
+@pytest.mark.anyio
+async def test_unreadable_registry_files_are_skipped_and_kept():
+    base = resolved()
+    routes, store = routes_for(base)
+    await store.put("invalid", {"recipe": {"name": "invalid"}})
+    await store.put("not-json", {})
+    read = store.get
+
+    async def get(key):
+        if key == "not-json":
+            raise json.JSONDecodeError("truncated", "{", 1)
+        return await read(key)
+
+    store.get = get
+    assert await names(routes) == [base.name]
+    assert await read("invalid") is not None
+    assert await read("not-json") is not None
+
+
+@pytest.mark.anyio
+async def test_the_registry_ignores_fields_a_newer_spindle_wrote():
+    base = resolved()
+    routes, store = routes_for(base)
+    row = {**base.model_dump(mode="json"), "added_in_a_later_release": True}
+    await store.put(base.name, row)
+    with pytest.raises(ValueError):
+        DeploymentConfig.model_validate(row)
+    assert await names(routes) == [base.name]
 
 
 def client_for(routes, store=None):
