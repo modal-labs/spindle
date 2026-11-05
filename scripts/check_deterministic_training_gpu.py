@@ -59,7 +59,7 @@ probe_image = (
     timeout=3600,
     max_containers=1,
 )
-def probe(model, steps=12, deterministic=True):
+def probe(model, steps=12, deterministic=True, pack_clients=False):
     import os
     import subprocess
     import sys
@@ -73,6 +73,7 @@ def probe(model, steps=12, deterministic=True):
         "model": model,
         "steps": steps,
         "deterministic": deterministic,
+        "pack_clients": pack_clients,
         "tp": TEST_TP,
         "gpu": subprocess.check_output(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], text=True
@@ -103,8 +104,17 @@ def probe(model, steps=12, deterministic=True):
         ]
         if deterministic:
             command.append("--deterministic")
+        if pack_clients:
+            command.append("--pack-clients")
         proc = subprocess.run(
-            command, cwd=root, env={**os.environ, "PYTHONPATH": "/root", "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0" if deterministic else "1"}, timeout=800
+            command,
+            cwd=root,
+            env={
+                **os.environ,
+                "PYTHONPATH": "/root",
+                "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0" if deterministic else "1",
+            },
+            timeout=800,
         )
         if output.exists():
             reports[mode] = json.loads(output.read_text())
@@ -128,17 +138,22 @@ def main(
     models: str = "Qwen/Qwen3-0.6B,Qwen/Qwen3-8B",
     steps: int = 12,
     deterministic: bool = True,
+    pack_clients: bool = False,
     output: str = "scripts/results/deterministic-training/report.json",
 ):
     if steps < 8:
         raise ValueError(
             "Use at least eight steps to cover the reported step-3/step-6 divergence"
         )
+    if pack_clients and not deterministic:
+        raise ValueError(
+            "--pack-clients selects the experimental deterministic packing hook"
+        )
     reports = []
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     for model in models.split(","):
-        reports.append(probe.remote(model.strip(), steps, deterministic))
+        reports.append(probe.remote(model.strip(), steps, deterministic, pack_clients))
         path.write_text(json.dumps(reports, indent=2) + "\n")
         print(
             json.dumps(

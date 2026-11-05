@@ -70,6 +70,7 @@ def main(args):
         target_modules=("linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"),
         deterministic_training=args.deterministic,
         deterministic_gdn=args.deterministic and gdn,
+        deterministic_pack_clients=args.pack_clients,
         tp_reduce_precision="float64" if args.deterministic else None,
         extra_args=("--seq-length", "2048"),
         cli_options=options,
@@ -108,6 +109,7 @@ def main(args):
         "model": args.model,
         "mode": args.mode,
         "deterministic": args.deterministic,
+        "pack_clients": args.pack_clients,
         "tp": args.tp,
         "steps": [],
         "torch": torch.__version__,
@@ -238,14 +240,14 @@ def main(args):
             report["final_evaluation"] = _serialize_forward_output(evaluation)
             scores = evaluation.loss_fn_outputs[0]["logprobs"].data
             report["final_nll"] = -sum(scores) / len(scores)
-            if (
-                args.mode == "packed"
-                and args.deterministic
-                and not any(
+            if args.mode == "packed" and args.deterministic:
+                mixed = any(
                     rank["mixed"] for row in report["steps"] for rank in row["schedule"]
                 )
-            ):
-                raise AssertionError("Packed test never mixed clients in a microbatch")
+                if mixed != args.pack_clients:
+                    raise AssertionError(
+                        "Observed client mixing does not match the selected policy"
+                    )
             save()
 
         trajectory(start, True)
@@ -280,5 +282,6 @@ if __name__ == "__main__":
     parser.add_argument("--steps", type=int, default=12)
     parser.add_argument("--tp", type=int, default=1)
     parser.add_argument("--deterministic", action="store_true")
+    parser.add_argument("--pack-clients", action="store_true")
     parser.add_argument("--output", required=True)
     main(parser.parse_args())

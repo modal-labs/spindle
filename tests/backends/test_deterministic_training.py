@@ -55,6 +55,10 @@ def test_deterministic_recipes_roundtrip_with_safe_topology(config):
             {"deterministic_training": False, "deterministic_gdn": True},
             "requires deterministic_training",
         ),
+        (
+            {"deterministic_training": False, "deterministic_pack_clients": True},
+            "requires deterministic_training",
+        ),
     ],
 )
 def test_rejects_unsupported_deterministic_settings(changes, error):

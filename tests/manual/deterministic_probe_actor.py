@@ -44,8 +44,8 @@ class DeterminismProbeActor(SpindleMilesTrainRayActor):
         original = batching.pack_slot_microbatches
         self._last_schedule = {"total": 0, "mixed": 0}
 
-        def record(slot_batches, lengths, budget):
-            schedule = original(slot_batches, lengths, budget)
+        def record(slot_batches, lengths, budget, **kwargs):
+            schedule = original(slot_batches, lengths, budget, **kwargs)
             slots = {
                 index: slot
                 for slot, batches in slot_batches.items()

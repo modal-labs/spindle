@@ -164,7 +164,7 @@ each column separately, and their vocabulary work and memory grow with
 
 # Deterministic Training (Experimental) 
 
-The deterministic path aims to give each client the same training results regardless of which other clients share its batches (think of it as batch-invariance for training). It uses deterministic attention kernels, fixed reduction layouts, and ordered per-client gradient accumulation, alongside batch-invariant inference.
+The deterministic path aims to give each client repeatable training results while sharing a trainer. Its default keeps clients in separate microbatches and uses deterministic attention kernels, fixed reduction layouts, and ordered per-client gradient accumulation. Cross-client packing remains an explicit experiment because it still changes gradients on the current Qwen3-8B TP4 stack. Deterministic inference is a separate requirement for reproducing rollouts.
 
 Use the `qwen35-9b-lora-16k-deterministic` or `qwen3-8b-lora-32k-deterministic` recipe. The Qwen3.5 recipe requires the patched FA3 artifacts selected by `SPINDLE_MILES_FA3_ARTIFACTS`. See [setup, scope, and exact replay validation](deterministic-training.md). The old `qwen3_5_9b_base_miles_lora_deterministic` definition belonged to the unmerged Lilo experiment. Historical small-run parity does not establish determinism on the current stack or across models. Deterministic kernels and FP64 reductions have a throughput cost.
 

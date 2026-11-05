@@ -4,14 +4,16 @@ from collections import defaultdict, deque
 from functools import wraps
 
 
-def pack_slot_microbatches(slot_batches, lengths, budget):
-    """Combine whole per-slot microbatches, preserving their order and boundaries."""
+def pack_slot_microbatches(slot_batches, lengths, budget, *, combine_clients=True):
+    """Schedule whole client microbatches; combine them only when explicitly allowed."""
     pending = {slot: deque(batches) for slot, batches in sorted(slot_batches.items())}
     result = []
     while any(pending.values()):
         indices = []
         used = 0
         for batches in pending.values():
+            if indices and not combine_clients:
+                break
             if not batches:
                 continue
             candidate = batches[0]
@@ -74,7 +76,12 @@ def configure_deterministic_batching():
             count = get_minimum_num_micro_batch_size(sizes, budget)
             partitions = get_seqlen_balanced_partitions(sizes, count, equal_size=False)
             slot_batches[slot] = [[indices[i] for i in part] for part in partitions]
-        schedule = pack_slot_microbatches(slot_batches, lengths, budget)
+        schedule = pack_slot_microbatches(
+            slot_batches,
+            lengths,
+            budget,
+            combine_clients=getattr(args, "spindle_deterministic_pack_clients", False),
+        )
         prepared = dict(rollout_data)
         prepared.update(micro_batch_indices=schedule, num_microbatches=[len(schedule)])
         return original(args, model, prepared)

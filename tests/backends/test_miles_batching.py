@@ -59,8 +59,10 @@ def test_deterministic_hook_uses_upstream_lora_model(monkeypatch):
     )
     lora_model = modules["miles.backends.megatron_utils.lora.model"]
     actor = modules["miles.backends.megatron_utils.actor"]
+
     def original(args, model, rollout):
         return rollout
+
     lora_model.get_data_iterator = actor.get_data_iterator = original
     modules["miles.backends.training_utils.data"].get_parallel_state = lambda: (
         SimpleNamespace(
@@ -81,7 +83,11 @@ def test_deterministic_hook_uses_upstream_lora_model(monkeypatch):
     configure_deterministic_batching()
     assert lora_model.get_data_iterator is plan
 
-    args = SimpleNamespace(use_dynamic_batch_size=True, max_tokens_per_gpu=10)
+    args = SimpleNamespace(
+        use_dynamic_batch_size=True,
+        max_tokens_per_gpu=10,
+        spindle_deterministic_pack_clients=True,
+    )
     rollout = {
         "adapter_slots": [0, 0, 1, 1],
         "total_lengths": [6, 4, 4, 6],
@@ -90,6 +96,10 @@ def test_deterministic_hook_uses_upstream_lora_model(monkeypatch):
     prepared = plan(args, None, rollout)
     assert prepared["micro_batch_indices"] == [[0, 2], [1, 3]]
     assert prepared["num_microbatches"] == [2]
+    args.spindle_deterministic_pack_clients = False
+    isolated = plan(args, None, rollout)
+    assert isolated["micro_batch_indices"] == [[0], [1], [2], [3]]
+    assert isolated["num_microbatches"] == [4]
     assert "micro_batch_indices" not in rollout
     assert plan(args, None, prepared) is prepared
     ordinary = {"total_lengths": [4]}

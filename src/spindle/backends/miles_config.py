@@ -99,6 +99,8 @@ class MilesBackendConfig:
     # Experimental batch-invariant multi-LoRA path (Lilo PR #28).
     deterministic_training: bool = False
     deterministic_gdn: bool = False
+    # Experimental: cross-client packing is not yet bitwise invariant.
+    deterministic_pack_clients: bool = False
     tp_reduce_precision: str | None = None
 
     @property
@@ -132,10 +134,15 @@ class MilesBackendConfig:
         if (
             type(self.deterministic_training) is not bool
             or type(self.deterministic_gdn) is not bool
+            or type(self.deterministic_pack_clients) is not bool
         ):
             raise ValueError("deterministic training options must be booleans")
         if self.deterministic_gdn and not self.deterministic_training:
             raise ValueError("deterministic_gdn requires deterministic_training")
+        if self.deterministic_pack_clients and not self.deterministic_training:
+            raise ValueError(
+                "deterministic_pack_clients requires deterministic_training"
+            )
         if self.megatron_to_hf_mode not in ("bridge", "raw"):
             raise ValueError("megatron_to_hf_mode must be bridge or raw")
         positive = {

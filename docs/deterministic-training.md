@@ -10,6 +10,13 @@ the GPU architecture, dependency revisions, TP layout, ordered training data,
 initial weights, optimizer state, and forward/backward request and update boundaries. Increasing precision
 alone does not make atomic reductions or asynchronous scheduling reproducible.
 
+The default keeps different clients in separate microbatches, preserving each
+client's isolated shapes and accumulation order while sharing the trainer and
+base weights. This trades some multi-client batching throughput for repeatability.
+Cross-client packing from the Lilo prototype is retained only as an explicit
+`miles_cfg.deterministic_pack_clients=True` experiment. It failed exact gradient
+parity on Qwen3-8B TP4 in the current stack and is not a deterministic guarantee.
+
 ## Enable
 
 Two recipes expose the path through the ordinary Tinker API:
@@ -45,7 +52,7 @@ candidate rejects GPU architectures other than Hopper SM90 at actor startup.
 
 The mode uses topology-aware seeded adapter initialization, FP64 TP/vocabulary
 reductions, deterministic dynamic-shape CE compilation, deterministic attention,
-and per-client microbatch boundaries and accumulation order. Each fresh adapter
+and isolated per-client microbatch boundaries and accumulation order. Each fresh adapter
 uses the trainer seed (Miles' default or `miles_cfg.cli_options.seed`), independent
 of the selected slot and previously created adapters. Per-model Tinker seeds
 remain unsupported. An explicit model-and-optimizer checkpoint is the strongest
@@ -76,15 +83,17 @@ PYTHONPATH=src modal run scripts/check_deterministic_training_gpu.py \
   --models Qwen/Qwen3.5-2B --steps 12
 ```
 
-This launches an isolated one-H100 trainer, sequentially for each model. It
+This launches an isolated trainer (one H100 by default), sequentially for each model. It
 executes rank-8 adapters and fixed synthetic cross-entropy inputs with alternating sequence lengths
 in four fresh processes: reference, exact replay from the initial checkpoint,
-replay mixed with another client's changing batches, and continuation from a
+replay sharing work units with another client's changing batches, and continuation from a
 midpoint model-and-optimizer checkpoint. Every step compares loss, token
 logprobs, gradient norm, and per-rank hashes of adapter weights, gradients,
 and optimizer state. The reference process also restores its initial checkpoint
-and repeats the loop in that same process. The packed case must demonstrate
-actual mixed-client microbatches. A fixed final evaluation reports replay NLL difference.
+and repeats the loop in that same process. The shared-work-unit case verifies
+that the default keeps clients in separate microbatches. With `--pack-clients`,
+the harness instead requires actual mixed-client microbatches and tests the
+experimental packing path. A fixed final evaluation reports replay NLL difference.
 Missing steps and mismatched initial/restored state fail the check. The default
 12 steps extend beyond the observed step-3/step-6 divergence.
 

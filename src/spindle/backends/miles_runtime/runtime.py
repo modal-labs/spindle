@@ -261,6 +261,7 @@ class MilesRuntime:
         args.spindle_tp_reduce_precision = self.config.tp_reduce_precision
         args.spindle_deterministic_training = self.config.deterministic_training
         args.spindle_deterministic_gdn = self.config.deterministic_gdn
+        args.spindle_deterministic_pack_clients = self.config.deterministic_pack_clients
 
         # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
         args.lora_A_init_method = "kaiming"
