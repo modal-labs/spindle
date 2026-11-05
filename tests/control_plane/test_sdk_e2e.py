@@ -478,6 +478,7 @@ def test_real_sdk_lost_model_fails_fast(tmp_path, monkeypatch) -> None:
     with serve(app) as url:
         service = tinker.ServiceClient(base_url=url, api_key=API_KEY)
         training = service.create_lora_training_client(base_model=BASE_MODEL, rank=32)
+        training.get_info()  # the model exists once this returns
         [instance] = asyncio.run(plane.engines.list_instances())
         asyncio.run(plane.engines.mark_dead(instance.instance_id))
 
