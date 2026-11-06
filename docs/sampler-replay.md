@@ -6,15 +6,16 @@ supports captured by SGLang. Capture is opt-in per sampling request:
 - `return_routed_experts=True` captures the selected MoE expert IDs. Training
   reuses those selections while computing routing weights from its own logits.
 - `return_sampling_mask=True` captures the allowed token IDs after top-k,
-  top-p, and min-p filtering, and the sampled token's log probability.
-- `return_sampling_probabilities=True` also records a normalized log probability
-  for every token in that support. It implies `return_sampling_mask`.
+  top-p, and min-p filtering, with the sampled token’s log probability.
+- `return_sampling_probabilities=True` also captures normalized log probabilities
+  for every support token. Request this for `score_centered` and
+  `score_centered_mis`; it implies `return_sampling_mask`.
 
 Ordinary Tinker sampling discards additional response fields. Use
 `spindle.sample_with_replay()` to receive them, then pass its replay tensors through
-`Datum.loss_fn_inputs`. Miles LoRA accepts both captures. Megatron
-full-parameter training accepts the sampling mask for `mis`, `score_centered`,
-and `score_centered_mis`, and still rejects routed-expert replay.
+`Datum.loss_fn_inputs`. Miles LoRA and Megatron full-parameter training accept
+sampling replay for `mis`, `score_centered`, and `score_centered_mis`.
+Routed-expert replay requires Miles LoRA.
 
 ## Server configuration
 
@@ -30,7 +31,8 @@ capture is requested by default.
 
 ## Sample and train
 
-This example assumes `training` is an existing Miles LoRA training client.
+This example assumes `training` is an existing Miles LoRA or Megatron
+full-parameter training client.
 It uses a constant advantage to demonstrate the handoff; replace that with
 advantages computed from your task's rewards.
 
@@ -46,7 +48,7 @@ sequence = spindle.sample_with_replay(
     sampler,
     prompt,
     sampling_params=types.SamplingParams(max_tokens=32, temperature=0.8, top_p=0.9),
-    return_sampling_mask=True,
+    return_sampling_probabilities=True,
 ).result().sequences[0]
 
 if not sequence.tokens:
@@ -63,7 +65,7 @@ datum = types.Datum(
 )
 forward = training.forward_backward(
     [datum],
-    loss_fn="ppo",
+    loss_fn="score_centered_mis",
     loss_fn_config=sequence.replay.loss_fn_config(),
 )
 optimizer = training.optim_step(types.AdamParams(learning_rate=1e-5))
@@ -71,15 +73,10 @@ print(forward.result().metrics)
 print(optimizer.result().metrics)
 ```
 
-`mis`, `score_centered`, and `score_centered_mis` use the same mask.
-`return_sampling_probabilities=True` asks SGLang for `sampling_logprobs_mode="support"`,
-so every support token has a log probability. `score_centered` uses an importance
-weight of one. `mis` keeps a ratio window (0.2 to 5 unless `mis_low` and `mis_high`
-say otherwise) and skips the centering term. `score_centered_mis` applies that
-window inside the correction E_q[w grad(log p)], including tokens the window
-gives weight zero. Pass `sequence.replay.loss_fn_config()` so training divides
-logits by the sampling temperature. A full-parameter script is
-`examples/score-centering`.
+`loss_fn` can also be `score_centered` or `mis`. Pass
+`sequence.replay.loss_fn_config()` to reuse the sampling temperature. For
+`mis` and `score_centered_mis`, set `mis_low` and `mis_high` in that config to
+override the default ratio bounds of 0.2 and 5.
 
 For MoE router replay, additionally request `return_routed_experts=True` and
 supply the model's **total transformer layer count** and routed experts per token:
