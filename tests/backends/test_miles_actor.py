@@ -125,7 +125,8 @@ def _load_actor(monkeypatch):
     megatron_model = _module(monkeypatch, "miles.backends.megatron_utils.model")
     megatron_model.get_batch = lambda *args, **kwargs: {}
     checkpoint = _module(monkeypatch, "miles.backends.megatron_utils.lora.checkpoint")
-    _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
+    lora_model = _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
+    lora_model.run_forward_backward = lambda *args, **kwargs: {}
     _module(
         monkeypatch, "miles.backends.training_utils.replay_data"
     ).fill_replay_data = lambda **kwargs: None

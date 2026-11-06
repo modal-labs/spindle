@@ -20,6 +20,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - When every trainer for a recipe is full, creating a model waits for a slot instead of failing with `trainer capacity exhausted`. The Tinker SDK shows the request's place in line. When a slot frees up, the request that has waited longest gets it. Rarely, a brand-new request takes it first.
 - Spindle requires Modal 1.6.3 or newer, the first release that builds images with [image builder version](https://modal.com/docs/guide/images#image-builder-updates) 2026.10. Multi-node trainers use `modal.clustered` instead of the deprecated `modal.experimental.clustered`.
 
+### Fixed
+
+- Miles LoRA preserves gradients from earlier `forward_backward` calls when several calls share one optimizer step, including expert gradients with different data-parallel reduction groups.
+
 ## 0.1.5 - 2026-11-02
 
 Faster DeepSeek-V4.1-Flash training, 64K and 128K DeepSeek-V4.1-Flash recipes, and frontends that can require a Modal proxy token.
