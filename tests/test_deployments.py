@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import json
 import sys
 from copy import deepcopy
@@ -21,6 +22,9 @@ from spindle.control_plane import ControlPlane, create_control_plane_app
 from spindle.control_plane.deployments import (
     DeploymentConflict,
     DeploymentRequest,
+    REREAD_S,
+    VERSION_CHECK_S,
+    DeploymentNotFound,
     DeploymentRoutes,
     mark_registry_changed,
 )
@@ -428,9 +432,63 @@ async def test_the_registry_is_reread_only_after_it_changes():
     assert store.reads == before
     other = resolved(recipe("qwen3-8b-lora-32k"))
     await register_elsewhere(routes, store, other)
-    assert (await routes.select(other.model)).name == other.name
-    assert (await routes.select(other.name)).name == other.name
-    assert store.reads == before + 1
+    found = await asyncio.gather(*(routes.select(other.model) for _ in range(10)))
+    assert {d.name for d in found} == {other.name}
+    assert store.reads == before + 1  # one read for the change, shared
+
+
+@pytest.mark.anyio
+async def test_version_checks_are_shared_and_at_most_once_a_second():
+    base = resolved()
+    routes, _ = routes_for(base)
+    await routes.definitions()
+    checks = []
+    get = routes.versions().get
+
+    async def counted(key):
+        checks.append(key)
+        return await get(key)
+
+    routes.versions().get = counted
+    await asyncio.gather(*(routes.select(base.model) for _ in range(20)))
+    assert checks == []
+    routes._checked_at -= VERSION_CHECK_S
+    await asyncio.gather(*(routes.select(base.model) for _ in range(20)))
+    assert len(checks) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("retried", ["add", "remove"])
+async def test_a_retried_write_repairs_a_lost_version_update(retried):
+    base = resolved()
+    writer, store = routes_for(base)
+    reader = DeploymentRoutes(writer.kv, writer.versions)
+    variant = await writer.build(DeploymentRequest(name="variant", base=base.name))
+    if retried == "remove":
+        await writer.add(variant)
+    await reader.definitions()
+    # The first attempt's registry write landed but its version update was lost.
+    if retried == "add":
+        await store.put("variant", variant.model_dump(mode="json"))
+        await writer.add(variant)
+    else:
+        await store.delete("variant")
+        with pytest.raises(DeploymentNotFound):
+            await writer.remove("variant")
+    reader._checked_at -= VERSION_CHECK_S
+    assert (await reader.get("variant") is not None) == (retried == "add")
+
+
+@pytest.mark.anyio
+async def test_a_lost_version_update_is_caught_by_the_periodic_reread():
+    base = resolved()
+    routes, store = routes_for(base)
+    await routes.definitions()
+    added = resolved(recipe(name="added"))
+    await store.put(added.name, added.model_dump(mode="json"))  # no version update
+    assert await routes.get(added.name) is None
+    routes._read_at -= REREAD_S
+    assert (await routes.get(added.name)).name == added.name
 
 
 @pytest.mark.anyio
@@ -449,6 +507,10 @@ async def test_a_failed_read_keeps_the_last_recipe_list(failing):
     else:
         store.list_keys = unavailable
     assert await names(routes) == [base.name]
+    attempts = store.reads
+    for _ in range(10):  # a failing read backs off instead of repeating per request
+        assert (await routes.select(base.model)).name == base.name
+    assert store.reads == attempts
 
 
 @pytest.mark.anyio
@@ -1129,7 +1191,7 @@ async def capability_names(client):
     return {row["model_name"] for row in body["supported_models"]}
 
 
-@pytest.mark.parametrize("read", [listed_names, capability_names, "select"])
+@pytest.mark.parametrize("read", [listed_names, capability_names])
 @pytest.mark.anyio
 async def test_a_config_another_frontend_container_just_added_shows_at_once(read):
     base = resolved()
@@ -1139,8 +1201,4 @@ async def test_a_config_another_frontend_container_just_added_shows_at_once(read
     other = resolved(recipe("qwen3-8b-lora-32k"))
     await writer.add(other)
     async with client_for(reader) as client:
-        if read == "select":
-            found = {(await reader.select(other.model)).name}
-        else:
-            found = await read(client)
-    assert found & {other.name, other.model}
+        assert await read(client) & {other.name, other.model}

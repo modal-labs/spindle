@@ -308,11 +308,10 @@ def _already_stopped(output):
 def stop(frontend, environment):
     """Stop every app of the deployment, ending its runs."""
     names = deployment_apps(frontend, environment)
+    # Looked up even when the frontend is already stopping, so its folder is deleted.
+    app_id = frontend_app_id(frontend, environment)
     if not names:
         print(f"No running apps for {frontend}.")
-        return
-    # The next deploy gets a new app ID and so a new registry folder; drop this one.
-    app_id = frontend_app_id(frontend, environment) if frontend in names else None
     for name in names:
         command = [sys.executable, "-m", "modal", "app", "stop", "-y", name]
         if environment:

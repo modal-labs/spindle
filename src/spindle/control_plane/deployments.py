@@ -19,6 +19,10 @@ from spindle.providers.contracts import KeyValueStore
 logger = logging.getLogger(__name__)
 
 REGISTRY_VERSION_KEY = "registry_version:deployments"
+# How long a container serves its list between registry version checks.
+VERSION_CHECK_S = 1.0
+# Reread anyway this often, in case a version update was lost.
+REREAD_S = 60.0
 MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
 
@@ -82,9 +86,11 @@ class Routable(Protocol):
     max_context_length: int
 
 
-async def mark_registry_changed(versions: KeyValueStore) -> None:
+async def mark_registry_changed(versions: KeyValueStore) -> str:
     """Record that the registry changed, so every frontend container rereads it."""
-    await versions.put(REGISTRY_VERSION_KEY, uuid.uuid4().hex)
+    version = uuid.uuid4().hex
+    await versions.put(REGISTRY_VERSION_KEY, version)
+    return version
 
 
 class DeploymentRoutes:
@@ -96,12 +102,14 @@ class DeploymentRoutes:
         # Factories, since a Modal frontend learns its app ID only at runtime.
         self.kv = kv
         self.versions = versions
+        self._version_store: KeyValueStore | None = None
         self._definitions: list[Routable] = []
         self._version: object = None
         self._loaded = False
+        self._checked_at = float("-inf")
+        self._read_at = float("-inf")
         self._skipped: set[str] = set()
-        self._refresh: asyncio.Task | None = None
-        self._refresh_started = 0.0
+        self._tasks: dict[str, asyncio.Task] = {}
 
     @classmethod
     def from_definitions(cls, definitions: Iterable[Routable]) -> DeploymentRoutes:
@@ -109,40 +117,58 @@ class DeploymentRoutes:
         routes._definitions = list(definitions)
         return routes
 
-    async def _registry_version(self) -> object:
-        if self.versions is None:
-            return None
-        return await self.versions().get(REGISTRY_VERSION_KEY)
+    def _versions(self) -> KeyValueStore | None:
+        # Built once: every new Modal Dict handle costs a lookup round trip.
+        if self._version_store is None and self.versions is not None:
+            self._version_store = self.versions()
+        return self._version_store
 
-    async def _load(self) -> list[Routable]:
-        """The recipes, reread from the registry whenever its version changes."""
+    def _shared(self, name: str, call: Callable[[], Any]) -> asyncio.Task:
+        # One in-flight call per name and container; tests run several event loops.
+        loop = asyncio.get_running_loop()
+        task = self._tasks.get(name)
+        if task is None or task.done() or task.get_loop() is not loop:
+            task = self._tasks[name] = loop.create_task(call())
+        return task
+
+    async def _registry_version(self) -> object:
+        versions = self._versions()
+        return None if versions is None else await versions.get(REGISTRY_VERSION_KEY)
+
+    async def _load(self, *, check: bool = False) -> list[Routable]:
+        """The recipes; the registry version is checked now with `check`, else at most every VERSION_CHECK_S."""
         if self.kv is None:
             return self._definitions
+        if self._loaded and not check:
+            if time.monotonic() - self._checked_at < VERSION_CHECK_S:
+                return self._definitions
         try:
-            version = await self._registry_version()
+            if check:
+                version = await self._registry_version()
+            else:
+                version = await asyncio.shield(
+                    self._shared("version", self._registry_version)
+                )
         except Exception:
             if not self._loaded:
                 raise
             logger.exception("Registry version read failed; serving the last list")
+            self._checked_at = time.monotonic()
             return self._definitions
-        if not self._loaded or version != self._version:
-            await self._reload(newer_than=time.monotonic())
+        self._checked_at = time.monotonic()
+        if (
+            not self._loaded
+            or version != self._version
+            or time.monotonic() - self._read_at >= REREAD_S
+        ):
+            await self._reload(version)
         return self._definitions
 
-    def _start_reload(self) -> asyncio.Task:
-        # One read at a time per container; tests run several event loops.
-        loop = asyncio.get_running_loop()
-        task = self._refresh
-        if task is None or task.done() or task.get_loop() is not loop:
-            self._refresh_started = time.monotonic()
-            task = self._refresh = loop.create_task(self._read_registry())
-        return task
-
-    async def _reload(self, *, newer_than: float | None = None) -> None:
-        await asyncio.shield(self._start_reload())
-        if newer_than is not None and self._refresh_started < newer_than:
-            # The read we joined began before the caller saw the new version.
-            await asyncio.shield(self._start_reload())
+    async def _reload(self, version: object = None) -> None:
+        await asyncio.shield(self._shared("read", self._read_registry))
+        if self._loaded and self._version != version:
+            # The read we joined started before `version` was written.
+            await asyncio.shield(self._shared("read", self._read_registry))
 
     async def _read_registry(self) -> None:
         try:
@@ -156,6 +182,7 @@ class DeploymentRoutes:
             if not self._loaded:
                 raise
             logger.exception("Registry read failed; serving the last recipe list")
+            self._checked_at = time.monotonic()
             return
         definitions, skipped = [], set()
         for name, row in zip(names, rows):
@@ -169,6 +196,7 @@ class DeploymentRoutes:
                 skipped.add(name)
         self._definitions, self._skipped = definitions, skipped
         self._version, self._loaded = version, True
+        self._read_at = time.monotonic()
 
     @staticmethod
     def _exact(definitions: Iterable[Routable], definition_id: str) -> Routable | None:
@@ -179,12 +207,23 @@ class DeploymentRoutes:
         return self._exact(self._definitions, definition_id)
 
     async def get(self, definition_id: str) -> Routable | None:
-        return self._exact(await self._load(), definition_id)
+        found = self._exact(await self._load(), definition_id)
+        if found is None and self.kv is not None:
+            found = self._exact(await self._load(check=True), definition_id)
+        return found
 
     async def select(self, model: str, mode: str | None = None) -> Routable | None:
         """The exact recipe named `model`, else the longest-context one for it."""
-        definitions = await self._load()
-        exact = self._exact(definitions, model)
+        found = self._select(await self._load(), model, mode)
+        if found is None and self.kv is not None:
+            found = self._select(await self._load(check=True), model, mode)
+        return found
+
+    @staticmethod
+    def _select(
+        definitions: list[Routable], model: str, mode: str | None
+    ) -> Routable | None:
+        exact = DeploymentRoutes._exact(definitions, model)
         if exact is not None:
             return exact if mode is None or exact.parameterization == mode else None
         matches = [
@@ -195,7 +234,7 @@ class DeploymentRoutes:
         return max(matches, key=lambda d: d.max_context_length, default=None)
 
     async def definitions(self) -> list[Routable]:
-        return list(await self._load())
+        return list(await self._load(check=True))
 
     async def build(self, request: DeploymentRequest) -> DeploymentConfig:
         """Compile a request into a config under this frontend's settings."""
@@ -238,7 +277,8 @@ class DeploymentRoutes:
             await store.put(deployment.name, config)
             # Last write wins: read back to catch a concurrent add of the same name.
             current = await store.get(deployment.name)
-            await self._changed()
+        # Also on a retry, in case the version update of the first attempt failed.
+        await self._changed()
         # The recipe alone, so a frontend upgrade's spindle_version is no conflict.
         if not isinstance(current, dict) or current.get("recipe") != config["recipe"]:
             raise DeploymentConflict(
@@ -251,15 +291,17 @@ class DeploymentRoutes:
         store = self._store()
         row = await store.get(name)
         if row is None:
+            await self._changed()  # a retry: the first attempt's update may be lost
             raise DeploymentNotFound(f"no deployment named {name!r}")
         await store.delete(name)
         await self._changed()
         return DeploymentConfig.from_registry(row)
 
     async def _changed(self) -> None:
-        if self.versions is not None:
-            await mark_registry_changed(self.versions())
-        await self._reload(newer_than=time.monotonic())
+        versions = self._versions()
+        version = None if versions is None else await mark_registry_changed(versions)
+        await self._reload(version)
+        self._checked_at = time.monotonic()
 
     def _store(self) -> KeyValueStore:
         if self.kv is None:

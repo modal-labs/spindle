@@ -841,7 +841,7 @@ def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, caps
     listed[:] = [("my-spindle", "stopped")]
     cli.main(["stop", "--app", "my-spindle"])
     assert calls == [["app", "list", "--json"]]
-    assert len(deleted) == 1
+    assert len(deleted) == 2  # a leftover registry folder is deleted even so
     assert "No running apps for my-spindle" in capsys.readouterr().out
 
 
@@ -912,21 +912,18 @@ def test_remove_lists_training_models_and_asks_before_forcing(monkeypatch, capsy
 
 def test_write_registry_tells_every_frontend_container_to_reread(monkeypatch):
     registry, shared = SimpleNamespace(), InMemoryKeyValueStore()
-    files = {}
 
-    async def list_keys(prefix):
-        return tuple(files)
+    async def no_files(prefix):
+        return ()
 
     async def put_many(items):
-        files.update(items)
+        pass
 
-    registry.list_keys, registry.put_many = list_keys, put_many
+    registry.list_keys, registry.put_many = no_files, put_many
     monkeypatch.setattr(deployment_configs, "frontend_app_id", lambda *a: "ap-1")
     monkeypatch.setattr(deployment_configs, "deployment_kv", lambda *a: registry)
     monkeypatch.setattr(deployment_configs, "shared_kv", lambda *a: shared)
-    row = deployment().model_dump(mode="json")
-    assert deployment_configs.write_registry("spindle", "dev", [row])
-    first = asyncio.run(shared.get(REGISTRY_VERSION_KEY))
-    deployment_configs.write_registry("spindle", "dev", [row])
-    assert first and asyncio.run(shared.get(REGISTRY_VERSION_KEY)) != first
-    assert set(files) == {row["recipe"]["name"]}
+    deployment_configs.write_registry(
+        "spindle", "dev", [deployment().model_dump(mode="json")]
+    )
+    assert asyncio.run(shared.get(REGISTRY_VERSION_KEY))

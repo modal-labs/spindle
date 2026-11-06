@@ -898,6 +898,10 @@ async def deploy_apps(name: str) -> None:
                 raise RuntimeError(f"could not look up {app_name}")
             if not exists:
                 await asyncio.to_thread(_deploy_app, deployment, role)
+                if await DEPLOYMENTS.get(name) is None:
+                    # Removed while deploying; a DELETE before the app existed missed it.
+                    await _stop_apps(deployment)
+                    return
     except Exception as exc:
         await shared_kv().put(
             _app_deploy_key(name),

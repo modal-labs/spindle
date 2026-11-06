@@ -16,6 +16,7 @@ def test_definition_registry_resolves_every_definition(monkeypatch) -> None:
     monkeypatch.setattr(modal_app, "deployment_kv", lambda: store)
     shared = InMemoryKeyValueStore()
     monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(shared))
+    monkeypatch.setattr(modal_app.DEPLOYMENTS, "_version_store", None)
     register_recipes(modal_app, store, *definitions)
     for definition in definitions:
         assert (
