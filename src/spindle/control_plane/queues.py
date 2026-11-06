@@ -123,33 +123,50 @@ def _wait(waits: list[float]) -> Wait:
     return Wait(p50=nearest_rank(0.5), p95=nearest_rank(0.95), max=ordered[-1])
 
 
-async def describe_queues(
-    kv: KeyValueStore,
-    engines: EnginePlatform,
-    limits: list[QueueLimits],
-    now: float,
-) -> dict[str, QueueStats]:
-    items, event_items, listed = await asyncio.gather(
-        kv.list_items("placement:", "trainer_demand:"),
-        kv.list_items("queue_event:"),
+@dataclass(frozen=True)
+class Waiter:
+    model_id: str
+    created_at: float
+    polled_at: float | None
+
+
+@dataclass(frozen=True)
+class QueueView:
+    waiting: dict[str, list[Waiter]]
+    used: Counter[str]
+    by_state: Counter[tuple[str, str]]
+
+    def free_slots(self, definition_id: str, slots_per_trainer: int) -> int:
+        running = self.by_state[definition_id, "running"]
+        return max(0, running * slots_per_trainer - self.used[definition_id])
+
+
+async def read_queues(kv: KeyValueStore, engines: EnginePlatform) -> QueueView:
+    """Waiters per definition, oldest first, and slot use on running trainers."""
+    items, listed = await asyncio.gather(
+        kv.list_items("placement:", "trainer_demand:", "trainer_slot_wait:"),
         engines.list_instances(),
     )
-    events: dict[str, list[dict]] = defaultdict(list)
-    for _, event in event_items:
-        if event["at"] >= now - RECENT_WINDOW_S:
-            events[event["definition_id"]].append(event)
+    polled = {
+        value["model_id"]: float(value["polled_at"])
+        for key, value in items
+        if key.startswith("trainer_slot_wait:")
+    }
     placements = [
         PlacementRecord.model_validate(value)
         for key, value in items
         if key.startswith("placement:")
     ]
     placed_ids = {placement.model_id for placement in placements}
-    waiting: dict[str, list[float]] = {}
+    waiting: dict[str, list[Waiter]] = {}
     for key, value in items:
         if key.startswith("trainer_demand:") and value["model_id"] not in placed_ids:
+            model_id = value["model_id"]
             waiting.setdefault(str(value["definition_id"]), []).append(
-                float(value["created_at"])
+                Waiter(model_id, float(value["created_at"]), polled.get(model_id))
             )
+    for line in waiting.values():
+        line.sort(key=lambda waiter: (waiter.created_at, waiter.model_id))
     running_boots = {
         instance.instance_id: instance.boot_id
         for instance in listed
@@ -164,25 +181,39 @@ async def describe_queues(
         in ("", running_boots[placement.engine_instance_id])
     )
     by_state = Counter((i.definition_id, i.state) for i in listed)
+    return QueueView(waiting, used, by_state)
 
+
+async def describe_queues(
+    kv: KeyValueStore,
+    engines: EnginePlatform,
+    limits: list[QueueLimits],
+    now: float,
+) -> dict[str, QueueStats]:
+    view, event_items = await asyncio.gather(
+        read_queues(kv, engines), kv.list_items("queue_event:")
+    )
+    events: dict[str, list[dict]] = defaultdict(list)
+    for _, event in event_items:
+        if event["at"] >= now - RECENT_WINDOW_S:
+            events[event["definition_id"]].append(event)
     result = {}
     for limit in limits:
         name = limit.definition_id
-        created = waiting.get(name, [])
-        running = by_state[name, "running"]
+        created = [waiter.created_at for waiter in view.waiting.get(name, [])]
         result[name] = QueueStats(
             backlog=Backlog(
                 count=len(created),
                 oldest_age_s=max(0.0, now - min(created)) if created else None,
             ),
             slots=Slots(
-                used=used[name],
-                free=max(0, running * limit.slots_per_trainer - used[name]),
+                used=view.used[name],
+                free=view.free_slots(name, limit.slots_per_trainer),
                 per_trainer=limit.slots_per_trainer,
             ),
             trainers=Trainers(
-                running=running,
-                starting=by_state[name, "starting"],
+                running=view.by_state[name, "running"],
+                starting=view.by_state[name, "starting"],
                 max=limit.max_trainers,
             ),
             recent=_recent(events[name]),
@@ -190,29 +221,29 @@ async def describe_queues(
     return result
 
 
-class SharedSnapshot:
+class SharedSnapshot[T]:
     """Shares one recent read between concurrent callers."""
 
     def __init__(
         self,
-        read: Callable[[float], Awaitable[dict[str, QueueStats]]],
+        read: Callable[[float], Awaitable[T]],
         clock: Callable[[], float],
         max_age_s: float = 3.0,
     ) -> None:
         self._read = read
         self._clock = clock
         self._max_age_s = max_age_s
-        self._latest: tuple[float, dict[str, QueueStats]] | None = None
+        self.latest: tuple[float, T] | None = None
         self._pending: asyncio.Task | None = None
 
-    async def get(self) -> tuple[float, dict[str, QueueStats]]:
-        if self._latest and self._clock() - self._latest[0] < self._max_age_s:
-            return self._latest
+    async def get(self) -> tuple[float, T]:
+        if self.latest and self._clock() - self.latest[0] < self._max_age_s:
+            return self.latest
         if self._pending is None or self._pending.done():
             self._pending = asyncio.ensure_future(self._refresh())
         return await asyncio.shield(self._pending)
 
-    async def _refresh(self) -> tuple[float, dict[str, QueueStats]]:
+    async def _refresh(self) -> tuple[float, T]:
         observed_at = self._clock()
-        self._latest = (observed_at, await self._read(observed_at))
-        return self._latest
+        self.latest = (observed_at, await self._read(observed_at))
+        return self.latest

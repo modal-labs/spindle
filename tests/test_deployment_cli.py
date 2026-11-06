@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import httpx
 import modal
 import pytest
 from rich.console import Console
@@ -15,10 +16,10 @@ from rich.console import Console
 from spindle import deploy_wizard
 from spindle import deployment_cli as cli
 from spindle.deployments import DeploymentConfig, config_path, load
+from spindle.providers.local import InMemoryKeyValueStore
 from spindle.providers.modal import deployment_configs
 from spindle.providers.modal.deployment_configs import (
-    CONFIGS_FILE_ENV,
-    PLATFORM_ENV,
+    FRONTEND_SETTINGS_ENV,
     deployed_configs,
 )
 from spindle.providers.modal.fft_pool import FFTPoolSpec
@@ -66,11 +67,22 @@ def deployed(monkeypatch):
         state.calls.append("frontend")
         if state.fail == "frontend":
             raise subprocess.CalledProcessError(1, command)
-        state.configs = json.loads(Path(env[CONFIGS_FILE_ENV]).read_text())
-        state.platform = json.loads(env[PLATFORM_ENV])
+        state.platform = json.loads(env[FRONTEND_SETTINGS_ENV])["platform"]
         state.env = env
 
+    def write_registry(frontend, environment, configs, *, keep_existing=()):
+        if state.platform is None:
+            return False  # the frontend is not deployed yet
+        registry = {row["recipe"]["name"]: row for row in state.configs}
+        for row in keep_existing:
+            registry.setdefault(row["recipe"]["name"], row)
+        for row in configs:
+            registry[row["recipe"]["name"]] = row
+        state.configs = list(registry.values())
+        return True
+
     monkeypatch.setattr(cli, "deployed_configs", read_configs)
+    monkeypatch.setattr(cli, "write_registry", write_registry)
     monkeypatch.setattr(cli, "deployed_pools", lambda *args: state.pools)
     monkeypatch.setattr(cli, "deployed_platform", lambda *args: state.platform)
     monkeypatch.setattr(modal.App, "lookup", lookup)
@@ -126,7 +138,15 @@ def test_deploy_all_deploys_bundled_configs(tmp_path, monkeypatch, deployed):
     assert max(len(value) for value in deployed.env.values()) < 131_072
 
 
+def registry(monkeypatch, rows, app_id="ap-1"):
+    """Point deployed_configs at an in-memory registry folder."""
+    store = InMemoryKeyValueStore({row["recipe"]["name"]: row for row in rows})
+    monkeypatch.setattr(deployment_configs, "frontend_app_id", lambda *a: app_id)
+    monkeypatch.setattr(deployment_configs, "deployment_kv", lambda *a: store)
+
+
 def test_unresponsive_frontend_fails_fast(monkeypatch):
+    registry(monkeypatch, [])
     cancelled = []
 
     class Call:
@@ -383,7 +403,18 @@ def test_existing_frontend_without_deployment_metadata_can_be_updated(deployed):
     assert deployed.configs[0]["recipe"]["name"] == row.name
 
 
-def test_read_configs_from_deployed_function(monkeypatch):
+def test_read_configs_from_the_registry_without_calling_the_frontend(monkeypatch):
+    row = {"recipe": {"name": "qwen"}}
+    registry(monkeypatch, [row])
+    lookup = Mock(side_effect=AssertionError("the frontend was called"))
+    monkeypatch.setattr(modal.Function, "from_name", lookup)
+    assert deployed_configs("my-app", "dev") == [row]
+    registry(monkeypatch, [row], app_id=None)
+    assert deployed_configs("my-app", "dev") == []
+
+
+def test_frontend_from_before_the_registry_reports_its_configs(monkeypatch):
+    registry(monkeypatch, [])
     call = SimpleNamespace(get=Mock(return_value=[{"configuration": "saved"}]))
     function = SimpleNamespace(spawn=Mock(return_value=call))
     lookup = Mock(return_value=function)
@@ -504,6 +535,238 @@ def test_conflicting_platforms_fail_before_deployment(deployed):
     assert deployed.calls == []
 
 
+def served_elsewhere(name="unlisted-but-served"):
+    row = DeploymentConfig.create(load(config_path("qwen35-4b-fft-64k")))
+    data = row.model_dump(mode="json")
+    data["recipe"]["name"] = name
+    return data
+
+
+def test_deploy_adds_listed_configs_and_keeps_unlisted_ones(deployed):
+    cli.deploy([deployment()])
+    other = served_elsewhere()
+    deployed.configs.append(other)
+    deployed.calls.clear()
+    cli.deploy([deployment()])
+    assert other in deployed.configs
+    assert deployed.calls == ["frontend"]
+
+
+def test_deploy_carries_over_a_pre_registry_frontends_recipes(deployed):
+    other = served_elsewhere()
+    deployed.configs = [other]
+    deployed.platform = deployment().recipe.platform
+    cli.deploy([deployment()])
+    assert {row["recipe"]["name"] for row in deployed.configs} == {
+        "unlisted-but-served",
+        deployment().name,
+    }
+
+
+def test_platform_change_refuses_to_strand_unlisted_recipes(deployed):
+    deployed.configs = [served_elsewhere()]
+    deployed.platform = {**deployment().recipe.platform, "url_label": "old"}
+    with pytest.raises(ValueError, match="unlisted-but-served"):
+        cli.deploy([deployment()])
+    assert deployed.calls == []
+
+
+def test_lifecycle_change_refuses_to_reset_unlisted_recipes(deployed):
+    other = served_elsewhere()
+    other["recipe"]["session_idle_timeout_s"] = 86_400
+    deployed.configs = [other]
+    deployed.platform = deployment().recipe.platform
+    with pytest.raises(
+        ValueError, match=r"session_idle_timeout_s for \['unlisted-but-served'\]"
+    ):
+        cli.deploy([deployment()])
+    assert deployed.calls == []
+
+
+def mock_frontend_client(monkeypatch, handler):
+    client_type = httpx.Client
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        cli.httpx,
+        "Client",
+        lambda **kwargs: client_type(transport=transport, **kwargs),
+    )
+    monkeypatch.setenv("TINKER_BASE_URL", "https://frontend.example/")
+    monkeypatch.setenv("TINKER_API_KEY", "test-key")
+
+
+def frontend_that_deploys(statuses, requests=None):
+    """A fake frontend: POST registers, then the listing reports each status in turn."""
+    statuses = iter(statuses)
+
+    def handle(request):
+        if requests is not None:
+            requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(202, json={"deployment": {}, "config": {}})
+        return httpx.Response(
+            200, json={"deployments": [{"name": "variant", **next(statuses)}]}
+        )
+
+    return handle
+
+
+def test_add_posts_json_parsed_fields_then_waits_until_the_apps_are_ready(
+    monkeypatch, deployed, capsys
+):
+    requests = []
+    handle = frontend_that_deploys(
+        [{"apps": "deploying"}, {"apps": "deploying"}, {"apps": "ready"}], requests
+    )
+    mock_frontend_client(monkeypatch, handle)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    cli.main(
+        [
+            "add",
+            "variant",
+            "--base",
+            "qwen35-9b-lora-16k",
+            "--trainer_gpus_per_node=4",
+            "--weights_revision",
+            '"1234"',
+            "--trainer_gpu=H200",
+            "--inference_gpu",
+            '["H100","B300"]',
+            "--model_weights=null",
+        ]
+    )
+    request = requests[0]
+    assert request.url == "https://frontend.example/api/v1/spindle/deployments"
+    assert request.headers["x-api-key"] == "test-key"
+    assert json.loads(request.content) == {
+        "name": "variant",
+        "base": "qwen35-9b-lora-16k",
+        "overrides": {
+            "trainer_gpus_per_node": 4,
+            "weights_revision": "1234",
+            "trainer_gpu": "H200",
+            "inference_gpu": ["H100", "B300"],
+            "model_weights": None,
+        },
+    }
+    assert [r.method for r in requests] == ["POST", "GET", "GET", "GET"]
+    assert deployed.calls == []
+    assert "Added variant." in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "message"),
+    [
+        (["--not_a_setting=1"], "unknown recipe field"),
+        (["--trainer_gpu=H100", "--trainer_gpu=B200"], "duplicate field"),
+        (["--trainer_gpu"], "missing value"),
+        (["--trainer_gpu", "--trainer_gpus_per_node=4"], "missing value"),
+        (["--=1"], "expected a --FIELD=VALUE recipe field"),
+        (["extra"], "expected a --FIELD=VALUE recipe field"),
+        (["--all"], "unknown recipe field: all"),
+        (["--env", "dev"], "unknown recipe field: env"),
+        (["--set", "gpu=H200"], "unknown recipe field: set"),
+        (["--name=other"], "not --name"),
+    ],
+)
+def test_add_cli_validation_fails_before_http(extra_args, message, monkeypatch, capsys):
+    requests = []
+    monkeypatch.setattr(cli.httpx, "Client", lambda **kwargs: requests.append(kwargs))
+    monkeypatch.setenv("TINKER_BASE_URL", "https://frontend.example")
+    monkeypatch.setenv("TINKER_API_KEY", "test-key")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["add", "variant", "--base", "base", *extra_args])
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("args", "code", "message"),
+    [
+        (["add", "variant"], 2, "--base"),
+        (["add", "--base", "base"], 2, "name"),
+        (["add", "variant", "--base"], 2, "expected one argument"),
+        (["add", "variant", "--bas", "base"], 2, "--base"),
+        (["deploy", "--trainer_gpu=H200"], 2, "unrecognized arguments"),
+        (["remove", "x", "--all"], 2, "unrecognized arguments"),
+        (["add", "variant", "--base", "base"], 1, "TINKER_BASE_URL"),
+    ],
+)
+def test_add_cli_rejects_bad_invocations_before_http(
+    args, code, message, monkeypatch, capsys
+):
+    requests = []
+    monkeypatch.setattr(cli.httpx, "Client", lambda **kwargs: requests.append(kwargs))
+    monkeypatch.delenv("TINKER_BASE_URL", raising=False)
+    monkeypatch.setenv("TINKER_API_KEY", "test-key")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(args)
+    assert exc.value.code == code
+    assert message in capsys.readouterr().err
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "message"),
+    [
+        (
+            400,
+            {"error": "invalid_request", "message": "unknown base deployment"},
+            "unknown base deployment",
+        ),
+        (409, {"error": "conflict", "message": "different settings"}, "409"),
+        (405, {"message": "method not allowed"}, "predates the deployments API"),
+    ],
+)
+def test_add_http_errors_exit(status, body, message, monkeypatch, capsys):
+    mock_frontend_client(monkeypatch, lambda request: httpx.Response(status, json=body))
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["add", "variant", "--base", "base"])
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err
+
+
+def test_remove_deletes_the_named_config_with_the_proxy_token_when_set(
+    monkeypatch, capsys
+):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={"deployment": {"name": "variant"}})
+
+    mock_frontend_client(monkeypatch, handle)
+    cli.main(["remove", "variant"])
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "wk-test")
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "ws-test")
+    cli.remove_deployment("variant")
+    assert [(r.method, r.url.path) for r in requests] == [
+        ("DELETE", "/api/v1/spindle/deployments/variant")
+    ] * 2
+    assert requests[0].headers["X-API-Key"] == "test-key"
+    assert "modal-key" not in requests[0].headers
+    assert requests[1].headers["modal-key"] == "wk-test"
+    assert requests[1].headers["modal-secret"] == "ws-test"
+    assert "Removed variant" in capsys.readouterr().out
+
+
+def test_remove_reports_unknown_names_and_old_frontends(monkeypatch):
+    responses = iter(
+        [
+            httpx.Response(
+                404, json={"error": "not_found", "message": "no deployment named 'x'"}
+            ),
+            httpx.Response(405),
+        ]
+    )
+    mock_frontend_client(monkeypatch, lambda request: next(responses))
+    with pytest.raises(ValueError, match="no deployment named 'x'"):
+        cli.remove_deployment("x")
+    with pytest.raises(ValueError, match="predates the deployments API"):
+        cli.remove_deployment("x")
+
+
 def test_app_flag_names_every_app_after_the_frontend(deployed):
     cli.main(["deploy", "qwen35-9b-lora-16k", "--app", "my-spindle", "--env", "dev"])
     assert deployed.apps == {
@@ -546,8 +809,14 @@ def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, caps
             )
         return subprocess.CompletedProcess(command, 0, "", "")
 
+    deleted = []
     monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(cli, "frontend_app_id", lambda frontend, env: f"ap-{frontend}")
+    monkeypatch.setattr(
+        cli, "delete_registry", lambda app_id, env: deleted.append((app_id, env))
+    )
     cli.main(["stop", "--app", "my-spindle", "--env", "dev"])
+    assert deleted == [("ap-my-spindle", "dev")]
     assert [command[3] for command in calls[1:]] == [
         "my-spindle",
         "my-spindle-inference-qwen35-9b-lora-16k",
@@ -564,4 +833,70 @@ def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, caps
     listed[:] = [("my-spindle", "stopped")]
     cli.main(["stop", "--app", "my-spindle"])
     assert calls == [["app", "list", "--json"]]
+    assert len(deleted) == 1
     assert "No running apps for my-spindle" in capsys.readouterr().out
+
+
+def test_add_reports_a_failed_deploy_and_how_to_retry(monkeypatch):
+    handle = frontend_that_deploys(
+        [{"apps": "deploying"}, {"apps": "failed", "apps_error": "no H200 quota"}]
+    )
+    mock_frontend_client(monkeypatch, handle)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    with pytest.raises(ValueError, match="no H200 quota.*same spindle add again"):
+        cli.add_deployment("variant", base="qwen35-9b-lora-16k", overrides={})
+
+
+def test_add_posts_again_when_no_deploy_is_running(monkeypatch):
+    requests = []
+    handle = frontend_that_deploys(
+        [{"apps": "missing"}, {"apps": "deploying"}, {"apps": "ready"}], requests
+    )
+    mock_frontend_client(monkeypatch, handle)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    cli.add_deployment("variant", base="b", overrides={})
+    assert [r.method for r in requests] == ["POST", "GET", "POST", "GET", "GET"]
+
+
+def test_add_gives_up_after_its_timeout(monkeypatch):
+    mock_frontend_client(
+        monkeypatch, frontend_that_deploys([{"apps": "deploying"}] * 3)
+    )
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    with pytest.raises(ValueError, match="not ready after 0s"):
+        cli.add_deployment("variant", base="b", overrides={}, timeout_s=0)
+
+
+def test_add_rejects_a_frontend_that_does_not_deploy_apps(monkeypatch):
+    mock_frontend_client(monkeypatch, frontend_that_deploys([{}]))
+    with pytest.raises(ValueError, match="does not deploy apps"):
+        cli.add_deployment("variant", base="b", overrides={})
+
+
+def test_remove_lists_training_models_and_asks_before_forcing(monkeypatch, capsys):
+    requests = []
+    models = [{"model_id": "s:train:0", "session_id": "s", "created_at": 1.0}]
+
+    def handle(request):
+        requests.append(request)
+        if request.url.params.get("force") == "true":
+            return httpx.Response(200, json={"deployment": {"name": "variant"}})
+        return httpx.Response(
+            409, json={"error": "conflict", "message": "busy", "models": models}
+        )
+
+    mock_frontend_client(monkeypatch, handle)
+    with pytest.raises(ValueError, match="--force"):
+        cli.remove_deployment("variant", confirm=lambda question: False)
+    assert "s:train:0 (session s)" in capsys.readouterr().out
+    cli.remove_deployment("variant", confirm=lambda question: True)
+    assert "Removed variant" in capsys.readouterr().out
+    requests.clear()
+    capsys.readouterr()
+    cli.main(["remove", "variant", "--force"])
+    assert [r.url.params.get("force") for r in requests] == [None, "true"]
+    assert "Warning: removing variant ends training" in capsys.readouterr().out
+    requests.clear()
+    with pytest.raises(SystemExit):
+        cli.main(["remove", "variant"])
+    assert len(requests) == 1

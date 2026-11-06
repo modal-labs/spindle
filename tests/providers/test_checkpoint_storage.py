@@ -7,16 +7,15 @@ from unittest.mock import patch, sentinel
 import modal
 
 from spindle.backends.deployment import backend_config
-from spindle.providers.modal.app import DEFINITIONS, PLATFORM
+from spindle.deployments import DeploymentConfig, config_path, load
+from spindle.providers.modal.app import PLATFORM
 from spindle.providers.modal.checkpoint_storage import (
     CHECKPOINT_ROOT,
     _scan_checkpoints,
 )
 from spindle.providers.modal.deployment_apps import volumes_for
 
-FULL_DEFINITIONS = tuple(
-    definition for definition in DEFINITIONS if definition.parameterization == "full"
-)
+FULL_DEFINITIONS = (DeploymentConfig.create(load(config_path("qwen35-9b-fft-64k"))),)
 
 
 def test_checkpoint_storage_creates_one_v2_volume_without_live_lookup() -> None:
@@ -39,7 +38,7 @@ def test_checkpoint_storage_creates_one_v2_volume_without_live_lookup() -> None:
 
 
 def test_deployments_use_configured_checkpoint_storage():
-    for definition in DEFINITIONS:
+    for definition in FULL_DEFINITIONS:
         with patch.object(
             modal.Volume, "from_name", side_effect=lambda name, **kwargs: (name, kwargs)
         ):

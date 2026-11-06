@@ -24,6 +24,46 @@ def _jsonable(value):
     return json.loads(json.dumps(value))
 
 
+def _validate_recipe(recipe: BaseConfig) -> None:
+    defaults = {
+        key: value
+        for key, value in vars(BaseConfig).items()
+        if not key.startswith("_") and not callable(value)
+    }
+    unknown = sorted(set(vars(recipe)) - set(defaults))
+    if unknown:
+        raise ValueError(f"unknown config settings: {', '.join(unknown)}")
+    for field, default in defaults.items():
+        if field not in vars(recipe):
+            continue
+        value = getattr(recipe, field)
+        if field in {"trainer_gpu", "inference_gpu"}:
+            valid = isinstance(value, str) or (
+                isinstance(value, (list, tuple))
+                and bool(value)
+                and all(isinstance(gpu, str) for gpu in value)
+            )
+            if not valid:
+                raise ValueError(
+                    f"{field} must be a string or non-empty array of strings"
+                )
+        elif isinstance(default, bool):
+            if not isinstance(value, bool):
+                raise ValueError(f"{field} must be boolean")
+        elif isinstance(default, int):
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"{field} must be integer")
+        elif isinstance(default, float):
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ValueError(f"{field} must be number")
+        elif isinstance(default, str):
+            if not isinstance(value, str):
+                raise ValueError(f"{field} must be string")
+        elif isinstance(default, dict):
+            if not isinstance(value, dict):
+                raise ValueError(f"{field} must be object")
+
+
 class DeploymentConfig(BaseModel):
     """Recipe plus the backend settings used to deploy one model."""
 
@@ -45,8 +85,18 @@ class DeploymentConfig(BaseModel):
         return vars(recipe)
 
     @classmethod
+    def from_registry(cls, row: object) -> DeploymentConfig:
+        """Load a stored config, ignoring fields a newer Spindle wrote."""
+        if not isinstance(row, dict):
+            raise TypeError(f"expected a config object, got {type(row).__name__}")
+        return cls.model_validate(
+            {k: v for k, v in row.items() if k in cls.model_fields}
+        )
+
+    @classmethod
     def create(cls, recipe: BaseConfig) -> DeploymentConfig:
         """Copy the recipe and attach backend settings."""
+        _validate_recipe(recipe)
         pinned = BaseConfig(**_jsonable(vars(recipe)))
         for field in ("trainer_disk_mib", "inference_disk_mib"):
             disk = getattr(pinned, field)

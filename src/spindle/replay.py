@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from tinker import SamplingClient, types
 from tinker.lib.api_future_impl import _APIFuture
 from tinker.lib.client_connection_pool_type import ClientConnectionPoolType
-from tinker.lib.public_interfaces.api_future import APIFuture, AwaitableConcurrentFuture
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 REPLAY_FIELDS = frozenset(
     {"routed_experts", "sampling_mask_ids", "sampling_mask_offsets"}
@@ -109,7 +109,7 @@ class ReplaySampleResponse(BaseModel):
 
 
 def sample_with_replay(
-    client: SamplingClient | APIFuture[SamplingClient],
+    client: SamplingClient,
     prompt: types.ModelInput,
     *,
     sampling_params: types.SamplingParams,
@@ -124,7 +124,7 @@ def sample_with_replay(
     """
     if not (return_routed_experts or return_sampling_mask):
         raise ValueError("request at least one replay type")
-    if isinstance(client, APIFuture):
+    if hasattr(client, "result"):  # tinker >= 0.38 returns a future of the client
         client = client.result()
 
     async def sample():

@@ -26,7 +26,14 @@ def test_gpu_wait_reports_only_queued_work_without_containers() -> None:
     async def run() -> None:
         function = FakeFunction(backlog=1, runners=0)
         now = [0.0]
-        wait = gpu_wait(lambda _: function, lambda _: "8× H200", clock=lambda: now[0])
+
+        async def function_for(definition_id: str) -> FakeFunction:
+            return function
+
+        async def label_for(definition_id: str) -> str:
+            return "8× H200"
+
+        wait = gpu_wait(function_for, label_for, clock=lambda: now[0])
 
         assert await wait("qwen") == "8× H200"
 

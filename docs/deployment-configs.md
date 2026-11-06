@@ -164,7 +164,7 @@ All configs deployed together must share platform settings. Use a shared parent 
 
 One frontend serves all models through Tinker’s `base_model`. If several recipes serve the same model, requests by model name go to the one with the longest context. To use a specific recipe, pass its name as `base_model`. `get_server_capabilities` lists every recipe and its context length.
 
-`GET /api/v1/spindle/queues` describes each recipe's training queue. Each trainer holds up to `trainer_max_clients_per_instance` training clients, and a recipe runs at most `trainer_max_instances` trainers. New clients are placed first come, first served.
+`GET /api/v1/spindle/queues` describes each recipe's training queue. Each trainer holds up to `trainer_max_clients_per_instance` training clients, and a recipe runs at most `trainer_max_instances` trainers. When every slot is in use, a new client waits in line instead of failing. The client that has waited longest gets the next free slot. It keeps waiting until a slot frees, with no time limit.
 
 ```json
 {"name": "qwen35_2b_lora_32k", "base_model": "Qwen/Qwen3.5-2B", "parameterization": "lora",
@@ -180,9 +180,54 @@ One frontend serves all models through Tinker’s `base_model`. If several recip
 - `trainers` counts trainers that are running, trainers that are still booting, and the most the recipe allows.
 - `recent` covers the last `window_s` seconds. `added` counts clients that asked for a slot, `placed` counts clients that got one, and `released` counts slots that opened up. A slot opens when a client unloads its model or its session closes or goes idle. Models lost when a trainer stops are not counted, since no slot opens for anyone else. `wait_s` gives the median, 95th percentile and longest wait of the clients placed in the window, or `null` if none were placed.
 
-A client can start right away when `slots.free` is greater than `backlog.count`. Otherwise it waits for a trainer to boot, or for another client to finish or go idle for `session_idle_timeout_s`. The response can be a few seconds old, so another client can take a free slot first.
+A client can start right away when `slots.free` is greater than `backlog.count`. Otherwise it waits for a trainer to boot, or for another client to finish or go idle for `session_idle_timeout_s`. While it waits, the Tinker SDK shows its place in line, such as `all trainer slots for Qwen/Qwen3.5-2B are in use; waiting for one to free up (2nd in line, 1m 10s so far)`. A client that stops waiting, for example because its script exited, loses its place within 30 seconds. The queue response and each frontend's view of the line can be a few seconds old, so a new client can occasionally take a slot just as it frees up.
 
 When no slot is free and no trainer is booting, `recent.released` shows how fast slots open up. For example, 4 slots released in the last hour means a slot opens about every 15 minutes. `backlog.count` shows how many other clients are waiting for those slots.
+
+## The frontend registry
+
+Every recipe a frontend serves is one `<app_id>/<recipe>.json` config file in the shared `spindle-deployments` Modal Volume, under a folder named after the frontend's app ID. `spindle deploy` deploys the trainer and inference apps that are missing or changed, then writes the listed configs to the registry and publishes the frontend with only its platform and lifecycle settings. The frontend reads the registry, so recipes not listed in a deploy keep serving. A deploy that changes platform settings must list every recipe the frontend serves, since unlisted ones would keep apps built for the old settings.
+
+Upgrading a frontend that still ships a configs file needs no extra step: `spindle deploy` on the new version writes every recipe the old frontend serves to the registry before the swap, so nothing drops out and unchanged apps are not deployed again.
+
+## Add or remove a config on a running frontend
+
+Anyone with the frontend's API key can add and remove configs. There are two ways to add configurations: SDK or REST API.
+
+### SDK
+
+~~~bash
+uv run spindle add qwen35-9b-lora-16k-h200 --base qwen35-9b-lora-16k \
+  --trainer_gpu=H200 --miles_cfg.max_tokens_per_gpu=8192
+~~~
+
+`spindle add` waits until the config's apps are ready. To remove a config:
+
+~~~bash
+uv run spindle remove qwen35-9b-lora-16k-h200
+~~~
+
+If models still train on it, `spindle remove` lists them and prompts the user first; `--force` skips the interactive prompt.
+
+### REST API
+
+`POST /api/v1/spindle/deployments` writes a config into a running frontend's registry and deploys its trainer and inference apps in the background, without redeploying the frontend. Send a new `name` with either the deployed config to start from as `base` plus the settings to change as `overrides` (the same dotted keys as a config's `overrides`), or a full `recipe`:
+
+~~~bash
+curl -sS -i -X POST "$TINKER_BASE_URL/api/v1/spindle/deployments" \
+  -H "X-API-Key: $TINKER_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "qwen35-9b-lora-16k-h200",
+       "base": "qwen35-9b-lora-16k",
+       "overrides": {"trainer_gpu": "H200", "miles_cfg.max_tokens_per_gpu": 8192}}'
+~~~
+
+`DELETE /api/v1/spindle/deployments/{name}` removes a config and stops its trainer and inference apps, and `GET /api/v1/spindle/deployments` lists them. If models still train on the config, `DELETE` returns HTTP 409 listing them; add `?force=true` to remove it anyway, which ends their training.
+
+Configs deployed before this API are already registered and listed. To move a config kept in a Python file onto the API, send its fields as `recipe` (`vars(config)`).
+
+Each listed config reports `apps` as `"deploying"`, `"ready"`, `"failed"` (with `apps_error`) or `"missing"`. Sending the same config again retries a failed deploy.
+
+If you find a config that clearly beats the current baselines, please upstream it to Spindle as a bundled config.
 
 ## Update isolation
 
@@ -192,12 +237,12 @@ Every app a deployment creates starts with its frontend name, so two deployments
 
 Trainers receive the frontend App ID at launch and use its shared registry for engine state and reconciliation. A startup failure pauses new starts for five minutes; the failure then expires, allowing subsequent requests and reconciliation to retry. `spindle deployment retry` clears it immediately.
 
-The frontend carries the current configs and exposes them through `deployed_configs`. The CLI reads that function to compare settings, and checks trainer and inference app existence directly with Modal. There is no retained history of earlier configs. Run deploy commands sequentially.
+The CLI reads the current configs straight from the frontend's registry folder to compare settings, and checks trainer and inference app existence directly with Modal. There is no retained history of earlier configs. Run deploy commands sequentially.
 
 `--app`, `--env`, `--region`, secrets, and storage names are frontend/platform settings. They are not copied onto each recipe.
 
 LoRA pools are named `{frontend}-lora-{name}`. FFT pools are named `{frontend}-fft-{session_digest}-latest` or `{frontend}-fft-{session_digest}-v{version}` to fit Modal’s 63-character limit. The digest identifies the recipe/client pair; it is not a config revision.
 
-`spindle stop --app my-spindle --env dev` stops the frontend and every app whose name starts with `my-spindle-trainer-`, `my-spindle-inference-`, `my-spindle-lora-`, or `my-spindle-fft-`, ending any runs on them. Deployments made with `--app` on Spindle 0.1.5 or older named their worker and pool apps `spindle-...`; stop those with `modal app stop` after upgrading.
+`spindle stop --app my-spindle --env dev` stops the frontend and every app whose name starts with `my-spindle-trainer-`, `my-spindle-inference-`, `my-spindle-lora-`, or `my-spindle-fft-`, ending any runs on them. Deployments made with `--app` on Spindle 0.1.5 or older named their worker and pool apps `spindle-...`; stop those with `modal app stop` after upgrading. It also deletes the stopped frontend's folder from the registry Volume, leaving other frontends' folders alone: the next `spindle deploy` under that name creates a new frontend app with an empty registry, so it serves only the configs it lists.
 
 See [validation results](deployment-validation.md) for CPU coverage, live GPU checks, and their limits.

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import time
 
 from tinker import ServiceClient, TrainingClient, types
@@ -8,6 +7,11 @@ from tinker.lib.api_future_impl import _APIFuture
 from tinker.lib.client_connection_pool_type import ClientConnectionPoolType
 from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 from tinker.lib.queue_state_logger import QueueStateLogger
+
+try:
+    from tinker.lib.public_interfaces.training_client import fetch_training_info
+except ImportError:  # tinker < 0.38, whose TrainingClient takes no `info`
+    fetch_training_info = None
 
 
 def _create_full_training_client_submit(
@@ -47,18 +51,14 @@ def _create_full_training_client_submit(
             request_type="CreateModel",
             queue_state_observer=QueueStateLogger(base_model, "Model creation"),
         ).result_async()
-        kwargs = {}
-        if "info" in inspect.signature(TrainingClient).parameters:
-            from tinker.lib.public_interfaces.training_client import fetch_training_info
-
-            kwargs["info"] = await fetch_training_info(
-                service.holder, response.model_id
-            )
+        info = {}
+        if fetch_training_info is not None:
+            info["info"] = await fetch_training_info(service.holder, response.model_id)
         return TrainingClient(
             service.holder,
             model_seq_id=model_seq_id,
             model_id=response.model_id,
-            **kwargs,
+            **info,
         )
 
     return service.holder.run_coroutine_threadsafe(create())

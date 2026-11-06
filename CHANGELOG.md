@@ -6,6 +6,9 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- `spindle deploy` registers every recipe in one per-frontend registry instead of baking a configs file into the frontend image, so a deploy adds or updates configs instead of replacing the set; upgrading a pre-registry frontend carries over every recipe it serves (#181).
+- `POST /api/v1/spindle/deployments` registers a config on a running frontend and deploys its apps, and `DELETE /api/v1/spindle/deployments/{name}` removes one (#160).
+- `spindle add NAME --base BASE --FIELD=VALUE ...` registers a config through that API and waits until its apps are ready; `spindle remove NAME` removes a config while checking whether there are any models still training on it live (#160).
 - `qwen25_7b_instruct_lora_32k`: Qwen2.5-7B-Instruct LoRA with 32K context, trained on 4× H100 and sampled on one GPU per replica.
 - `qwen25_3b_lora_32k`: Qwen2.5-3B LoRA with 32K context, with one model replica per GPU.
 - The shared server serves both.
@@ -14,6 +17,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 ### Changed
 
 - Every app a deployment creates now starts with its frontend name, so `spindle deploy --app my-spindle` names its trainers `my-spindle-trainer-<recipe>` and its sampler pools `my-spindle-lora-<recipe>`. Two deployments with different `--app` values can share one Modal environment and recipe names. Deployments without `--app` keep their `spindle-...` names. A deployment made with `--app` on an earlier release gets new worker apps on its next deploy; stop its old `spindle-...` apps with `modal app stop`.
+- When every trainer for a recipe is full, creating a model waits for a slot instead of failing with `trainer capacity exhausted`. The Tinker SDK shows the request's place in line. When a slot frees up, the request that has waited longest gets it. Rarely, a brand-new request takes it first.
 - Spindle requires Modal 1.6.3 or newer, the first release that builds images with [image builder version](https://modal.com/docs/guide/images#image-builder-updates) 2026.10. Multi-node trainers use `modal.clustered` instead of the deprecated `modal.experimental.clustered`.
 
 ## 0.1.5 - 2026-11-02

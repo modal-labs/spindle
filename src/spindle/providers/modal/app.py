@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import subprocess
+import sys
 import time
 from dataclasses import asdict
 
@@ -11,10 +14,10 @@ from huggingface_hub import snapshot_download
 from stitch.pools.modal_flash import ModalFlashPool
 
 from spindle.control_plane import ControlPlane, create_control_plane_app
+from spindle.control_plane.deployments import DeploymentRoutes
 from spindle.control_plane.keys import model_key, placement_key, trainer_demand_key
 from spindle.control_plane.queues import RECENT_WINDOW_S, prune_queue_events
 from spindle.control_plane.records import ModelRecord
-from spindle.deployments import validate_frontend
 from spindle.inference.sampling import sample_task
 from spindle.providers.contracts import (
     Parameterization,
@@ -22,7 +25,7 @@ from spindle.providers.contracts import (
 )
 from spindle.startup_timing import StartupTimeline
 from spindle.telemetry.otlp import sample_trace
-from spindle.version import COMMIT_ENV, source_commit
+from spindle.version import COMMIT_ENV, deployment_tag, source_commit
 
 from .app_tags import app_tags
 from .checkpoint_storage import (
@@ -31,11 +34,10 @@ from .checkpoint_storage import (
 )
 from .deployment import trainer_deployment_env
 from .deployment_configs import (
-    CONFIGS_FILE_ENV,
-    CONFIGS_IMAGE_PATH,
-    PLATFORM_ENV,
-    configs_from_env,
-    platform_from_env,
+    FRONTEND_SETTINGS_ENV,
+    WORKER_CONFIG_ENV,
+    WORKER_ROLE_ENV,
+    frontend_settings_from_env,
 )
 from .engines import EngineInstanceRecord, ModalEnginePlatform
 from .fft_pool import (
@@ -54,6 +56,7 @@ from .image_dependencies import (
 from .kv import (
     ModalSessionKeyValueStores,
     current_app_id,
+    deployment_kv,
     fft_pool_kv,
     shared_kv,
 )
@@ -81,20 +84,20 @@ from .trainer_reconciler import (
     request_reconcile,
 )
 
-DEFINITIONS = tuple(configs_from_env())
-validate_frontend([definition.recipe for definition in DEFINITIONS])
-SETTINGS = DEFINITIONS[0]
-PLATFORM = platform_from_env()
+
+SETTINGS = frontend_settings_from_env()
+PLATFORM = SETTINGS.platform
+DEPLOYMENTS = DeploymentRoutes(lambda: deployment_kv())
 APP_NAME = PLATFORM["frontend"]
 # Placement for the CPU-only frontend; trainers and samplers keep their own
 # (unpinned by default) placement.
 FRONTEND_REGION = PLATFORM["modal"]["region"] or "us-east"
 MODEL_ASSET_ROOT = "/assets"
-SESSION_IDLE_TIMEOUT = SETTINGS.recipe.session_idle_timeout_s
-FFT_POOL_IDLE_TIMEOUT = LORA_POOL_IDLE_TIMEOUT = SETTINGS.recipe.pool_idle_timeout_s
+SESSION_IDLE_TIMEOUT = SETTINGS.session_idle_timeout_s
+FFT_POOL_IDLE_TIMEOUT = LORA_POOL_IDLE_TIMEOUT = SETTINGS.pool_idle_timeout_s
 FFT_POOL_TOUCH_INTERVAL = 60.0
 LORA_POOL_CHECK_INTERVAL = 60.0
-SWEEP_PERIOD = modal.Period(seconds=SETTINGS.recipe.sweep_interval_s)
+SWEEP_PERIOD = modal.Period(seconds=SETTINGS.sweep_interval_s)
 CHECKPOINT_READ_LOCK = asyncio.Lock()
 _pool_touches: dict[str, float] = {}
 _lora_pool_gateways: dict[str, tuple[float, str]] = {}
@@ -108,8 +111,7 @@ checkpoint_volume = modal.Volume.from_name(
 )
 TRAINER_DEPLOYMENT_ENV = {
     **trainer_deployment_env(),
-    CONFIGS_FILE_ENV: CONFIGS_IMAGE_PATH,
-    PLATFORM_ENV: os.environ.get(PLATFORM_ENV, ""),
+    FRONTEND_SETTINGS_ENV: json.dumps(asdict(SETTINGS)),
     "SPINDLE_APP_NAME": APP_NAME,
     COMMIT_ENV: source_commit() or "",
 }
@@ -143,21 +145,13 @@ base_image = (
 
 
 def _frontend_image(base):
-    # The configs file changes on every deploy; keep it above slower layers.
-    return (
-        base.add_local_file(os.environ[CONFIGS_FILE_ENV], CONFIGS_IMAGE_PATH, copy=True)
-        .env(TRAINER_DEPLOYMENT_ENV)
-        .add_local_python_source("spindle", ignore=ignore_config_source)
+    return base.env(TRAINER_DEPLOYMENT_ENV).add_local_python_source(
+        "spindle", ignore=ignore_config_source
     )
 
 
 image = _frontend_image(base_image)
 sample_image = _frontend_image(with_router(base_image))
-
-
-@app.function(image=image)
-def deployed_configs():
-    return [row.model_dump(mode="json") for row in configs_from_env()]
 
 
 @app.function(image=image)
@@ -198,7 +192,7 @@ proxy_secret = modal.Secret.from_name(
     retries=2,
 )
 async def prepare_model_assets(definition_id: str) -> None:
-    definition = module_for(definition_id)
+    definition = await module_for(definition_id)
     checkpoint = os.path.normpath(definition.asset_path)
     if (
         os.path.commonpath((MODEL_ASSET_ROOT, checkpoint)) != MODEL_ASSET_ROOT
@@ -216,13 +210,13 @@ async def prepare_model_assets(definition_id: str) -> None:
     StartupTimeline("model-assets", origin=started, labels={"path": checkpoint}).mark(
         "assets_ready"
     )
-    await shared_kv().put(_weights_ready_key(definition_id), time.time())
+    await shared_kv().put(await _weights_ready_key(definition_id), time.time())
 
 
 @app.function(image=image)
 async def start_weights_download(definition_id: str) -> bool:
     """Start the base-weight download for `spindle deploy`; True while it runs."""
-    module_for(definition_id)
+    await module_for(definition_id)
     return await _start_weights_download(definition_id) is not None
 
 
@@ -278,21 +272,21 @@ def _weights_of(definition) -> str:
     return f"{definition.asset_path}@{definition.recipe.weights_revision}"
 
 
-def _weights_id(definition_id: str) -> str:
-    return _weights_of(module_for(definition_id))
+async def _weights_id(definition_id: str) -> str:
+    return _weights_of(await module_for(definition_id))
 
 
-def _weights_ready_key(definition_id: str) -> str:
-    return f"model_assets_ready:{_weights_id(definition_id)}"
+async def _weights_ready_key(definition_id: str) -> str:
+    return f"model_assets_ready:{await _weights_id(definition_id)}"
 
 
-def _weights_call_key(definition_id: str) -> str:
+async def _weights_call_key(definition_id: str) -> str:
     # Revisions of one repo download into the same folder, so one runs at a time.
-    return f"model_assets_call:{module_for(definition_id).asset_path}"
+    return f"model_assets_call:{(await module_for(definition_id)).asset_path}"
 
 
 async def _legacy_weights_ready(store, weights: str) -> bool:
-    for d in DEFINITIONS:
+    for d in await DEPLOYMENTS.definitions():
         revision = d.recipe.weights_revision
         key = f"model_assets_ready:{d.definition_id}:{d.weights_repo}@{revision}"
         if _weights_of(d) == weights and await store.get(key) is not None:
@@ -301,11 +295,11 @@ async def _legacy_weights_ready(store, weights: str) -> bool:
 
 
 async def _weights_are_ready(definition_id: str) -> bool:
-    weights = _weights_id(definition_id)
+    weights = await _weights_id(definition_id)
     if weights in _weights_ready:
         return True
     store = shared_kv()
-    key = _weights_ready_key(definition_id)
+    key = await _weights_ready_key(definition_id)
     if await store.get(key) is None:
         if not await _legacy_weights_ready(store, weights):
             return False
@@ -332,10 +326,10 @@ async def _weights_download(definition_id: str) -> float | None:
     """When the running base-weight download started, or None if none is running."""
     if await _weights_are_ready(definition_id):
         return None
-    record = await shared_kv().get(_weights_call_key(definition_id))
+    record = await shared_kv().get(await _weights_call_key(definition_id))
     if record is None:
         return None
-    if record["weights"] != _weights_id(definition_id):
+    if record["weights"] != await _weights_id(definition_id):
         return await _start_weights_download(definition_id)
     try:
         running = await _call_running(record["call_id"])
@@ -351,13 +345,13 @@ async def _weights_download(definition_id: str) -> float | None:
 async def _start_weights_download(definition_id: str) -> float | None:
     """Join the running download, or start one unless the weights are ready."""
     lock = _weights_starts.setdefault(
-        module_for(definition_id).asset_path, asyncio.Lock()
+        (await module_for(definition_id)).asset_path, asyncio.Lock()
     )
     async with lock:
         if await _weights_are_ready(definition_id):
             return None
         store = shared_kv()
-        key = _weights_call_key(definition_id)
+        key = await _weights_call_key(definition_id)
         stale = await store.get(key)
         if stale is not None:
             try:
@@ -373,7 +367,7 @@ async def _start_weights_download(definition_id: str) -> float | None:
         record = {
             "call_id": call.object_id,
             "started_at": time.time(),
-            "weights": _weights_id(definition_id),
+            "weights": await _weights_id(definition_id),
         }
         inserted = await store.put_if_absent(key, record)
         if not inserted.created:
@@ -389,13 +383,13 @@ async def _start_weights_download(definition_id: str) -> float | None:
 async def _ensure_weights_ready(definition_id: str) -> None:
     """Join or start the base-weight download and wait for it to finish."""
     while await _start_weights_download(definition_id) is not None:
-        record = await shared_kv().get(_weights_call_key(definition_id))
+        record = await shared_kv().get(await _weights_call_key(definition_id))
         try:
             await modal.FunctionCall.from_id(record["call_id"]).get.aio()
         except Exception as exc:
             if await _weights_are_ready(definition_id):
                 return
-            if record["weights"] != _weights_id(definition_id):
+            if record["weights"] != await _weights_id(definition_id):
                 continue
             raise WeightsDownloadFailed(
                 f"Downloading weights for {definition_id} failed: {exc}"
@@ -457,10 +451,10 @@ async def execute_sample(task: dict) -> dict:
 
 async def _execute_sample(task: dict, stats: dict) -> dict:
     definition_id = str(task["engine_definition_id"])
-    parameterization = parameterization_for(definition_id)
+    parameterization = await parameterization_for(definition_id)
     if parameterization not in {"full", "lora"}:
         raise ValueError(f"unsupported sampling definition: {definition_id}")
-    definition = module_for(definition_id)
+    definition = await module_for(definition_id)
     rollout_world_size = definition.recipe.inference_gpus_per_node
     rollout_tensor_parallel_size = definition.rollout_tensor_parallel_size
     if rollout_world_size % rollout_tensor_parallel_size:
@@ -553,22 +547,21 @@ async def _model_record(kv, model_id: str):
     return ModelRecord.model_validate(await kv.get(model_key(model_id)))
 
 
-def module_for(definition_id: str):
-    for definition in DEFINITIONS:
-        if definition.definition_id == definition_id:
-            return definition
-    raise KeyError(definition_id)
+async def module_for(definition_id: str):
+    definition = await DEPLOYMENTS.get(definition_id)
+    if definition is None:
+        raise KeyError(definition_id)
+    return definition
 
 
-def parameterization_for(definition_id: str) -> Parameterization | None:
-    try:
-        return module_for(definition_id).parameterization
-    except KeyError:
-        return None
+async def parameterization_for(definition_id: str) -> Parameterization | None:
+    definition = await DEPLOYMENTS.get(definition_id)
+    return None if definition is None else definition.parameterization
 
 
-def trainer_autoscaling(definition_id: str) -> bool:
-    return parameterization_for(definition_id) is not None
+def trainer_slots(definition_id: str) -> int | None:
+    recipe = getattr(DEPLOYMENTS.cached(definition_id), "recipe", None)
+    return None if recipe is None else recipe.trainer_max_clients_per_instance
 
 
 @app.function(
@@ -583,7 +576,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
     call_id = modal.current_function_call_id()
 
     async def run(definition_id: str, token: str) -> None:
-        parameterization = parameterization_for(definition_id)
+        parameterization = await parameterization_for(definition_id)
         if (
             parameterization is None
             or await deployment_error(definition_id)
@@ -591,7 +584,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
         ):
             await complete_reconcile(definition_id, token)
             return
-        module = module_for(definition_id)
+        module = await module_for(definition_id)
         maximum_instances = module.recipe.trainer_max_instances
         try:
             await reconcile_trainers(
@@ -601,7 +594,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
                 revision=None,
                 maximum_instances=maximum_instances,
                 models_per_instance=module.recipe.trainer_max_clients_per_instance,
-                scale_up=trainer_autoscaling(definition_id),
+                scale_up=True,
             )
         except Exception:
             logging.getLogger(__name__).exception(
@@ -624,7 +617,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
 
 
 async def kick_trainer_reconciler(definition_id: str) -> None:
-    if parameterization_for(definition_id) is None:
+    if await parameterization_for(definition_id) is None:
         return
 
     async def spawn(delay_seconds: float) -> str:
@@ -637,22 +630,24 @@ async def kick_trainer_reconciler(definition_id: str) -> None:
 async def _spawn_engine(definition_id: str, instance_id: str) -> str:
     if error := await deployment_error(definition_id):
         raise ValueError(error)
-    call = await _trainer_function(definition_id).spawn.aio(
-        instance_id, module_for(definition_id).model_dump_json(), current_app_id()
+    call = await (await _trainer_function(definition_id)).spawn.aio(
+        instance_id,
+        (await module_for(definition_id)).model_dump_json(),
+        current_app_id(),
     )
     return call.object_id
 
 
-def _trainer_function(definition_id: str) -> modal.Function:
+async def _trainer_function(definition_id: str) -> modal.Function:
     return modal.Function.from_name(
-        module_for(definition_id).trainer_app_name,
+        (await module_for(definition_id)).trainer_app_name,
         "trainer",
         environment_name=PLATFORM["modal"]["environment"],
     )
 
 
-def _trainer_gpus(definition_id: str) -> str:
-    recipe = module_for(definition_id).recipe
+async def _trainer_gpus(definition_id: str) -> str:
+    recipe = (await module_for(definition_id)).recipe
     return gpu_label(
         recipe.trainer_gpu, recipe.trainer_gpus_per_node, recipe.trainer_nodes
     )
@@ -672,7 +667,7 @@ async def deployment_error(definition_id: str) -> str | None:
 
 @app.function(image=image)
 async def clear_deployment_failure(definition_id: str) -> None:
-    module_for(definition_id)
+    await module_for(definition_id)
     await shared_kv().delete(f"deployment_failure:{definition_id}")
     await kick_trainer_reconciler(definition_id)
 
@@ -687,7 +682,7 @@ def _plane():
         return call.object_id
 
     async def prepare_model(model) -> None:
-        parameterization = parameterization_for(model.engine_definition_id)
+        parameterization = await parameterization_for(model.engine_definition_id)
         if parameterization is None:
             return
         if await _start_weights_download(model.engine_definition_id) is not None:
@@ -702,7 +697,7 @@ def _plane():
 
     async def ensure_pool(session) -> None:
         definition_id = session.engine_definition_id
-        parameterization = parameterization_for(definition_id)
+        parameterization = await parameterization_for(definition_id)
         if parameterization is None:
             return
         if (
@@ -737,9 +732,9 @@ def _plane():
 
     async def kick_trainers(definition_id: str) -> bool:
         await kick_trainer_reconciler(definition_id)
-        if not trainer_autoscaling(definition_id):
+        if await parameterization_for(definition_id) is None:
             return False
-        maximum = module_for(definition_id).recipe.trainer_max_instances
+        maximum = (await module_for(definition_id)).recipe.trainer_max_instances
         instances = [
             instance
             for instance in await engines.list_instances()
@@ -764,7 +759,9 @@ def _plane():
         delete_checkpoint=_delete_checkpoint,
         checkpoint_root=CHECKPOINT_ROOT,
         reconcile_trainers=kick_trainers,
-        trainer_autoscaling=trainer_autoscaling,
+        # Every Modal recipe autoscales; this also covers recipes added after startup.
+        trainer_autoscaling=lambda _: True,
+        trainer_slots=trainer_slots,
         trainer_gpu_wait=gpu_wait(_trainer_function, _trainer_gpus),
     )
 
@@ -786,10 +783,128 @@ def _plane():
 def server():
     return create_control_plane_app(
         _plane(),
-        DEFINITIONS,
+        DEPLOYMENTS,
         api_key=os.environ["TINKER_API_KEY"],
         checkpoint_volume=CHECKPOINT_VOLUME_NAME,
+        apps_status=_apps_status,
+        deploy_apps=_start_app_deploy,
+        stop_apps=_stop_apps,
     )
+
+
+APP_DEPLOY_CLAIM_S = 60.0
+
+
+def _app_deploy_key(name: str) -> str:
+    return f"app_deploy:{name}"
+
+
+async def _app_exists(name: str) -> bool | None:
+    """Whether the app is deployed, or None if Modal could not say."""
+    try:
+        await modal.App.lookup.aio(
+            name, environment_name=PLATFORM["modal"]["environment"]
+        )
+    except modal.exception.NotFoundError:
+        return False
+    except Exception:
+        logging.getLogger(__name__).exception("Looking up app %s", name)
+        return None
+    return True
+
+
+async def _apps_status(definition) -> dict[str, str]:
+    names = (definition.trainer_app_name, definition.inference_app_name)
+    found = await asyncio.gather(*(_app_exists(name) for name in names))
+    if all(found):
+        return {"apps": "ready"}
+    if None in found:
+        return {"apps": "unknown"}
+    record = await shared_kv().get(_app_deploy_key(definition.name))
+    if record is None:
+        return {"apps": "missing"}
+    if "error" in record:
+        return {"apps": "failed", "apps_error": record["error"]}
+    if "call_id" not in record:
+        claimed = time.time() - record["claimed_at"] < APP_DEPLOY_CLAIM_S
+        return {"apps": "deploying" if claimed else "missing"}
+    try:
+        running = await _call_running(record["call_id"])
+    except Exception as exc:
+        return {"apps": "failed", "apps_error": str(exc)}
+    return {"apps": "deploying" if running else "missing"}
+
+
+async def _start_app_deploy(definition) -> None:
+    """Deploy a registered config's missing apps in the background, once per name."""
+    if (await _apps_status(definition))["apps"] in {"ready", "deploying", "unknown"}:
+        return
+    kv, key = shared_kv(), _app_deploy_key(definition.name)
+    await kv.delete(key)
+    if not (await kv.put_if_absent(key, {"claimed_at": time.time()})).created:
+        return
+    call = await deploy_apps.spawn.aio(definition.name)
+    await kv.put(key, {"call_id": call.object_id})
+
+
+async def _stop_apps(definition) -> None:
+    await shared_kv().delete(_app_deploy_key(definition.name))
+    for name in (definition.trainer_app_name, definition.inference_app_name):
+        if await _app_exists(name) is not False:
+            await asyncio.to_thread(_stop_app, name)
+
+
+def _stop_app(name: str) -> None:
+    command = [sys.executable, "-m", "modal", "app", "stop", "-y", name]
+    if environment := PLATFORM["modal"]["environment"]:
+        command += ["--env", environment]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if (
+        result.returncode
+        and "App is already stopped." not in result.stdout + result.stderr
+    ):
+        raise RuntimeError(f"stopping {name} failed: {result.stderr[-2000:]}")
+
+
+def _deploy_app(deployment, role: str) -> None:
+    command = [sys.executable, "-m", "modal", "deploy", "--tag", deployment_tag()]
+    if environment := PLATFORM["modal"]["environment"]:
+        command += ["--env", environment]
+    command += ["-m", "spindle.providers.modal.deployment_worker_app"]
+    env = {
+        **os.environ,
+        WORKER_CONFIG_ENV: deployment.model_dump_json(),
+        WORKER_ROLE_ENV: role,
+    }
+    result = subprocess.run(command, env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(
+            f"{role} deploy failed: {(result.stdout + result.stderr)[-2000:]}"
+        )
+
+
+@app.function(image=image, timeout=60 * 60)
+async def deploy_apps(name: str) -> None:
+    """Deploy a registered config's missing trainer and inference apps."""
+    deployment = await module_for(name)
+    try:
+        for role, app_name in (
+            ("trainer", deployment.trainer_app_name),
+            ("inference", deployment.inference_app_name),
+        ):
+            exists = await _app_exists(app_name)
+            if exists is None:
+                raise RuntimeError(f"could not look up {app_name}")
+            if not exists:
+                await asyncio.to_thread(_deploy_app, deployment, role)
+    except Exception as exc:
+        await shared_kv().put(
+            _app_deploy_key(name),
+            {"call_id": modal.current_function_call_id(), "error": str(exc)},
+        )
+        raise
+    await shared_kv().delete(_app_deploy_key(name))
+    await _start_weights_download(name)
 
 
 async def _lose_undefined_models() -> tuple[str, ...]:
@@ -797,7 +912,7 @@ async def _lose_undefined_models() -> tuple[str, ...]:
     lost = []
     for _, value in await kv.list_items("model:"):
         model = ModelRecord.model_validate(value)
-        if parameterization_for(model.engine_definition_id) is not None:
+        if await parameterization_for(model.engine_definition_id) is not None:
             continue
         await kv.delete(placement_key(model.model_id))
         await kv.delete(trainer_demand_key(model.model_id))
@@ -816,7 +931,7 @@ async def _cleanup_fft_pools() -> tuple[str, ...]:
         ).app_name
         for _, value in await shared_kv().list_items("model:")
         for model in (ModelRecord.model_validate(value),)
-        if parameterization_for(model.engine_definition_id) == "full"
+        if await parameterization_for(model.engine_definition_id) == "full"
     }
     stopped = []
     registry = fft_pool_kv()
@@ -860,7 +975,7 @@ async def _cleanup_lora_pools() -> tuple[str, ...]:
         LoraPoolSpec(model.engine_definition_id, APP_NAME).app_name
         for _, value in await registry.list_items("model:")
         for model in (ModelRecord.model_validate(value),)
-        if parameterization_for(model.engine_definition_id) == "lora"
+        if await parameterization_for(model.engine_definition_id) == "lora"
     }
     stopped = []
     for key, value in await registry.list_items("lora_pool:"):

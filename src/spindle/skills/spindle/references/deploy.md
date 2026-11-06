@@ -22,7 +22,10 @@
 - `uv run spindle deploy`: interactive picker; without a terminal and without args it exits, deploying nothing. Checks secrets first and prints creation commands for missing ones.
 - `uv run spindle deploy <name...>`: bundled configs by name. `--all`: every bundled config (in `src/spindle/configs`).
 - `uv run spindle deploy config.py`: custom config file.
-- Each deploy sets the complete served config set; include every config you want to keep serving.
+- Each deploy adds or updates the listed configs in the per-frontend registry; configs not listed remain served.
+- `POST /api/v1/spindle/deployments` (JSON `name` + `base` and `overrides`, or `recipe`) registers a config on a running frontend and deploys its trainer and inference apps in the background; `DELETE /api/v1/spindle/deployments/{name}` removes one and stops its apps (HTTP 409 listing the models still training on it unless `?force=true`). Invalid configs return HTTP 400, a different config under an existing name 409, an unknown name 404. `GET /api/v1/spindle/deployments` reports each config's `apps` as `"deploying"`, `"ready"`, `"failed"` or `"missing"`; re-sending the same config retries a failed deploy.
+- `uv run spindle add NAME --base BASE [--FIELD=VALUE | --FIELD VALUE ...]`: register a config through that API and wait until its apps are ready. Flags after `--base` are recipe fields (dotted fields work; values parse as JSON, else as strings); unknown fields are rejected before any request. Needs `TINKER_BASE_URL` and `TINKER_API_KEY`.
+- `uv run spindle remove NAME [--force]`: remove a config from a running frontend. If models still train on it, lists them and prompts the user first; `--force` skips the interactive prompt.
 
 ## Custom configs
 

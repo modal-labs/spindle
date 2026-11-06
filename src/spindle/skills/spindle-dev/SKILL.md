@@ -6,6 +6,8 @@ when_to_use: Changing Spindle internals (configs, backends, control plane, engin
 
 # Developing Spindle
 
+Follow the code, test and PR rules in `AGENTS.md` at the repo root.
+
 ## Architecture
 
 Three layers (docs/design.md):

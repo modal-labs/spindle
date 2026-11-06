@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import asdict
 from pathlib import PurePosixPath
 from typing import Any
@@ -32,8 +32,16 @@ from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
 from spindle.version import __version__, source_commit
 
-from .deployments import DeploymentRoutes
+from .deployments import (
+    DeploymentConflict,
+    DeploymentNotFound,
+    DeploymentRequest,
+    DeploymentRoutes,
+    Routable,
+)
+from .keys import placement_key
 from .queues import QueueLimits, SharedSnapshot, describe_queues
+from .records import ModelRecord
 from .service import ControlPlane, FutureResolutionStatus
 
 ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
@@ -42,6 +50,8 @@ ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
     (SequenceConflict, 409, "conflict"),
     (RecordUnavailable, 409, "conflict"),
     (RecordNotFound, 404, "not_found"),
+    (DeploymentConflict, 409, "conflict"),
+    (DeploymentNotFound, 404, "not_found"),
     (RequestValidationError, 400, "invalid_request"),
     (ValueError, 400, "invalid_request"),
     (httpx.TransportError, 503, "engine_unreachable"),
@@ -184,26 +194,36 @@ def _training_envelope(
     return body, identity
 
 
+def _deployment_summary(definition: Routable) -> dict[str, object]:
+    return {
+        "name": definition.name,
+        "definition_id": definition.definition_id,
+        "base_model": definition.model,
+        "weights_repo": definition.weights_repo,
+        "parameterization": definition.parameterization,
+        "max_context_length": definition.max_context_length,
+    }
+
+
 def create_control_plane_app(
     control_plane: ControlPlane,
-    definitions: Iterable[Any],
+    definitions: DeploymentRoutes | Iterable[Any],
     *,
     api_key: str | None = None,
     retrieve_window: float = 30.0,
     checkpoint_volume: str = "spindle-checkpoints",
+    apps_status: Callable[[Routable], Awaitable[dict[str, str]]] | None = None,
+    deploy_apps: Callable[[Routable], Awaitable[None]] | None = None,
+    stop_apps: Callable[[Routable], Awaitable[None]] | None = None,
 ) -> FastAPI:
-    definitions = tuple(definitions)
+    routes = (
+        definitions
+        if isinstance(definitions, DeploymentRoutes)
+        else DeploymentRoutes.from_definitions(definitions)
+    )
 
-    routes = DeploymentRoutes(definitions)
-
-    def definition_for(model_name, parameterization):
-        selected = routes.select(model_name, parameterization)
-        return selected.definition_id if selected else None
-
-    def supports_model(model_name: str) -> bool:
-        return any(definition.model == model_name for definition in definitions) or any(
-            definition.definition_id == model_name for definition in definitions
-        )
+    async def supports_model(model_name: str) -> bool:
+        return await routes.select(model_name) is not None
 
     async def authorize(request: Request) -> None:
         if api_key is not None and request.headers.get("x-api-key") != api_key:
@@ -291,42 +311,94 @@ def create_control_plane_app(
     @app.get("/api/v1/get_server_capabilities")
     async def get_server_capabilities() -> dict[str, object]:
         return {
-            "supported_models": routes.capabilities(),
+            "supported_models": await routes.capabilities(),
             "spindle_version": __version__,
             "spindle_commit": source_commit(),
         }
 
     @app.get("/api/v1/spindle/deployments")
     async def list_deployments():
-        return {
-            "deployments": [
-                {
-                    "name": d.name,
-                    "definition_id": d.definition_id,
-                    "base_model": d.model,
-                    "weights_repo": d.weights_repo,
-                    "parameterization": d.parameterization,
-                    "max_context_length": d.max_context_length,
-                }
-                for d in definitions
-            ]
-        }
+        definitions = await routes.definitions()
+        rows = [_deployment_summary(d) for d in definitions]
+        if apps_status is not None:
+            statuses = await asyncio.gather(*(apps_status(d) for d in definitions))
+            for row, status in zip(rows, statuses):
+                row.update(status)
+        return {"deployments": rows}
 
-    trained = [d for d in definitions if getattr(d, "recipe", None) is not None]
-    queue_limits = [
-        QueueLimits(
-            d.definition_id,
-            slots_per_trainer=d.recipe.trainer_max_clients_per_instance,
-            max_trainers=d.recipe.trainer_max_instances,
+    @app.post("/api/v1/spindle/deployments", status_code=202)
+    async def add_deployment(body: DeploymentRequest):
+        deployment = await routes.build(body)
+        config = await routes.add(deployment)
+        summary = _deployment_summary(deployment)
+        if deploy_apps is not None:
+            await deploy_apps(deployment)
+        if apps_status is not None:
+            summary.update(await apps_status(deployment))
+        return {"deployment": summary, "config": config}
+
+    async def placed_models(name: str) -> list[dict[str, object]]:
+        placed = []
+        for _, value in await control_plane.kv.list_items("model:"):
+            model = ModelRecord.model_validate(value)
+            if model.engine_definition_id == name and await control_plane.kv.get(
+                placement_key(model.model_id)
+            ):
+                placed.append(
+                    {
+                        "model_id": model.model_id,
+                        "session_id": model.session_id,
+                        "created_at": model.created_at,
+                    }
+                )
+        return placed
+
+    @app.delete("/api/v1/spindle/deployments/{name}")
+    async def remove_deployment(name: str, force: bool = False):
+        current = await routes.get(name)
+        if current is None:
+            raise DeploymentNotFound(f"no deployment named {name!r}")
+        placed = await placed_models(name)
+        if placed and not force:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "conflict",
+                    "message": f"{len(placed)} model(s) still train on {name!r}; "
+                    "retry with force=true to remove it anyway",
+                    "models": placed,
+                },
+            )
+        # Stop the apps first, so a failed stop leaves the config for a retry.
+        if stop_apps is not None:
+            await stop_apps(current)
+        removed = await routes.remove(name)
+        if placed:
+            logging.getLogger(__name__).warning(
+                "Removed %s; orphaned models %s",
+                name,
+                [model["model_id"] for model in placed],
+            )
+        return {"deployment": _deployment_summary(removed)}
+
+    async def trained_recipes():
+        definitions = await routes.definitions()
+        return [d for d in definitions if getattr(d, "recipe", None) is not None]
+
+    async def read_queues(now):
+        limits = [
+            QueueLimits(
+                d.definition_id,
+                slots_per_trainer=d.recipe.trainer_max_clients_per_instance,
+                max_trainers=d.recipe.trainer_max_instances,
+            )
+            for d in await trained_recipes()
+        ]
+        return await describe_queues(
+            control_plane.kv, control_plane.engines, limits, now
         )
-        for d in trained
-    ]
-    queue_snapshot = SharedSnapshot(
-        lambda now: describe_queues(
-            control_plane.kv, control_plane.engines, queue_limits, now
-        ),
-        lambda: control_plane.clock(),
-    )
+
+    queue_snapshot = SharedSnapshot(read_queues, lambda: control_plane.clock())
 
     @app.get("/api/v1/spindle/queues")
     async def queues():
@@ -340,7 +412,8 @@ def create_control_plane_app(
                     "parameterization": d.parameterization,
                     **asdict(snapshot[d.definition_id]),
                 }
-                for d in trained
+                for d in await trained_recipes()
+                if d.definition_id in snapshot
             ],
         }
 
@@ -384,7 +457,7 @@ def create_control_plane_app(
 
     @app.post("/api/v1/create_model")
     async def create_model(body: CreateModelBody) -> dict[str, object]:
-        if not supports_model(body.base_model):
+        if not await supports_model(body.base_model):
             raise HTTPException(
                 status_code=400,
                 detail=f"unsupported base_model: {body.base_model}",
@@ -417,8 +490,8 @@ def create_control_plane_app(
             raise ValueError("lora parameterization is configured through lora_config")
         if body.rollout is not None and parameterization != "full":
             raise ValueError("rollout is only configurable for full parameterization")
-        definition_id = definition_for(body.base_model, parameterization)
-        if definition_id is None:
+        selected = await routes.select(body.base_model, parameterization)
+        if selected is None:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -429,11 +502,9 @@ def create_control_plane_app(
         creation = await control_plane.create_model(
             session_id=body.session_id,
             model_seq_id=body.model_seq_id,
-            definition_id=definition_id,
+            definition_id=selected.definition_id,
             spec={
-                "base_model": next(
-                    d.model for d in definitions if d.definition_id == definition_id
-                ),
+                "base_model": selected.model,
                 "lora_config": body.lora_config,
                 "parameterization": {"type": parameterization},
                 "rollout": body.rollout and body.rollout.model_dump(exclude_none=True),
@@ -454,12 +525,11 @@ def create_control_plane_app(
                 status_code=400,
                 detail="base_model or model_path is required",
             )
-        selected = routes.select(body.base_model) if body.base_model else None
+        selected = await routes.select(body.base_model) if body.base_model else None
         if body.model_path and selected and selected.model == body.base_model:
             # A plain model name defers to the recipe the adapter was trained on.
             selected = None
-        definition_id = selected.definition_id if selected else None
-        if body.model_path is None and definition_id is None:
+        if body.model_path is None and selected is None:
             raise HTTPException(
                 status_code=400,
                 detail=f"unsupported base_model: {body.base_model}",
@@ -467,15 +537,11 @@ def create_control_plane_app(
         session = await control_plane.create_sampling_session(
             session_id=body.session_id,
             sampling_session_seq_id=body.sampling_session_seq_id,
-            base_model=(
-                next(d.model for d in definitions if d.definition_id == definition_id)
-                if definition_id
-                else body.base_model
-            ),
+            base_model=selected.model if selected else body.base_model,
             model_path=body.model_path,
-            engine_definition_id=definition_id,
+            engine_definition_id=selected.definition_id if selected else None,
         )
-        if not supports_model(session.base_model):
+        if not await supports_model(session.base_model):
             raise HTTPException(
                 status_code=400,
                 detail=f"unsupported base_model: {session.base_model}",
@@ -575,7 +641,7 @@ def create_control_plane_app(
                 base_model=body.base_model,
                 user_metadata=body.user_metadata,
                 optimizer=body.optimizer,
-                definition_ids={d.definition_id for d in definitions},
+                definition_ids={d.definition_id for d in await routes.definitions()},
             )
             return {
                 "request_id": creation.request_id,
@@ -695,7 +761,7 @@ def create_control_plane_app(
                 "queue_state": "active",
             }
             if resolution.reason:
-                content["queue_state"] = "starting"
+                content["queue_state"] = resolution.queue_state
                 content["queue_state_reason"] = resolution.reason
             return JSONResponse(status_code=408, content=content)
         if response is not None:
