@@ -1,3 +1,4 @@
+import asyncio
 import json
 import subprocess
 import threading
@@ -15,6 +16,7 @@ from rich.console import Console
 
 from spindle import deploy_wizard
 from spindle import deployment_cli as cli
+from spindle.control_plane.deployments import REGISTRY_VERSION_KEY
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.local import InMemoryKeyValueStore
 from spindle.providers.modal import deployment_configs
@@ -906,3 +908,25 @@ def test_remove_lists_training_models_and_asks_before_forcing(monkeypatch, capsy
     with pytest.raises(SystemExit):
         cli.main(["remove", "variant"])
     assert len(requests) == 1
+
+
+def test_write_registry_tells_every_frontend_container_to_reread(monkeypatch):
+    registry, shared = SimpleNamespace(), InMemoryKeyValueStore()
+    files = {}
+
+    async def list_keys(prefix):
+        return tuple(files)
+
+    async def put_many(items):
+        files.update(items)
+
+    registry.list_keys, registry.put_many = list_keys, put_many
+    monkeypatch.setattr(deployment_configs, "frontend_app_id", lambda *a: "ap-1")
+    monkeypatch.setattr(deployment_configs, "deployment_kv", lambda *a: registry)
+    monkeypatch.setattr(deployment_configs, "shared_kv", lambda *a: shared)
+    row = deployment().model_dump(mode="json")
+    assert deployment_configs.write_registry("spindle", "dev", [row])
+    first = asyncio.run(shared.get(REGISTRY_VERSION_KEY))
+    deployment_configs.write_registry("spindle", "dev", [row])
+    assert first and asyncio.run(shared.get(REGISTRY_VERSION_KEY)) != first
+    assert set(files) == {row["recipe"]["name"]}

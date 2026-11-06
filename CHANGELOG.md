@@ -4,7 +4,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
-- A config just added through another frontend container is now found at once by its name or model ID, and in `GET /api/v1/spindle/deployments` and `get_server_capabilities`, so `spindle add` no longer fails with "no longer registered", and `spindle stop` no longer aborts on apps `spindle remove` is already stopping.
+- Every frontend container rereads the recipe list as soon as it changes, so a config just added is found at once by its name or model ID and in `GET /api/v1/spindle/deployments` and `get_server_capabilities`, and `spindle stop` no longer aborts on apps `spindle remove` is already stopping.
 
 ## 0.1.6 - 2026-11-06
 
