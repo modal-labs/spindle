@@ -93,7 +93,9 @@ def test_context_boundary_grades_existing_work_without_truncating_replay(monkeyp
     monkeypatch.setattr(trajectory, "sample_task", sample)
     tokenizer = SimpleNamespace(
         apply_chat_template=lambda *a, **k: [10] * 57,
-        decode=lambda *a, **k: '<tool_call>{"name":"bash","arguments":{"command":"pwd"}}</tool_call>',
+        decode=lambda *a, **k: (
+            '<tool_call>{"name":"bash","arguments":{"command":"pwd"}}</tool_call>'
+        ),
         encode=lambda *a, **k: [],
     )
     row = asyncio.run(

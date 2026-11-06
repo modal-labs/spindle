@@ -727,7 +727,9 @@ def main():
                     "capacity": capacity,
                     "pending_samplers": pending,
                     "unavailable_samplers": failures,
-                    "capacity_source": str(cache["path"]) if cache is not None else None,
+                    "capacity_source": str(cache["path"])
+                    if cache is not None
+                    else None,
                     "compute_regions": {
                         group["name"]: sampler_config(group).inference_region
                         if sampler_config(group).inference_region is not None
@@ -775,18 +777,14 @@ def main():
                         {},
                     )
                     await run_with_sampler_validation(
-                        train(
-                            training, gateways, weights, args, tasks, cache=cache
-                        ),
+                        train(training, gateways, weights, args, tasks, cache=cache),
                         validate_samplers(),
                     )
                     return
                 pool = ReadySamplers()
                 await pool.open(
                     {
-                        name: measure_capacity.remote.aio(
-                            url, training.model_id, 1
-                        )
+                        name: measure_capacity.remote.aio(url, training.model_id, 1)
                         for name, url in gateways.items()
                     }
                 )
