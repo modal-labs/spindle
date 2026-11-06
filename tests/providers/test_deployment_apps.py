@@ -568,8 +568,6 @@ def test_scheduled_gpus_are_logged(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
-
-
 def test_recipe_region_overrides_platform_placement(builders):
     row = deployment("qwen35-4b-fft-64k")
     row.recipe.platform["modal"]["region"] = "us-east"
