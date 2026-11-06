@@ -154,6 +154,19 @@ class DistributedExecutor:
         self,
         executions: tuple[Command, ...],
     ) -> tuple[object, ...]:
+        batch = self._forward_batch(executions)
+        outputs = await asyncio.to_thread(
+            self._dispatch,
+            self.command_group,
+            "forward_backward",
+            (batch,),
+        )
+        if len(outputs) != len(executions):
+            raise RuntimeError("backend returned the wrong result count")
+        return tuple(_serialize_forward_output(output) for output in outputs)
+
+    @staticmethod
+    def _forward_batch(executions: tuple[Command, ...]) -> ForwardBatch:
         if not executions:
             raise ValueError("forward_backward batch cannot be empty")
         kind = executions[0].kind
@@ -175,7 +188,7 @@ class DistributedExecutor:
         ):
             raise ValueError("forward_backward batch has incompatible losses")
 
-        batch = ForwardBatch(
+        return ForwardBatch(
             items=tuple(
                 ForwardItem(
                     execution.model_id,
@@ -191,15 +204,32 @@ class DistributedExecutor:
             loss_fn_config=loss_fn_config,
             forward_only=kind == OperationKind.FORWARD,
         )
-        outputs = await asyncio.to_thread(
+
+    async def execute_optimizer_forward_backward(
+        self, executions: tuple[Command, ...]
+    ) -> tuple[object, ...]:
+        if len(executions) < 2 or executions[0].kind != OperationKind.OPTIM_STEP:
+            raise ValueError(
+                "overlap requires an optimizer step followed by a forward batch"
+            )
+        optimizer, *forwards = executions
+        if not isinstance(optimizer.payload, AdamParams):
+            raise TypeError("optim_step requires an optimizer payload")
+        if any(item.model_id == optimizer.model_id for item in forwards):
+            raise ValueError("optimizer and forward batch must use different adapters")
+        batch = self._forward_batch(tuple(forwards))
+        output, forwards_output = await asyncio.to_thread(
             self._dispatch,
             self.command_group,
-            "forward_backward",
-            (batch,),
+            "optim_step_with_forward_backward",
+            (optimizer.model_id, optimizer.payload, batch),
         )
-        if len(outputs) != len(executions):
+        if len(forwards_output) != len(forwards):
             raise RuntimeError("backend returned the wrong result count")
-        return tuple(_serialize_forward_output(output) for output in outputs)
+        return (
+            output.model_dump(mode="json"),
+            *(_serialize_forward_output(item) for item in forwards_output),
+        )
 
     async def capture_snapshot(
         self,

@@ -117,6 +117,12 @@ class Executor(Protocol):
         executions: tuple[Command, ...],
     ) -> tuple[object, ...]: ...
 
+    async def execute_optimizer_forward_backward(
+        self, executions: tuple[Command, ...]
+    ) -> tuple[object, ...]:
+        """Run an optimizer step with a disjoint forward batch in one command."""
+        ...
+
     async def capture_snapshot(
         self,
         model_id: str,

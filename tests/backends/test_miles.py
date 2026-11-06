@@ -971,3 +971,43 @@ def test_a_capture_short_of_a_nodes_shards_is_refused(monkeypatch, tmp_path):
 )
 def test_hf_targets_match_tinker_training_flags(targets, expected):
     assert lora_target_flags(targets) == expected
+
+
+def test_optimizer_overlap_preserves_other_adapter_accumulation(tmp_path):
+    class Runtime(FakeMilesRuntime):
+        def optim_step_with_forward_backward(
+            self, rows, *, adam_params_by_slot, **kwargs
+        ):
+            assert set(adam_params_by_slot).isdisjoint(slot for slot, _ in rows)
+            return self.forward_backward(rows, **kwargs), self.optim_step(
+                adam_params_by_slot
+            )
+
+    runtime = Runtime()
+    backend = MilesCommandBackend(
+        _config(),
+        checkpoint_dir=tmp_path,
+        capture_dir=tmp_path,
+        base_model="Qwen/Qwen3-4B",
+        runtime=runtime,
+    )
+    for model in ("a", "b"):
+        backend.accept_model(model, _spec())
+    batch_a = ForwardBatch(
+        items=(ForwardItem("a", (_datum([1, 2], 3),)),), loss_fn="cross_entropy"
+    )
+    batch_b = ForwardBatch(
+        items=(ForwardItem("b", (_datum([1, 2], 3),)),), loss_fn="cross_entropy"
+    )
+    backend.forward_backward(batch_a)
+    optimizer, outputs = backend.optim_step_with_forward_backward(
+        "a", AdamParams(), batch_b
+    )
+    assert optimizer.metrics["update_successful:mean"] == 1.0
+    assert len(outputs) == 1
+    assert backend.jobs["a"].optimizer_step == 1
+    assert not backend.jobs["a"].accumulating
+    assert backend.jobs["b"].accumulating
+    assert backend.jobs["b"].optimizer_step == 0
+    with pytest.raises(ValueError, match="disjoint"):
+        backend.optim_step_with_forward_backward("b", AdamParams(), batch_b)

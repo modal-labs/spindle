@@ -146,6 +146,31 @@ class MilesRuntime:
             )
         )
 
+    def optim_step_with_forward_backward(
+        self, slot_rows, *, adam_params_by_slot, loss_fn, loss_fn_config, forward_only
+    ):
+        if not slot_rows or set(adam_params_by_slot).intersection(
+            slot for slot, _ in slot_rows
+        ):
+            raise ValueError("optimizer overlap requires a disjoint forward batch")
+        if any("routed_experts" in row for _, row in slot_rows):
+            validate_routed_experts(
+                slot_rows,
+                num_layers=self._args.num_layers,
+                num_experts=self._args.num_experts,
+                topk=self._args.moe_router_topk,
+            )
+        return self._run(
+            self._bridge._execute_batch(
+                "forward_only" if forward_only else "forward_backward",
+                next(self._unit_ids),
+                list(slot_rows),
+                loss_fn,
+                loss_fn_config,
+                adam_params_by_slot=adam_params_by_slot,
+            )
+        )
+
     def optim_step(
         self, adam_params_by_slot: dict[int, dict[str, float]]
     ) -> dict[int, dict[str, float]]:
@@ -366,7 +391,14 @@ def _array_bridge(trainer):
 
     class ArrayBackend(tinker_runtime.MilesBackend):
         async def _execute_batch(
-            self, method, batch_id, slot_datums, loss_fn, loss_fn_config
+            self,
+            method,
+            batch_id,
+            slot_datums,
+            loss_fn,
+            loss_fn_config,
+            *,
+            adam_params_by_slot=None,
         ):
             train_data = tinker_runtime._build_train_data(slot_datums)
             # Data-parallel padding rows come from pad_slot_rows with zero weights.
@@ -387,9 +419,18 @@ def _array_bridge(trainer):
                 value=train_data, value_spec=tinker_runtime.ROLLOUT_DATA_VALUE_SPEC
             )
             try:
-                worker_results = await getattr(self.trainer, method)(
-                    batch_id=batch_id, data_ref=data_ref
-                )
+                if adam_params_by_slot is None:
+                    worker_results = await getattr(self.trainer, method)(
+                        batch_id=batch_id, data_ref=data_ref
+                    )
+                else:
+                    worker_results = await self.trainer._execute_slots(
+                        "optim_step_with_forward_backward",
+                        batch_id=batch_id,
+                        rollout_data_ref=data_ref,
+                        adam_params_by_slot=adam_params_by_slot,
+                        forward_only=method == "forward_only",
+                    )
             finally:
                 store.remove(data_ref)
             outputs: dict[int, dict] = {}
@@ -405,7 +446,16 @@ def _array_bridge(trainer):
                             .float()
                             .numpy(),
                         }
-            return [outputs[index] for index in range(len(slot_datums))]
+            ordered = [outputs[index] for index in range(len(slot_datums))]
+            if adam_params_by_slot is not None:
+                outcomes = worker_results[0]["optimizer_outcomes"]
+                if any(
+                    result["optimizer_outcomes"] != outcomes
+                    for result in worker_results[1:]
+                ):
+                    raise RuntimeError("optimizer outcomes disagree across ranks")
+                return ordered, outcomes
+            return ordered
 
     return ArrayBackend(trainer, router_url="", dp_size=1)
 

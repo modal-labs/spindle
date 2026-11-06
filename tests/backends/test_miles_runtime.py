@@ -222,7 +222,8 @@ def test_allgather_cp_guard_is_skipped_only_for_bshd(allgather_cp, qkv_format, s
     assert args.allgather_cp is allgather_cp
 
 
-def test_array_bridge_keeps_the_miles_contract(monkeypatch):
+@pytest.mark.parametrize("overlap", [False, True])
+def test_array_bridge_keeps_the_miles_contract(monkeypatch, overlap):
     """Rows go to the workers as arrays (RL fields as tensors, which Miles
     slices per context-parallel rank) and come back ordered by sample index."""
 
@@ -293,8 +294,27 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch):
             },
         ),
     ]
-    bridge = _array_bridge(SimpleNamespace(forward_backward=forward_backward))
-    outputs = asyncio.run(bridge._execute_batch("forward_backward", 1, rows, "ppo", {}))
+
+    async def execute_slots(
+        method, *, batch_id, rollout_data_ref, adam_params_by_slot, forward_only
+    ):
+        assert method == "optim_step_with_forward_backward"
+        assert not forward_only
+        result = await forward_backward(batch_id=batch_id, data_ref=rollout_data_ref)
+        return [
+            dict(item, optimizer_outcomes={2: {"grad_norm": 0.5}}) for item in result
+        ]
+
+    bridge = _array_bridge(
+        SimpleNamespace(forward_backward=forward_backward, _execute_slots=execute_slots)
+    )
+    kwargs = {"adam_params_by_slot": {2: {}}} if overlap else {}
+    outputs = asyncio.run(
+        bridge._execute_batch("forward_backward", 1, rows, "ppo", {}, **kwargs)
+    )
+    if overlap:
+        outputs, outcomes = outputs
+        assert outcomes == {2: {"grad_norm": 0.5}}
 
     (sent,) = store.values
     assert [mask.tolist() for mask in sent["loss_masks"]] == [[1, 1, 1], [1, 1]]

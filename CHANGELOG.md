@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Experimental `trainer_overlap_optimizer_step=True` lets Miles LoRA trainers pair a ready optimizer step with a forward/backward batch for other adapters. It is disabled by default.
+
 - `spindle deploy` registers every recipe in one per-frontend registry instead of baking a configs file into the frontend image, so a deploy adds or updates configs instead of replacing the set; upgrading a pre-registry frontend carries over every recipe it serves (#181).
 - `POST /api/v1/spindle/deployments` registers a config on a running frontend and deploys its apps, and `DELETE /api/v1/spindle/deployments/{name}` removes one (#160).
 - `spindle add NAME --base BASE --FIELD=VALUE ...` registers a config through that API and waits until its apps are ready; `spindle remove NAME` removes a config while checking whether there are any models still training on it live (#160).

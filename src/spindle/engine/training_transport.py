@@ -12,7 +12,7 @@ import struct
 from collections.abc import Iterable
 
 import numpy as np
-from tinker import ModelInput
+from tinker import AdamParams, ModelInput
 from tinker.types._pydantic_types.datum import Datum
 from tinker.types._pydantic_types.tensor_data import TensorData
 from tinker.types.encoded_text_chunk import EncodedTextChunk
@@ -212,6 +212,36 @@ def decode_batch(body: bytes) -> tuple[Command, ...]:
         )
         for i in range(1, len(parts), 2)
     )
+
+
+def encode_optimizer_batch(commands: tuple[Command, ...]) -> bytes:
+    if len(commands) < 2 or commands[0].kind != OperationKind.OPTIM_STEP:
+        raise ValueError(
+            "optimizer batch requires an optimizer step and forward commands"
+        )
+    optimizer = commands[0]
+    if not isinstance(optimizer.payload, AdamParams):
+        raise TypeError("optim_step requires optimizer parameters")
+    metadata = canonical_json(
+        {
+            "model_id": optimizer.model_id,
+            "adam": optimizer.payload.model_dump(mode="json", exclude_unset=True),
+        }
+    ).encode()
+    return _bundle((metadata, encode_batch(commands[1:])))
+
+
+def decode_optimizer_batch(body: bytes) -> tuple[Command, ...]:
+    parts = _parts(body)
+    if len(parts) != 2:
+        raise ValueError("invalid optimizer batch")
+    metadata = json.loads(bytes(parts[0]))
+    optimizer = Command(
+        metadata["model_id"],
+        OperationKind.OPTIM_STEP,
+        AdamParams.model_validate(metadata["adam"]),
+    )
+    return (optimizer, *decode_batch(bytes(parts[1])))
 
 
 def encode_results(results: tuple[object, ...], telemetry: dict | None = None) -> bytes:

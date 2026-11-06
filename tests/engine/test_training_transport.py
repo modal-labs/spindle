@@ -4,7 +4,7 @@ import struct
 
 import numpy as np
 import pytest
-from tinker import types
+from tinker import AdamParams, types
 
 try:
     from tinker.lib._pydantic_conv import to_pydantic_request
@@ -21,8 +21,10 @@ from spindle.engine.operations import (
 )
 from spindle.engine.training_transport import (
     decode_batch,
+    decode_optimizer_batch,
     decode_payload,
     encode_batch,
+    encode_optimizer_batch,
     encode_payload,
 )
 from spindle.errors import SequenceConflict
@@ -263,3 +265,25 @@ def test_binary_matches_previous_json_backend_path(seed):
                     assert struct.pack("<d", x) == struct.pack("<d", y)
                 else:
                     assert x == y
+
+
+def test_optimizer_batch_preserves_binary_training_values():
+    original = payload()
+    commands = (
+        Command(
+            "optimizer",
+            OperationKind.OPTIM_STEP,
+            AdamParams(learning_rate=0.000123456789),
+        ),
+        Command(
+            "forward",
+            OperationKind.FORWARD_BACKWARD,
+            original,
+            encode_payload(original),
+        ),
+    )
+    decoded = decode_optimizer_batch(encode_optimizer_batch(commands))
+    assert decoded[0] == commands[0]
+    assert serialize_operation_payload(
+        decoded[1].payload
+    ) == serialize_operation_payload(original)

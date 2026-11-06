@@ -48,6 +48,23 @@ command, opportunistically batching compatible ready requests. `forward_backward
 grouped and their variable-length sequences packed under the backend's token
 budget.
 
+Set `trainer_overlap_optimizer_step=True` in a Miles LoRA recipe to let the
+scheduler pair one ready optimizer step with a compatible forward or
+forward/backward batch for other adapters. The setting is experimental and
+disabled by default. The stock Tinker API is unchanged: submit each adapter's
+operations in order without waiting for unrelated adapters' futures.
+
+The pair is dispatched as one command to all trainer ranks. The optimizer uses
+copies of its adapter's gradients and weights on a separate CUDA stream, so
+backward can reset shared gradient buffers and routed kernels can read stable
+weights from every slot. Updated weights are copied back after backward. Gradient-norm reductions finish before forward
+starts; parameter all-gathers run after the forward/backward batch and optimizer
+compute finish. Later commands, snapshots, and unloads wait for the whole pair.
+Both futures resolve after the pair completes. This pairs already queued work;
+it does not admit new work into an executing pair or overlap an adapter's update
+with its own forward/backward. GPU latency and multi-rank behavior require
+validation before enabling the setting in a deployment.
+
 The engine exposes the command protocol in
 [`engine/api.py`](../src/spindle/engine/api.py). Its scheduler and future handling
 live in [`engine/server.py`](../src/spindle/engine/server.py).
