@@ -87,6 +87,9 @@ slot order and the call returns one outcome per pair; it must issue its
 collectives in that order on every rank. The call runs on the first side
 stream, and an exception fails every slot of the group. Spindle only checks for
 the method; which slots a Miles optimizer family can batch is Miles' decision.
+`patches/miles-step-many.patch` adds `step_many` to Miles' `SlotOptimizer` for the
+pinned Miles commits: one all-reduce carries every slot's squared gradient norm,
+then each slot clips and steps with the sequential per-slot math.
 
 A slot whose step raises fails only that adapter's future; the other slots
 commit and the batch returns its outputs. The failed slot keeps its previous
