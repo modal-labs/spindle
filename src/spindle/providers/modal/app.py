@@ -87,7 +87,7 @@ from .trainer_reconciler import (
 
 SETTINGS = frontend_settings_from_env()
 PLATFORM = SETTINGS.platform
-DEPLOYMENTS = DeploymentRoutes(lambda: deployment_kv())
+DEPLOYMENTS = DeploymentRoutes(lambda: deployment_kv(), lambda: shared_kv())
 APP_NAME = PLATFORM["frontend"]
 # Placement for the CPU-only frontend; trainers and samplers keep their own
 # (unpinned by default) placement.

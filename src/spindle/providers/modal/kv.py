@@ -54,6 +54,7 @@ KEY_STORES = {
     "sampler_warm": "engines",
     "deployment_failure": "engines",
     "app_deploy": "engines",
+    "registry_version": "engines",
     "engine_call": "engines",
     "engine_current": "engines",
     "trainer_plan": "engines",
@@ -209,13 +210,16 @@ class RoutedKeyValueStore:
         return tuple(sorted(items))
 
 
-def shared_kv(app_id: str | None = None) -> RoutedKeyValueStore:
+def shared_kv(
+    app_id: str | None = None, environment: str | None = None
+) -> RoutedKeyValueStore:
     app_id = app_id or os.environ.get("SPINDLE_FRONTEND_APP_ID") or current_app_id()
     return RoutedKeyValueStore(
         {
             domain: ModalKeyValueStore(
                 modal.Dict.from_name(
                     app_store_name(name, app_id),
+                    environment_name=environment,
                     create_if_missing=True,
                 )
             )

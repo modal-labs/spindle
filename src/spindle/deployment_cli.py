@@ -53,8 +53,6 @@ from spindle.version import __version__, deployment_tag, source_commit
 RECIPE_FIELDS = frozenset(key for key in vars(BaseConfig) if not key.startswith("_"))
 ADD_POLL_S = 10
 ADD_TIMEOUT_S = 60 * 60
-# How long a just-added config may be missing from another frontend container's list.
-ADD_UNLISTED_GRACE_S = 60
 NO_CONFIGS = (
     "No configs given. Run `spindle deploy` in a terminal to pick models interactively, "
     "pass config files or bundled config names (e.g. `spindle deploy qwen35-9b-lora-16k`), "
@@ -381,15 +379,11 @@ def add_deployment(
         body = {"name": name, "base": base, "overrides": overrides}
         _response_body(client.post(path, json=body), f"Adding {name}")
         print(f"Registered {name}; the frontend is deploying its apps.")
-        registered_at = time.monotonic()
         while True:
             listed = _response_body(client.get(path), "Listing deployments")
             row = next((d for d in listed["deployments"] if d["name"] == name), None)
             if row is None:
-                if time.monotonic() - registered_at > ADD_UNLISTED_GRACE_S:
-                    raise ValueError(f"{name} is no longer registered")
-                time.sleep(poll_s)
-                continue
+                raise ValueError(f"{name} is no longer registered")
             if "apps" not in row:
                 raise ValueError(
                     "This frontend does not deploy apps; redeploy it once with spindle deploy."

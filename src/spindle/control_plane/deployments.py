@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from collections.abc import Callable, Iterable
 from typing import Any, Protocol, TypedDict
@@ -17,9 +18,7 @@ from spindle.providers.contracts import KeyValueStore
 
 logger = logging.getLogger(__name__)
 
-REGISTRY_TTL_S = 5.0
-# Past this age a request waits for a fresh read instead of getting the cache.
-REGISTRY_MAX_STALE_S = 60.0
+REGISTRY_VERSION_KEY = "registry_version:deployments"
 MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
 
@@ -83,12 +82,23 @@ class Routable(Protocol):
     max_context_length: int
 
 
+async def mark_registry_changed(versions: KeyValueStore) -> None:
+    """Record that the registry changed, so every frontend container rereads it."""
+    await versions.put(REGISTRY_VERSION_KEY, uuid.uuid4().hex)
+
+
 class DeploymentRoutes:
-    def __init__(self, kv: Callable[[], KeyValueStore] | None):
-        # A factory, since a Modal frontend learns its app ID only at runtime.
+    def __init__(
+        self,
+        kv: Callable[[], KeyValueStore] | None,
+        versions: Callable[[], KeyValueStore] | None = None,
+    ):
+        # Factories, since a Modal frontend learns its app ID only at runtime.
         self.kv = kv
+        self.versions = versions
         self._definitions: list[Routable] = []
-        self._loaded_at: float | None = None
+        self._version: object = None
+        self._loaded = False
         self._skipped: set[str] = set()
         self._refresh: asyncio.Task | None = None
         self._refresh_started = 0.0
@@ -99,15 +109,24 @@ class DeploymentRoutes:
         routes._definitions = list(definitions)
         return routes
 
+    async def _registry_version(self) -> object:
+        if self.versions is None:
+            return None
+        return await self.versions().get(REGISTRY_VERSION_KEY)
+
     async def _load(self) -> list[Routable]:
-        """The cached recipes, refreshed in the background once a few seconds old."""
+        """The recipes, reread from the registry whenever its version changes."""
         if self.kv is None:
             return self._definitions
-        age = None if self._loaded_at is None else time.monotonic() - self._loaded_at
-        if age is None or age >= REGISTRY_MAX_STALE_S:
-            await self._reload()
-        elif age >= REGISTRY_TTL_S:
-            self._start_reload()
+        try:
+            version = await self._registry_version()
+        except Exception:
+            if not self._loaded:
+                raise
+            logger.exception("Registry version read failed; serving the last list")
+            return self._definitions
+        if not self._loaded or version != self._version:
+            await self._reload(newer_than=time.monotonic())
         return self._definitions
 
     def _start_reload(self) -> asyncio.Task:
@@ -122,21 +141,21 @@ class DeploymentRoutes:
     async def _reload(self, *, newer_than: float | None = None) -> None:
         await asyncio.shield(self._start_reload())
         if newer_than is not None and self._refresh_started < newer_than:
-            # The read we joined began before the caller saw the new file.
+            # The read we joined began before the caller saw the new version.
             await asyncio.shield(self._start_reload())
 
     async def _read_registry(self) -> None:
         try:
+            version = await self._registry_version()
             kv = self.kv()
             names = await kv.list_keys("")
             rows = await asyncio.gather(
                 *(kv.get(name) for name in names), return_exceptions=True
             )
         except Exception:
-            if self._loaded_at is None:
+            if not self._loaded:
                 raise
             logger.exception("Registry read failed; serving the last recipe list")
-            self._loaded_at = time.monotonic()
             return
         definitions, skipped = [], set()
         for name, row in zip(names, rows):
@@ -149,7 +168,7 @@ class DeploymentRoutes:
                     logger.error("Skipping unreadable recipe %r: %s", name, error)
                 skipped.add(name)
         self._definitions, self._skipped = definitions, skipped
-        self._loaded_at = time.monotonic()
+        self._version, self._loaded = version, True
 
     @staticmethod
     def _exact(definitions: Iterable[Routable], definition_id: str) -> Routable | None:
@@ -160,44 +179,22 @@ class DeploymentRoutes:
         return self._exact(self._definitions, definition_id)
 
     async def get(self, definition_id: str) -> Routable | None:
-        definitions = await self._load()
-        found = self._exact(definitions, definition_id)
-        if (
-            found is not None
-            or self.kv is None
-            or "/" in definition_id
-            or any(d.model == definition_id for d in definitions)
-        ):
-            return found
-        checked = time.monotonic()
-        try:
-            exists = await self.kv().get(definition_id) is not None
-        except (ValueError, TypeError):
-            exists = True
-        except Exception:
-            logger.exception("Registry lookup of %r failed", definition_id)
-            return None
-        if exists:
-            await self._reload(newer_than=checked)
-            found = self._exact(self._definitions, definition_id)
-        return found
+        return self._exact(await self._load(), definition_id)
 
     async def select(self, model: str, mode: str | None = None) -> Routable | None:
         """The exact recipe named `model`, else the longest-context one for it."""
-        exact = await self.get(model)
+        definitions = await self._load()
+        exact = self._exact(definitions, model)
         if exact is not None:
             return exact if mode is None or exact.parameterization == mode else None
         matches = [
             d
-            for d in await self._load()
+            for d in definitions
             if d.model == model and (mode is None or d.parameterization == mode)
         ]
         return max(matches, key=lambda d: d.max_context_length, default=None)
 
-    async def definitions(self, *, fresh: bool = False) -> list[Routable]:
-        """The served recipes; `fresh` reads the registry first, for listings."""
-        if fresh and self.kv is not None:
-            await self._reload(newer_than=time.monotonic())
+    async def definitions(self) -> list[Routable]:
         return list(await self._load())
 
     async def build(self, request: DeploymentRequest) -> DeploymentConfig:
@@ -241,7 +238,7 @@ class DeploymentRoutes:
             await store.put(deployment.name, config)
             # Last write wins: read back to catch a concurrent add of the same name.
             current = await store.get(deployment.name)
-            await self._reload(newer_than=time.monotonic())
+            await self._changed()
         # The recipe alone, so a frontend upgrade's spindle_version is no conflict.
         if not isinstance(current, dict) or current.get("recipe") != config["recipe"]:
             raise DeploymentConflict(
@@ -256,8 +253,13 @@ class DeploymentRoutes:
         if row is None:
             raise DeploymentNotFound(f"no deployment named {name!r}")
         await store.delete(name)
-        await self._reload(newer_than=time.monotonic())
+        await self._changed()
         return DeploymentConfig.from_registry(row)
+
+    async def _changed(self) -> None:
+        if self.versions is not None:
+            await mark_registry_changed(self.versions())
+        await self._reload(newer_than=time.monotonic())
 
     def _store(self) -> KeyValueStore:
         if self.kv is None:
@@ -265,7 +267,7 @@ class DeploymentRoutes:
         return self.kv()
 
     async def capabilities(self) -> list[dict[str, Any]]:
-        definitions = await self.definitions(fresh=True)
+        definitions = await self.definitions()
         rows = []
         for model in dict.fromkeys(d.model for d in definitions):
             recipes = [d for d in definitions if d.model == model]

@@ -49,6 +49,8 @@ def reset_lora_pool_cache(monkeypatch):
     modal_app = importlib.import_module("spindle.providers.modal.app")
     store = InMemoryKeyValueStore()
     monkeypatch.setattr(modal_app, "deployment_kv", lambda: store)
+    shared = InMemoryKeyValueStore()
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(shared))
     monkeypatch.setattr(modal_app, "_lora_pool_gateways", {})
     monkeypatch.setattr(modal_app, "_lora_pool_checks", {})
     monkeypatch.setattr(modal_app, "_weights_ready", set())

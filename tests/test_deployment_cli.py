@@ -604,9 +604,9 @@ def frontend_that_deploys(statuses, requests=None):
             requests.append(request)
         if request.method == "POST":
             return httpx.Response(202, json={"deployment": {}, "config": {}})
-        status = next(statuses)
-        rows = [] if status is None else [{"name": "variant", **status}]
-        return httpx.Response(200, json={"deployments": rows})
+        return httpx.Response(
+            200, json={"deployments": [{"name": "variant", **next(statuses)}]}
+        )
 
     return handle
 
@@ -851,24 +851,6 @@ def test_add_reports_a_failed_deploy_and_how_to_retry(monkeypatch):
     monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
     with pytest.raises(ValueError, match="no H200 quota.*same spindle add again"):
         cli.add_deployment("variant", base="qwen35-9b-lora-16k", overrides={})
-
-
-def test_add_waits_out_a_listing_that_has_not_caught_up_yet(monkeypatch):
-    # A frontend container whose cache predates the POST omits the new config.
-    mock_frontend_client(
-        monkeypatch,
-        frontend_that_deploys([None, None, {"apps": "deploying"}, {"apps": "ready"}]),
-    )
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
-    cli.add_deployment("variant", base="b", overrides={})
-
-
-def test_add_gives_up_on_a_config_that_stays_unlisted(monkeypatch):
-    mock_frontend_client(monkeypatch, frontend_that_deploys([None] * 3))
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(cli, "ADD_UNLISTED_GRACE_S", 0)
-    with pytest.raises(ValueError, match="no longer registered"):
-        cli.add_deployment("variant", base="b", overrides={})
 
 
 def test_add_posts_again_when_no_deploy_is_running(monkeypatch):

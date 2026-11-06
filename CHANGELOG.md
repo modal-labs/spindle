@@ -4,11 +4,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
-### Fixed
-
-- `GET /api/v1/spindle/deployments` and `GET /api/v1/get_server_capabilities` include a config right after another frontend container adds it, and a frontend idle for over a minute no longer answers from an old recipe list.
-- `spindle add` keeps waiting when a frontend container's list hasn't caught up with the new config yet, instead of failing with "no longer registered".
-- `spindle stop` no longer fails on an app that is already shutting down, such as one stopped by `spindle remove`, and so always deletes the registry folder.
+- A config just added through another frontend container is now found at once by its name or model ID, and in `GET /api/v1/spindle/deployments` and `get_server_capabilities`, so `spindle add` no longer fails with "no longer registered", and `spindle stop` no longer aborts on apps `spindle remove` is already stopping.
 
 ## 0.1.6 - 2026-11-06
 
