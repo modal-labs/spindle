@@ -93,7 +93,7 @@ def test_parallel_padding_rows_are_allowed(runtime):
     rows = _rows([0, 7] * 4, alignment=8)
     _forward(runtime, rows)
     assert len(calls) == 1
-    assert rows[0][1]["routed_experts"]["values"][-4:] == [-1] * 4
+    assert rows[0][1]["routed_experts"]["values"][-4:].tolist() == [-1] * 4
 
 
 def test_bridge_installation_is_idempotent():
@@ -122,7 +122,7 @@ def test_native_sampler_dense_slots_are_preserved_and_ignored(
     rows = _rows(values)
     _forward(runtime, rows)
     assert len(calls) == 1
-    assert rows[0][1]["routed_experts"]["values"] == values
+    assert rows[0][1]["routed_experts"]["values"].tolist() == values
 
 
 @pytest.mark.parametrize(
