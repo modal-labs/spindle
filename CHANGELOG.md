@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- Experimental `trainer_overlap_optimizer_step=True` lets Miles LoRA trainers run every ready optimizer step as one group together with a forward/backward batch for other adapters. Step math runs on `SPINDLE_OPTIMIZER_STREAMS` side CUDA streams (default 4); collectives keep one slot order on every rank; a failed slot fails only its own adapter's future. It is disabled by default.
+- Experimental `trainer_overlap_optimizer_step=True` lets Miles LoRA trainers run every ready optimizer step as one group together with a forward/backward batch for other adapters. Step math runs on `SPINDLE_OPTIMIZER_STREAMS` side CUDA streams (default 4); collectives keep one slot order on every rank; a failed slot fails only its own adapter's future. Optimizer classes that define `step_many` step the whole group in one call. It is disabled by default.
 
 - `spindle deploy` registers every recipe in one per-frontend registry instead of baking a configs file into the frontend image, so a deploy adds or updates configs instead of replacing the set; upgrading a pre-registry frontend carries over every recipe it serves (#181).
 - `POST /api/v1/spindle/deployments` registers a config on a running frontend and deploys its apps, and `DELETE /api/v1/spindle/deployments/{name}` removes one (#160).

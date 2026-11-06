@@ -243,6 +243,68 @@ def test_failed_slot_is_isolated_and_collectives_keep_slot_order(
     assert torch.equal(parameters[2][0], torch.tensor([0.8]))
 
 
+class BatchedOptimizer(QueuedOptimizer):
+    @classmethod
+    def step_many(cls, requests):
+        outcomes = []
+        for optimizer, params in requests:
+            optimizer.cuda.trace.append(("step_many", optimizer.slot))
+            optimizer.apply_adam_params(params)
+            optimizer.prepare_grads()
+            outcomes.append(optimizer.clip_and_step(params["grad_clip_norm"]))
+            optimizer.zero_grads()
+        return outcomes
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_shared_step_many_runs_once_per_group(monkeypatch, mixed):
+    parameters = _parameters([2, 0, 1])
+    cuda = FakeCuda(monkeypatch, 4, parameters)
+    classes = {0: BatchedOptimizer, 1: BatchedOptimizer, 2: BatchedOptimizer}
+    if mixed:
+        classes[1] = QueuedOptimizer
+    actor = SimpleNamespace(
+        model=[],
+        slot_optimizers={
+            slot: classes[slot](cuda, slot, parameter[0])
+            for slot, parameter in parameters.items()
+        },
+    )
+    adam = {slot: {"learning_rate": 0.1, "grad_clip_norm": 1.0} for slot in parameters}
+    result = optim_step_group(actor, adam_params_by_slot=adam)
+    assert result["optimizer_outcomes"] == {
+        slot: {"grad_norm": 2.0} for slot in range(3)
+    }
+    batched = [slot for kind, slot in cuda.trace if kind == "step_many"]
+    assert batched == ([] if mixed else [0, 1, 2])
+    assert [slot for kind, slot in cuda.trace if kind == "norm"] == [0, 1, 2]
+    assert [item for item in cuda.trace if item[0] == "gather"] == [
+        ("gather", slot) for slot in range(3)
+    ]
+    for parameter in parameters.values():
+        assert torch.equal(parameter[0], torch.tensor([0.8]))
+
+
+def test_failing_step_many_fails_every_slot_and_restores_staging(monkeypatch):
+    parameters = _parameters([0, 1])
+    cuda = FakeCuda(monkeypatch, 2, parameters)
+    actor = SimpleNamespace(
+        model=[],
+        slot_optimizers={
+            slot: BatchedOptimizer(cuda, slot, parameter[0], fail=slot == 1)
+            for slot, parameter in parameters.items()
+        },
+    )
+    adam = {slot: {"learning_rate": 0.1, "grad_clip_norm": 1.0} for slot in parameters}
+    result = optim_step_group(actor, adam_params_by_slot=adam)
+    assert result["optimizer_outcomes"] == {
+        slot: {"error": "RuntimeError: boom"} for slot in range(2)
+    }
+    assert not [item for item in cuda.trace if item[0] == "gather"]
+    for parameter in parameters.values():
+        assert torch.equal(parameter[0], torch.tensor([1.0]))
+
+
 class MomentumOptimizer:
     def __init__(self, parameters):
         self.parameters = parameters

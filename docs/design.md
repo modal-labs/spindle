@@ -68,15 +68,25 @@ are all-gathered in ascending slot order.
 
 Collectives follow one rule: Spindle issues every collective from the actor
 thread in ascending slot order, which is the same on every rank. For each slot
-in turn, the optimizer's gradient-norm reduction inside `clip_and_step` finishes
-before the forward starts, then a one-element all-reduce agrees whether that
-slot's step failed on any rank; the all-gathers after the batch use the same
-order. Only collective-free step math runs concurrently. A PyTorch process group
-runs its collectives on one internal stream in issue order, so the side streams
-cannot reorder them. An optimizer whose step math issues its own collectives
-still sees a rank-identical order, but those collectives overlap the batch's
-collectives on other process groups, as data-parallel gradient overlap already
-does.
+in turn, the gradient-norm reduction inside `clip_and_step` finishes before the
+forward starts, then a one-element all-reduce agrees whether that slot's step
+failed on any rank; the all-gathers after the batch use the same order. A slot's
+`clip_and_step` runs with its side stream current, so the norm reduction and any
+collective the optimizer's own step issues (for example tensor-parallel gathers
+of sharded factors) are enqueued while that stream is current. That only sets
+what the collective waits on: a PyTorch process group runs its collectives on
+one internal stream in issue order, so the side streams cannot reorder them and
+every rank sees the same sequence. The norm reduction syncs the host, so a
+slot's step kernels are enqueued after its own reduction and overlap the next
+slot's reduction and the batch, not their own.
+
+When every optimizer in the group has the same class and that class defines
+`step_many`, the runtime calls `step_many(requests)` once instead of the
+per-slot loop. `requests` are `(optimizer, adam_params)` pairs in ascending
+slot order and the call returns one outcome per pair; it must issue its
+collectives in that order on every rank. The call runs on the first side
+stream, and an exception fails every slot of the group. Spindle only checks for
+the method; which slots a Miles optimizer family can batch is Miles' decision.
 
 A slot whose step raises fails only that adapter's future; the other slots
 commit and the batch returns its outputs. The failed slot keeps its previous

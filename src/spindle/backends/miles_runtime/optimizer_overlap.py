@@ -79,6 +79,28 @@ def step_slot(optimizer, adam_params: dict) -> dict:
     return outcome
 
 
+def step_many_of(optimizers) -> object | None:
+    """``step_many`` of the optimizers' shared class; None selects the per-slot loop."""
+    classes = {type(optimizer) for optimizer in optimizers}
+    if len(classes) != 1:
+        return None
+    return getattr(next(iter(classes)), "step_many", None)
+
+
+def step_slots_together(step_many, requests) -> list[dict]:
+    """``step_many(requests)`` takes ``(optimizer, adam_params)`` pairs in ascending
+    slot order and returns one outcome per pair; an exception fails every slot."""
+    try:
+        outcomes = list(step_many(requests))
+    except Exception as exc:
+        return [{"error": f"{type(exc).__name__}: {exc}"}] * len(requests)
+    if len(outcomes) != len(requests):
+        return [{"error": "step_many returned the wrong number of outcomes"}] * len(
+            requests
+        )
+    return outcomes
+
+
 def failed_on_any_rank(failed: bool) -> bool:
     if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
         return failed
@@ -102,8 +124,10 @@ def optim_step_group(
 ):
     """Step every slot in ``adam_params_by_slot`` while the forward batch runs.
 
-    Step math runs on a pool of side streams; every collective is issued from
-    this thread in ascending slot order, which is the same on every rank.
+    Slots whose optimizers share a class with ``step_many`` are stepped by one
+    call on the first side stream; otherwise each slot is stepped on its own
+    side stream. Every collective is issued from this thread in ascending slot
+    order, which is the same on every rank.
     """
     # GPU-only Miles imports are unavailable to CPU tests importing this helper.
     from miles.backends.megatron_utils.lora.optimizer import adapter_slot_parameters
@@ -118,7 +142,24 @@ def optim_step_group(
     }
     with detached_slot_state(parameters_by_slot) as detached:
         try:
-            for index, slot in enumerate(slots):
+            step_many = step_many_of([actor.slot_optimizers[slot] for slot in slots])
+            if step_many is not None:
+                streams[0].wait_stream(compute)
+                with torch.cuda.stream(streams[0]):
+                    batched = step_slots_together(
+                        step_many,
+                        [
+                            (actor.slot_optimizers[slot], adam_params_by_slot[slot])
+                            for slot in slots
+                        ],
+                    )
+                outcomes = dict(zip(slots, batched, strict=True))
+                if failed_on_any_rank(any("error" in item for item in batched)):
+                    outcomes = {
+                        slot: item if "error" in item else {"error": REMOTE_FAILURE}
+                        for slot, item in outcomes.items()
+                    }
+            for index, slot in enumerate(slots if step_many is None else ()):
                 stream = streams[index % len(streams)]
                 stream.wait_stream(compute)
                 with torch.cuda.stream(stream):
