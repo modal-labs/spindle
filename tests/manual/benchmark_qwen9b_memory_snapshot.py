@@ -16,6 +16,8 @@ import modal
 APP_NAME = os.environ.get("SPINDLE_SNAPSHOT_APP", "spindle-qwen9b-memory-snapshot-1105")
 MODEL = "Qwen/Qwen3.5-9B-Base"
 ASSET_VOLUME = "spindle-qwen9b-runtime-snapshot-assets-1105"
+parity_mode = os.environ.get("SPINDLE_SNAPSHOT_PARITY", "0") == "1"
+te_deterministic = os.environ.get("SPINDLE_SNAPSHOT_TE_DETERMINISTIC", "0") == "1"
 assets = modal.Volume.from_name(ASSET_VOLUME, create_if_missing=True)
 app = modal.App(APP_NAME)
 if modal.is_local():
@@ -25,6 +27,11 @@ if modal.is_local():
         Path(__file__).with_name("qwen9b_snapshot_probe.py"),
         "/root/qwen9b_snapshot_probe.py",
     )
+    if parity_mode:
+        image = image.add_local_file(
+            Path(__file__).with_name("qwen9b_snapshot_parity.py"),
+            "/root/qwen9b_snapshot_parity.py",
+        )
 else:
     image = modal.Image.debian_slim()
 transport = os.environ.get("SPINDLE_SNAPSHOT_TRANSPORT", "default")
@@ -37,6 +44,8 @@ trainer_env = {
     "SPINDLE_SNAPSHOT_TRANSPORT": transport,
     "SPINDLE_SNAPSHOT_RAY_IP": ray_ip,
     "SPINDLE_SNAPSHOT_COMMS": comms_lifecycle,
+    "SPINDLE_SNAPSHOT_PARITY": str(int(parity_mode)),
+    "SPINDLE_SNAPSHOT_TE_DETERMINISTIC": str(int(te_deterministic)),
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
     "TORCHINDUCTOR_COMPILE_THREADS": "1",
     "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
@@ -44,6 +53,8 @@ trainer_env = {
     "NCCL_DEBUG": "INFO",
     "TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC": "1800",
 }
+if te_deterministic:
+    trainer_env["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
 if transport == "socket":
     trainer_env.update(
         NCCL_P2P_DISABLE="1",
@@ -144,7 +155,13 @@ class Trainer:
             spec = original(*args, **kwargs)
             if spec.worker_class.endswith(".SpindleMilesTrainRayActor"):
                 spec = spec.model_copy(
-                    update={"worker_class": "qwen9b_snapshot_probe.SnapshotProbeActor"}
+                    update={
+                        "worker_class": (
+                            "qwen9b_snapshot_parity.SnapshotParityActor"
+                            if parity_mode
+                            else "qwen9b_snapshot_probe.SnapshotProbeActor"
+                        )
+                    }
                 )
             return spec
 
@@ -198,12 +215,16 @@ class Trainer:
                 json.dumps(self.suspend_control),
                 flush=True,
             )
+            if parity_mode:
+                self.prepare_parity()
             self.suspended_comms = self.actor_command("snapshot_suspend_comms")
             print(
                 "SNAPSHOT_PHASE comms_suspended",
                 json.dumps(self.suspended_comms),
                 flush=True,
             )
+        elif parity_mode:
+            self.prepare_parity()
         print(
             "SNAPSHOT_PHASE ready_to_capture",
             json.dumps(
@@ -223,9 +244,87 @@ class Trainer:
     def probe(self):
         return self.actor_command("snapshot_probe")
 
-    def actor_command(self, name):
+    def actor_command(self, name, **kwargs):
         runtime = self.backend.runtime
-        return runtime._run(runtime._trainer._execute_slots(name))
+        return runtime._run(runtime._trainer._execute_slots(name, **kwargs))
+
+    def prepare_parity(self):
+        self.parity_step = self.backend.jobs["snapshot-probe"].optimizer_step
+        self.actor_command("parity_save")
+        self.parity_controls = [
+            self.parity_trial(f"control_{i}", reset=True) for i in range(3)
+        ]
+        if te_deterministic:
+            self.parity_controls.extend(
+                [
+                    self.parity_trial(
+                        f"fa3_{i}", reset=True, attention_deterministic=False
+                    )
+                    for i in range(2)
+                ]
+            )
+        self.actor_command("parity_reset")
+        self.forward()
+        self.before = self.probe()
+        self.parity_inventory = self.actor_command("parity_save")
+        self.parity_audit_before = self.actor_command("parity_audit")
+        print(
+            "PARITY_CONTROLS",
+            json.dumps(
+                [
+                    {
+                        "label": row["label"],
+                        "pre_step_logprob_error": row["pre_step_logprob_error"],
+                        "grad_norm": row["optimizer"]["grad_norm:mean"],
+                        "gradients": [
+                            {
+                                key: rank.get(key)
+                                for key in (
+                                    "rank",
+                                    "sha256",
+                                    "different_elements",
+                                    "max_abs",
+                                    "attention_backend",
+                                )
+                            }
+                            for rank in row["gradients"]
+                        ],
+                    }
+                    for row in self.parity_controls
+                ]
+            ),
+            flush=True,
+        )
+
+    def parity_trial(self, label, *, reset, attention_deterministic=None):
+        from tinker import AdamParams
+
+        if reset:
+            self.actor_command("parity_reset")
+        if attention_deterministic is not None:
+            self.actor_command(
+                "parity_set_te_determinism", enabled=attention_deterministic
+            )
+        job = self.backend.jobs["snapshot-probe"]
+        job.optimizer_step = self.parity_step
+        job.accumulating = False
+        before = self.forward()
+        error = max(abs(a - b) for a, b in zip(before, self.reference, strict=True))
+        self.backend.forward_backward(make_batch())
+        gradients = self.actor_command("parity_observe", stage="gradients", label=label)
+        (optimizer,) = self.backend.optim_step(
+            ("snapshot-probe",), AdamParams(learning_rate=1e-4)
+        )
+        assert optimizer.metrics["update_successful:mean"] == 1
+        updated = self.actor_command("parity_observe", stage="updated", label=label)
+        return {
+            "label": label,
+            "pre_step_logprob_error": error,
+            "gradients": gradients,
+            "updated": updated,
+            "optimizer": optimizer.metrics,
+            "post_update_logprobs": self.forward(),
+        }
 
     @modal.enter(snap=False)
     def restored(self):
@@ -243,11 +342,35 @@ class Trainer:
                 json.dumps(self.resumed_comms),
                 flush=True,
             )
+        if parity_mode:
+            self.parity_audit_after = self.actor_command("parity_audit")
 
     @modal.method()
     def verify(self):
         import math
         from tinker import AdamParams
+
+        if parity_mode:
+            after = self.probe()
+            assert after == self.before, (self.before, after)
+            trials = [
+                self.parity_trial("after_restore_0", reset=False),
+                self.parity_trial("after_restore_1", reset=True),
+            ]
+            return {
+                "initialization_id": self.initialization_id,
+                "task_id": os.environ["MODAL_TASK_ID"],
+                "snapshot_creator_task_id": self.snapshot_creator_task_id,
+                "restored_from_different_container": os.environ["MODAL_TASK_ID"]
+                != self.snapshot_creator_task_id,
+                "hardware": self.hardware,
+                "trainer_env": trainer_env,
+                "parity_inventory": self.parity_inventory,
+                "parity_audit_before": self.parity_audit_before,
+                "parity_audit_after": self.parity_audit_after,
+                "controls": self.parity_controls,
+                "trials": trials,
+            }
 
         started = time.monotonic()
         print("SNAPSHOT_PHASE verifying", flush=True)

@@ -5,8 +5,11 @@ with **GPU P2P/CUMEM NCCL**, matched the saved model/gradient/optimizer/RNG stat
 passed all process-group checks and completed another backward/Adam update.
 This uses explicit per-actor NCCL suspend/resume, `NCCL_CUMEM_ENABLE=1`, NVLS
 disabled, and stable loopback addresses for Ray and communication bootstrap.
-The first forward matches exactly; numerical training-continuation parity
-remains unproven. Earlier socket-NCCL results are retained below.
+The first forward matches exactly. The numerical follow-up below audits tensor
+storage byte for byte and isolates the training drift to nondeterministic
+attention. With deterministic attention, a separate-container restore also
+matched gradients, updated weights/optimizer tensors and log probabilities
+exactly. Earlier socket-NCCL results are retained below.
 
 This experiment asks whether a new container can resume an initialized Spindle
 trainer from a Modal CPU/GPU memory snapshot, without loading model or optimizer
@@ -368,7 +371,7 @@ storage/GPU timings or a production persistent-cache benchmark. The earlier
 snapshot-building run took 302.43 s to initialize. Another call waited for H100
 capacity and built the second snapshot; only the third call actually restored.
 
-**Numerical continuation parity remains unproven.** The clone started from
+**Initial numerical continuation check.** The clone started from
 identical saved state and reproduced the first forward exactly. After the next
 update, model and optimizer hashes differed from the producer's; RNG hashes
 still matched. The maximum post-update log-probability difference was
@@ -377,7 +380,9 @@ fresh initializations also differed in model/optimizer fingerprints before
 capture and in their reference outputs (maximum difference 0.1976738), despite
 matching RNG fingerprints. That shows variation already exists before cloning;
 it does not establish that the restored continuation's numerical differences
-are acceptable or entirely explained by ordinary nondeterminism.
+are acceptable or entirely explained by ordinary nondeterminism. The follow-up
+below isolates the cause with same-state replay and an attention-backend
+intervention.
 
 Raw results, per-rank suspend/resume inventories, reference/post-update outputs,
 transport excerpts, source hashes and continuation comparisons are in
@@ -386,6 +391,124 @@ This establishes a functional, single-container, TP=4 LoRA trainer restored with
 GPU P2P communication. NVLS-enabled snapshots, multi-node/RDMA restoration,
 full-parameter optimizer state and production frontend integration remain
 untested. All experiment apps were stopped afterward.
+
+### Byte-level audit and numerical cause (2026-11-06 follow-up)
+
+The original 0.2948008 post-update log-probability difference warranted a
+stronger check than aggregate state fingerprints. The parity probe in
+`tests/manual/qwen9b_snapshot_parity.py` adds two independent diagnostics:
+
+1. **Direct byte comparison.** Before capture, retain independent CPU `uint8`
+   copies of each unique live CUDA tensor storage. Enumerate named parameters,
+   registered buffers, gradients, optimizer state and FP32 masters explicitly;
+   also traverse model/DDP/optimizer objects and GC-visible physical CUDA
+   tensors to cover flat buffers and other live tensor workspaces. Compare the
+   entire storage, including its padding and views, after NCCL recovery and
+   before any model work. This uses `torch.equal` on bytes, not a floating-point
+   tolerance. No tensor subclasses were skipped in these runs.
+2. **Same-state replay without snapshotting.** Restore saved tensor bytes,
+   mutable model/optimizer bookkeeping and CPU/CUDA/Python/NumPy/Megatron RNG
+   state in place, retaining the same objects and communicator references.
+   Repeat forward/backward/Adam from the same state three times before capture.
+   Record gradient comparisons before Adam, then updated model/optimizer values
+   and output log probabilities. A CPU Adam replay check also validates that
+   the replay helper restores moments, step counters, weights and gradients.
+
+The default-attention experiment restored into container
+`ta-01M6RVXBP00M69N0XM7XJGEBYR` from producer
+`ta-01M6RV9C723B1MCMT6C0P344QR`. Every rank passed the direct byte comparison:
+**5,465,584,916 bytes per rank, 21,862,339,664 bytes total**, with no mismatches.
+The audit covered 3,556 explicitly named tensor entries and 2,350 unique CUDA
+storages per rank, including optimizer masters/moments and DDP storage. These
+counts include aliases among named tensors; underlying storages are deduplicated.
+The saved inventories and pre-capture control results also matched the producer.
+CUDA allocations held only inside native libraries are outside this tensor
+enumeration; the audit does not claim to read every byte of the CUDA driver.
+
+The large numerical drift reproduced **before any platform snapshot**: each
+replay restored the same bytes and reproduced the pre-step forward exactly, but
+gradients differed before Adam. The first producer's later replays had maximum
+post-update log-probability differences of **0.2770133** and **0.1896734**.
+Thus the snapshot is not necessary to produce the observed effect.
+
+The isolated attention microtest used the installed FlashAttention APIs on an
+H100, BF16, a 128-token sequence, four query heads, one KV head and head dimension
+256, matching this trainer's TP-local full-attention shape. Repeating identical
+inputs showed varying K/V gradients under **FlashAttention 3.0.0**. In the
+20-repeat no-KV-sharing control (four KV heads), its results were identical;
+FlashAttention 2 was identical with and without sharing. FlashAttention 3's
+deterministic backward explicitly rejected head dimension 256. The separately
+tested FlashQLA gated-attention case was identical in all 32 repetitions, with
+its internal parallelism on/off and temporary allocations zeroed/not zeroed.
+
+The targeted full-model intervention is:
+
+```bash
+NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
+```
+
+Set this **before constructing the producer runtime** and preserve the same
+configuration after restore. In this image, Transformer Engine selects
+**FlashAttention 2.7.4.post1** for deterministic attention at head dimension 256.
+This is an official [Transformer Engine determinism control](https://docs.nvidia.com/deeplearning/transformer-engine-releases/release-2.16/user-guide/api/pytorch.html),
+not a replacement for the NCCL snapshot hooks. No NCCL settings change between
+the numerical controls.
+
+In one initialized model, three deterministic-attention replays had **identical
+gradients, updated model weights, optimizer tensors and log probabilities**.
+Toggling only the attention modules' determinism flags back off selected
+FlashAttention 3.0.0 and restored the variation: the second FA3 replay differed
+from the first by **0.1744671** in post-update log probability. Its model weights
+differed by up to **0.0001831**; gradient sign changes and Adam updates make a
+small backward discrepancy visible in the final outputs. The replay starts
+from the same saved model/RNG state for each trial.
+
+The deterministic configuration also completed a **separate-container restore**:
+producer `ta-01M6RW3FRE86N7NG88KJGFPV7R` to clone
+`ta-01M6RWPSBPXHS78XX7QYT3CRSR`. The clone audited **21,862,339,760 CUDA
+storage bytes across four ranks**, with zero mismatches. Both post-restore
+training replays matched the producer's reference gradients, updated model
+weights, optimizer tensors and log probabilities exactly: **zero differing
+elements and maximum log-probability difference 0.0**. The shared initialization
+ID and saved inventories/control results establish that this was a restored
+runtime, rather than a fresh initialization. Each configuration produced two
+compatibility snapshots before the third invocation restored a different container.
+
+Comparisons are made **within each backend**, not between FA2 and FA3. Switching
+the backend also changes forward rounding: the first FA3 forward differed from
+the FA2 reference by 0.1203804 in that run. That cross-backend difference is not
+a restore error and is not the 0.1744671 same-backend replay measurement.
+
+Enable the byte audit and replay controls using:
+
+```bash
+export SPINDLE_SNAPSHOT_APP=spindle-qwen9b-snapshot-parity-det-1106
+export SPINDLE_SNAPSHOT_PARITY=1
+export SPINDLE_SNAPSHOT_TE_DETERMINISTIC=1
+export SPINDLE_SNAPSHOT_TRANSPORT=no-nvls
+export SPINDLE_SNAPSHOT_COMMS=suspend
+export SPINDLE_SNAPSHOT_RAY_IP=127.0.0.1
+uv run modal deploy tests/manual/benchmark_qwen9b_memory_snapshot.py
+uv run modal run tests/manual/benchmark_qwen9b_memory_snapshot.py \
+  --mode snapshot --repeats 3 --require-restore \
+  --output /tmp/qwen9b-snapshot-parity-det.json
+```
+
+Omit `SPINDLE_SNAPSHOT_TE_DETERMINISTIC` (or set it to `0`) to reproduce the
+default-attention controls. The deterministic run also temporarily reenables
+FA3 for its paired counterfactual, then returns to deterministic attention before
+capture. This diagnostic retains large CPU copies and extra tensor storage;
+its memory use and timings are not production startup measurements. No
+throughput cost of deterministic attention was benchmarked.
+
+The reviewable measurements are in
+[`numerical-parity-summary.json`](assets/trainer-memory-snapshots/numerical-parity-summary.json).
+Full per-storage manifests, all comparisons and exact live diagnostic sources
+are retained in the gzip-compressed JSON archive
+[`numerical-parity-results.json.gz`](assets/trainer-memory-snapshots/numerical-parity-results.json.gz).
+The summary records compressed/uncompressed SHA-256 checksums. Decode with
+Python's `gzip.open(..., 'rt')` and `json.load()`; the archive contains hashes and
+metadata, not model tensor values.
 
 ### Full trainer restore with socket NCCL (2026-11-05)
 
@@ -411,7 +534,7 @@ are retained in [`qwen9b-restored.json`](assets/trainer-memory-snapshots/qwen9b-
 That call's client-to-result duration includes waiting behind other startup work
 and must not be used as an isolated restore latency.
 
-**Continuation parity remains unproven.** The first forward and all saved state
+**These initial socket results did not establish continuation parity.** The first forward and all saved state
 matched exactly, but the original container's and restored container's subsequent
 updates were not byte-identical. Gradient norms were 572.6663 and 572.5220 (about
 0.025% apart); post-update model and optimizer hashes differed on all ranks,
