@@ -37,6 +37,7 @@ from .deployments import (
     DeploymentNotFound,
     DeploymentRequest,
     DeploymentRoutes,
+    RegistryUnavailable,
     Routable,
 )
 from .keys import placement_key
@@ -52,6 +53,7 @@ ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
     (RecordNotFound, 404, "not_found"),
     (DeploymentConflict, 409, "conflict"),
     (DeploymentNotFound, 404, "not_found"),
+    (RegistryUnavailable, 503, "registry_unavailable"),
     (RequestValidationError, 400, "invalid_request"),
     (ValueError, 400, "invalid_request"),
     (httpx.TransportError, 503, "engine_unreachable"),

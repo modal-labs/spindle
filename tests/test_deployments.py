@@ -26,6 +26,7 @@ from spindle.control_plane.deployments import (
     VERSION_CHECK_S,
     DeploymentNotFound,
     DeploymentRoutes,
+    RegistryUnavailable,
     mark_registry_changed,
 )
 from spindle.control_plane.keys import model_key, placement_key
@@ -493,11 +494,12 @@ async def test_a_lost_version_update_is_caught_by_the_periodic_reread():
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("failing", ["version", "registry"])
-async def test_a_failed_read_keeps_the_last_recipe_list(failing):
+async def test_a_failed_read_serves_hits_but_never_answers_not_found(failing):
     base = resolved()
     routes, store = routes_for(base)
     await routes.definitions()
-    await register_elsewhere(routes, store, resolved(recipe(name="added")))
+    added = resolved(recipe(name="added"))
+    await register_elsewhere(routes, store, added)
 
     async def unavailable(*args):
         raise ConnectionError("unavailable")
@@ -506,11 +508,16 @@ async def test_a_failed_read_keeps_the_last_recipe_list(failing):
         routes.versions().get = unavailable
     else:
         store.list_keys = unavailable
-    assert await names(routes) == [base.name]
+    routes._checked_at -= VERSION_CHECK_S
     attempts = store.reads
-    for _ in range(10):  # a failing read backs off instead of repeating per request
+    for _ in range(10):  # cached hits keep working, and the read backs off
         assert (await routes.select(base.model)).name == base.name
-    assert store.reads == attempts
+    assert store.reads <= attempts + 1
+    with pytest.raises(RegistryUnavailable):
+        await routes.get(added.name)
+    async with client_for(routes) as client:
+        listed = await client.get("/api/v1/spindle/deployments")
+    assert (listed.status_code, listed.json()["error"]) == (503, "registry_unavailable")
 
 
 @pytest.mark.anyio

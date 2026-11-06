@@ -22,13 +22,17 @@ REGISTRY_VERSION_KEY = "registry_version:deployments"
 # How long a container serves its list between registry version checks.
 VERSION_CHECK_S = 1.0
 # Reread anyway this often, in case a version update was lost.
-REREAD_S = 60.0
+REREAD_S = 600.0
 MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
 
 
 class DeploymentConflict(ValueError):
     """A recipe name is already registered with different settings."""
+
+
+class RegistryUnavailable(RuntimeError):
+    """The registry could not be read, so a lookup can't tell whether a recipe exists."""
 
 
 class DeploymentNotFound(KeyError):
@@ -149,19 +153,19 @@ class DeploymentRoutes:
                 version = await asyncio.shield(
                     self._shared("version", self._registry_version)
                 )
-        except Exception:
-            if not self._loaded:
-                raise
-            logger.exception("Registry version read failed; serving the last list")
             self._checked_at = time.monotonic()
-            return self._definitions
-        self._checked_at = time.monotonic()
-        if (
-            not self._loaded
-            or version != self._version
-            or time.monotonic() - self._read_at >= REREAD_S
-        ):
-            await self._reload(version)
+            if (
+                not self._loaded
+                or version != self._version
+                or time.monotonic() - self._read_at >= REREAD_S
+            ):
+                await self._reload(version)
+        except Exception as exc:
+            self._checked_at = time.monotonic()
+            if check or not self._loaded:
+                # A miss must not answer "not found" from a list it couldn't refresh.
+                raise RegistryUnavailable(f"registry read failed: {exc}") from exc
+            logger.exception("Registry read failed; serving the last recipe list")
         return self._definitions
 
     async def _reload(self, version: object = None) -> None:
@@ -179,11 +183,8 @@ class DeploymentRoutes:
                 *(kv.get(name) for name in names), return_exceptions=True
             )
         except Exception:
-            if not self._loaded:
-                raise
-            logger.exception("Registry read failed; serving the last recipe list")
             self._checked_at = time.monotonic()
-            return
+            raise
         definitions, skipped = [], set()
         for name, row in zip(names, rows):
             try:
@@ -300,7 +301,11 @@ class DeploymentRoutes:
     async def _changed(self) -> None:
         versions = self._versions()
         version = None if versions is None else await mark_registry_changed(versions)
-        await self._reload(version)
+        try:
+            await self._reload(version)
+        except Exception:
+            # The write and version update landed; other containers will see them.
+            logger.exception("Registry reread after a write failed")
         self._checked_at = time.monotonic()
 
     def _store(self) -> KeyValueStore:

@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import random
 from collections.abc import Awaitable, Callable, Mapping
 
 import modal
@@ -238,6 +239,19 @@ def fft_pool_kv(app_id: str | None = None) -> ModalKeyValueStore:
     )
 
 
+VOLUME_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0)
+
+
+async def _retry_rate_limited(call: Callable[[], Awaitable[object]]) -> object:
+    for delay in (*VOLUME_RETRY_DELAYS_S, None):
+        try:
+            return await call()
+        except modal.exception.ResourceExhaustedError:
+            if delay is None:
+                raise
+            await asyncio.sleep(delay * (1 + random.random()))
+
+
 class ModalVolumeStore:
     """One `<folder>/<key>.json` file per key in a shared Modal Volume."""
 
@@ -255,7 +269,7 @@ class ModalVolumeStore:
             return None
 
     async def get(self, key: str) -> object | None:
-        return await asyncio.to_thread(self.read, key)
+        return await _retry_rate_limited(lambda: asyncio.to_thread(self.read, key))
 
     async def put(self, key: str, value: object) -> None:
         await self.put_many({key: value})
@@ -289,7 +303,9 @@ class ModalVolumeStore:
 
     async def list_keys(self, prefix: str) -> tuple[str, ...]:
         try:
-            entries = await self.volume.listdir.aio(f"/{self.folder}")
+            entries = await _retry_rate_limited(
+                lambda: self.volume.listdir.aio(f"/{self.folder}")
+            )
         except (FileNotFoundError, modal.exception.NotFoundError):
             return ()
         names = [os.path.basename(entry.path) for entry in entries]
