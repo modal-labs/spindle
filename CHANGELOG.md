@@ -4,7 +4,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
-## 0.2.0 - 2026-11-06
+## 0.1.6 - 2026-11-06
 
 Add and remove configs on a running frontend without redeploying it, wait in line for a trainer slot instead of failing, and see each recipe's training queue.
 
