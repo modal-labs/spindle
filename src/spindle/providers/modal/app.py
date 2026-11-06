@@ -862,6 +862,7 @@ def _stop_app(name: str) -> None:
     if (
         result.returncode
         and "App is already stopped." not in result.stdout + result.stderr
+        and "No App with name" not in result.stdout + result.stderr
     ):
         raise RuntimeError(f"stopping {name} failed: {result.stderr[-2000:]}")
 

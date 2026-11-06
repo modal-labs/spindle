@@ -53,6 +53,8 @@ from spindle.version import __version__, deployment_tag, source_commit
 RECIPE_FIELDS = frozenset(key for key in vars(BaseConfig) if not key.startswith("_"))
 ADD_POLL_S = 10
 ADD_TIMEOUT_S = 60 * 60
+# How long a just-added config may be missing from another frontend container's list.
+ADD_UNLISTED_GRACE_S = 60
 NO_CONFIGS = (
     "No configs given. Run `spindle deploy` in a terminal to pick models interactively, "
     "pass config files or bundled config names (e.g. `spindle deploy qwen35-9b-lora-16k`), "
@@ -290,11 +292,19 @@ def deployment_apps(frontend, environment):
             return 0
         return next((i for i, p in enumerate(prefixes, 1) if name.startswith(p)), None)
 
-    names = {row["description"] or "" for row in rows if row["state"] != "stopped"}
+    names = {
+        row["description"] or ""
+        for row in rows
+        if not str(row["state"]).startswith("stop")
+    }
     return sorted(
         (name for name in names if rank(name) is not None),
         key=lambda name: (rank(name), name),
     )
+
+
+def _already_stopped(output):
+    return "App is already stopped." in output or "No App with name" in output
 
 
 def stop(frontend, environment):
@@ -311,7 +321,7 @@ def stop(frontend, environment):
             command += ["--env", environment]
         result = subprocess.run(command, capture_output=True, text=True)
         output = (result.stdout + result.stderr).strip()
-        if result.returncode and "App is already stopped." not in output:
+        if result.returncode and not _already_stopped(output):
             raise ValueError(f"stopping {name} failed: {output}")
         print(f"Stopped {name}")
     if app_id is not None:
@@ -371,11 +381,15 @@ def add_deployment(
         body = {"name": name, "base": base, "overrides": overrides}
         _response_body(client.post(path, json=body), f"Adding {name}")
         print(f"Registered {name}; the frontend is deploying its apps.")
+        registered_at = time.monotonic()
         while True:
             listed = _response_body(client.get(path), "Listing deployments")
             row = next((d for d in listed["deployments"] if d["name"] == name), None)
             if row is None:
-                raise ValueError(f"{name} is no longer registered")
+                if time.monotonic() - registered_at > ADD_UNLISTED_GRACE_S:
+                    raise ValueError(f"{name} is no longer registered")
+                time.sleep(poll_s)
+                continue
             if "apps" not in row:
                 raise ValueError(
                     "This frontend does not deploy apps; redeploy it once with spindle deploy."

@@ -604,9 +604,9 @@ def frontend_that_deploys(statuses, requests=None):
             requests.append(request)
         if request.method == "POST":
             return httpx.Response(202, json={"deployment": {}, "config": {}})
-        return httpx.Response(
-            200, json={"deployments": [{"name": "variant", **next(statuses)}]}
-        )
+        status = next(statuses)
+        rows = [] if status is None else [{"name": "variant", **status}]
+        return httpx.Response(200, json={"deployments": rows})
 
     return handle
 
@@ -789,6 +789,7 @@ def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, caps
         ("my-spindle-lora-qwen35-9b-lora-16k", "deployed"),
         ("my-spindle-trainer-qwen35-9b-lora-16k", "deployed"),
         ("my-spindle-trainer-qwen3-8b-lora-32k", "stopped"),
+        ("my-spindle-trainer-removed", "stopping..."),
         ("my-spindle-inference-qwen35-9b-lora-16k", "deployed"),
         ("my-spindle-fft-0123456789abcdef-latest", "deployed"),
         ("my-spindle", "deployed"),
@@ -806,6 +807,11 @@ def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, caps
         if command[5].endswith("-latest"):
             return subprocess.CompletedProcess(
                 command, 1, "", "App is already stopped."
+            )
+        if command[5].startswith("my-spindle-inference"):
+            # Stopped by a DELETE after the listing was taken.
+            return subprocess.CompletedProcess(
+                command, 1, "", "No App with name 'x' found in the 'dev' environment."
             )
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -845,6 +851,24 @@ def test_add_reports_a_failed_deploy_and_how_to_retry(monkeypatch):
     monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
     with pytest.raises(ValueError, match="no H200 quota.*same spindle add again"):
         cli.add_deployment("variant", base="qwen35-9b-lora-16k", overrides={})
+
+
+def test_add_waits_out_a_listing_that_has_not_caught_up_yet(monkeypatch):
+    # A frontend container whose cache predates the POST omits the new config.
+    mock_frontend_client(
+        monkeypatch,
+        frontend_that_deploys([None, None, {"apps": "deploying"}, {"apps": "ready"}]),
+    )
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    cli.add_deployment("variant", base="b", overrides={})
+
+
+def test_add_gives_up_on_a_config_that_stays_unlisted(monkeypatch):
+    mock_frontend_client(monkeypatch, frontend_that_deploys([None] * 3))
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(cli, "ADD_UNLISTED_GRACE_S", 0)
+    with pytest.raises(ValueError, match="no longer registered"):
+        cli.add_deployment("variant", base="b", overrides={})
 
 
 def test_add_posts_again_when_no_deploy_is_running(monkeypatch):

@@ -18,6 +18,8 @@ from spindle.providers.contracts import KeyValueStore
 logger = logging.getLogger(__name__)
 
 REGISTRY_TTL_S = 5.0
+# Past this age a request waits for a fresh read instead of getting the cache.
+REGISTRY_MAX_STALE_S = 60.0
 MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
 
@@ -98,12 +100,13 @@ class DeploymentRoutes:
         return routes
 
     async def _load(self) -> list[Routable]:
-        """The cached recipes; requests wait on the registry only for the first read."""
+        """The cached recipes, refreshed in the background once a few seconds old."""
         if self.kv is None:
             return self._definitions
-        if self._loaded_at is None:
+        age = None if self._loaded_at is None else time.monotonic() - self._loaded_at
+        if age is None or age >= REGISTRY_MAX_STALE_S:
             await self._reload()
-        elif time.monotonic() - self._loaded_at >= REGISTRY_TTL_S:
+        elif age >= REGISTRY_TTL_S:
             self._start_reload()
         return self._definitions
 
@@ -191,7 +194,10 @@ class DeploymentRoutes:
         ]
         return max(matches, key=lambda d: d.max_context_length, default=None)
 
-    async def definitions(self) -> list[Routable]:
+    async def definitions(self, *, fresh: bool = False) -> list[Routable]:
+        """The served recipes; `fresh` reads the registry first, for listings."""
+        if fresh and self.kv is not None:
+            await self._reload(newer_than=time.monotonic())
         return list(await self._load())
 
     async def build(self, request: DeploymentRequest) -> DeploymentConfig:
@@ -259,7 +265,7 @@ class DeploymentRoutes:
         return self.kv()
 
     async def capabilities(self) -> list[dict[str, Any]]:
-        definitions = await self.definitions()
+        definitions = await self.definitions(fresh=True)
         rows = []
         for model in dict.fromkeys(d.model for d in definitions):
             recipes = [d for d in definitions if d.model == model]

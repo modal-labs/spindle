@@ -318,7 +318,8 @@ def create_control_plane_app(
 
     @app.get("/api/v1/spindle/deployments")
     async def list_deployments():
-        definitions = await routes.definitions()
+        # Fresh, not cached: another frontend container may have just added one.
+        definitions = await routes.definitions(fresh=True)
         rows = [_deployment_summary(d) for d in definitions]
         if apps_status is not None:
             statuses = await asyncio.gather(*(apps_status(d) for d in definitions))

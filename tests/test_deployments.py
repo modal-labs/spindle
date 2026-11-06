@@ -1131,3 +1131,38 @@ async def test_a_concurrent_add_under_the_same_name_is_a_conflict():
         await routes.add(
             await routes.build(DeploymentRequest(name="variant", base=base.name))
         )
+
+
+@pytest.mark.anyio
+async def test_a_cache_older_than_a_minute_waits_for_a_fresh_read():
+    base = resolved()
+    routes, store = routes_for(base)
+    await routes.definitions()
+    added = resolved(recipe(name="added", max_context_length=32768))
+    await store.put(added.name, added.model_dump(mode="json"))
+    routes._loaded_at = time.monotonic() - 120
+    assert set(await names(routes)) == {base.name, added.name}
+
+
+async def listed_names(client):
+    listed = (await client.get("/api/v1/spindle/deployments")).json()
+    return {d["name"] for d in listed["deployments"]}
+
+
+async def capability_names(client):
+    body = (await client.get("/api/v1/get_server_capabilities")).json()
+    return {row["model_name"] for row in body["supported_models"]}
+
+
+@pytest.mark.parametrize("read", [listed_names, capability_names])
+@pytest.mark.anyio
+async def test_a_config_another_frontend_container_just_added_shows_at_once(read):
+    base = resolved()
+    writer, store = routes_for(base)
+    reader = DeploymentRoutes(lambda: store)
+    await reader.definitions()  # this container's cache is warm and current
+    await writer.add(
+        await writer.build(DeploymentRequest(name="variant", base=base.name))
+    )
+    async with client_for(reader) as client:
+        assert "variant" in await read(client)
