@@ -7,7 +7,9 @@ This uses explicit per-actor NCCL suspend/resume, `NCCL_CUMEM_ENABLE=1`, NVLS
 disabled, and stable loopback addresses for Ray and communication bootstrap.
 The first forward matches exactly. The numerical follow-up below audits tensor
 storage byte for byte and isolates the training drift to nondeterministic
-attention. With deterministic attention, a separate-container restore also
+attention. The production-engine probe below also restored the backend HTTP
+subprocess and served a new client through a freshly started Engine frontend.
+With deterministic attention, a separate-container restore also
 matched gradients, updated weights/optimizer tensors and log probabilities
 exactly. Earlier socket-NCCL results are retained below.
 
@@ -16,6 +18,135 @@ trainer from a Modal CPU/GPU memory snapshot, without loading model or optimizer
 checkpoints. The first target is `Qwen/Qwen3.5-9B-Base`, Miles LoRA, TP=4 on
 4 H100s in one container, using the existing 16K recipe and a 128-token probe.
 It is an investigation, not a production trainer configuration.
+
+## Production engine cold-start probe (2026-11-06)
+
+`tests/manual/benchmark_qwen9b_engine_snapshot.py` extends the actor-level
+experiment to the actual engine command path:
+
+```text
+HttpEngineClient -> TCP HTTP -> create_engine_app / Engine scheduler
+  -> HttpBackendClient -> TCP HTTP -> spindle.engine.backend_http subprocess
+  -> production miles_lora.build_executor / DistributedExecutor
+  -> MilesRuntime -> Ray actors -> Megatron / GPU tensors / NCCL groups
+```
+
+The snapshot contains the backend subprocess, its HTTP server and thread/event
+loops, Ray services/controller/actors, loaded base weights, six LoRA slots and
+the initialized GPU runtime. It uses the unmodified production executor factory
+and training endpoints. A diagnostic factory wrapper adds actor probes,
+communicator suspend/resume and stable Ray addresses. The lightweight Engine
+scheduler and its authenticated HTTP server start **after** restore, with fresh
+frontend identity and no old client requests/futures.
+
+The template uses the Qwen3.5-9B LoRA **16K configuration**, TP4, six rank-32
+slots on four H100s, 16 CPUs and 64 GiB host memory. A **2,048-token** synthetic
+forward/backward and Adam step warms the backend, after which that temporary
+client is unloaded. The captured template has **zero registered training
+clients**; the restored engine must accept a fresh client, reproduce its
+pre-update forward, complete backward/Adam and unload it through the engine
+API. Warmup at 2K does not establish performance for all sequence lengths up
+to the configuration's 16K limit. Deterministic attention, CUMEM and disabled
+NVLS retain the constraints of the preceding experiments.
+
+Readiness means that a real authenticated HTTP request to
+`/api/v1/models` succeeds on the new frontend. Communicator resume is included;
+state fingerprints/group verification and training requests happen afterward.
+The probe records client submission and readiness UTC timestamps as well as
+monotonic durations within each container. Client-to-ready wall time includes
+scheduling and platform restore, subject to clock synchronization; it is
+separate from client-to-result time, which also includes verification and
+training. A new task ID with the saved initialization ID/backend PID and
+identical state fingerprints is required to call a run a restore.
+
+**Separate-container engine restore passed.** Producer
+`ta-01M6S3QDBMK3RAFT48SSAX5MWR` created initialization
+`db3e6ceabd7b41e4b2cfda238af1de4d`; clone
+`ta-01M6S49ARS73HKM3K1WEBA4F4R` retained that ID, the backend's independent
+initialization ID and PID 20, while constructing a new Engine frontend.
+Every saved model/gradient/RNG/process-group fingerprint matched before new
+client work. All **48 NCCL and 10 Gloo groups** passed their collectives. This
+empty template has no active client optimizer to resume; it creates one for
+the newly registered client. Captured nonempty optimizer continuation was
+validated separately in the numerical-parity probe below.
+
+| Measurement | First confirmed cold clone |
+| --- | ---: |
+| Client submission to authenticated Engine HTTP readiness | 149.96 s |
+| Submission to platform restore log (scheduling/setup) | 107.22 s |
+| Platform restore log to Engine HTTP readiness | approximately 42.74 s |
+| Recovery hook to Engine HTTP readiness | 5.19 s |
+| NCCL resume within that hook | 5.11 s |
+| Fresh-client registration | 0.243 s |
+| First 2K forward (maximum logprob error 0.0) | 1.074 s |
+| First 2K forward/backward | 0.741 s |
+| Adam update | 0.029 s |
+| Fingerprint/group verification plus API training after readiness | 8.86 s |
+
+One optional confirmation call was cancelled while still queued for H100 capacity
+(the platform warned at 19:13:00 UTC). It contributes no second latency sample.
+The platform restore log has one-second precision; its intervals are approximate.
+The **42.74 s includes** recovery of CPU/GPU/process-tree state, communicator
+resume and starting the new frontend. The **5.19 s alone is not cold-start
+latency**. The observed **149.96 s end-to-end** includes substantial waiting
+before restore begins. These samples demonstrate reuse of the full warmed GPU
+backend, not guaranteed scheduling latency or a production startup SLO.
+The successful producer initialized and warmed from populated disk caches in
+196.39 s before diagnostics/capture, so even that faster initialization was
+substantially longer than the observed restore interval.
+
+The normal-start controls reached a warmed, HTTP-ready engine in **264.95 s**
+and **282.11 s** from submission. The second ran after the private kernel cache
+had been populated; it still initialized a fresh backend. Backend initialization
+alone took 117.95 / 178.83 s, and initialization plus forward/backward/Adam warmup
+took 241.47 / 257.24 s. The harness additionally collected fingerprints before
+starting the frontend (roughly 9 / 17 s); these diagnostics are included in the
+264.95 / 282.11 s totals and would not be required in a production startup.
+Fresh-client registration and the first warmed 2K training request succeeded
+in both controls, with first-forward maximum error 0.0.
+
+A short-lived variant successfully captured twice and resumed its producers,
+but its three-call sequence and a delayed fourth call **all initialized fresh
+backends**. Container arguments in the fourth call showed snapshotting enabled
+with **no checkpoint assigned**. Platform logs showed capture and image save
+completion; no cross-container restore was demonstrated by that variant. This
+is not evidence that GPU state was restored incorrectly. The final harness
+keeps snapshot producers alive for 120 s after HTTP readiness, like a serving
+trainer, and the direct driver avoids creating an unrelated ephemeral App.
+Producer-only publication wait is recorded separately and never applies to a
+container with a different task ID. Attribution of the earlier misses to the
+producer lifetime is a hypothesis unless isolated with further controls.
+
+One earlier initialization failed before capture because the backend's chosen
+loopback port was already in use when its server finally bound after model
+loading. The normal launcher also releases its port probe before initialization;
+this test leaves that production startup race unresolved. It is distinct from
+snapshot capture and communicator recovery.
+
+The private kernel cache uses the same compiler environment variables as the
+production cache, mounted from a dedicated test Volume. This experiment does
+not register instances in the production control plane, warm a sampler pool,
+create public tunnels or run the external SDK gateway. Its engine HTTP server
+listens on loopback; both HTTP hops use actual TCP sockets.
+
+```bash
+export SPINDLE_ENGINE_SNAPSHOT_APP=spindle-qwen9b-engine-snapshot-1106
+uv run modal deploy tests/manual/benchmark_qwen9b_engine_snapshot.py
+uv run python tests/manual/drive_qwen9b_engine_snapshot.py \
+  --mode snapshot --repeats 3 --output /tmp/qwen9b-engine-snapshot.json
+uv run python tests/manual/drive_qwen9b_engine_snapshot.py \
+  --mode baseline --repeats 1 --output /tmp/qwen9b-engine-baseline.json
+```
+
+Results, identity checks, lifecycle observations and transport excerpts are in
+[`engine-cold-start-results.json`](assets/trainer-memory-snapshots/engine-cold-start-results.json).
+Exact live harness/diagnostic and production backend sources with SHA-256
+manifests are in
+[`engine-cold-start-sources.json`](assets/trainer-memory-snapshots/engine-cold-start-sources.json).
+The CPU harness check exercises both TCP HTTP servers and the real Engine
+scheduler with a test executor; 33 engine/backend HTTP tests and 59 Miles backend
+tests also pass. This remains an isolated experiment: production trainer
+Functions have not been converted to snapshot-backed classes.
 
 ## Exactly what was saved and restored
 
