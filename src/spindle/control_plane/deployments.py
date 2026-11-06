@@ -21,8 +21,6 @@ logger = logging.getLogger(__name__)
 REGISTRY_VERSION_KEY = "registry_version:deployments"
 # How long a container serves its list between registry version checks.
 VERSION_CHECK_S = 1.0
-# Reread anyway this often, in case a version update was lost.
-REREAD_S = 600.0
 MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
 
@@ -111,7 +109,6 @@ class DeploymentRoutes:
         self._version: object = None
         self._loaded = False
         self._checked_at = float("-inf")
-        self._read_at = float("-inf")
         self._skipped: set[str] = set()
         self._tasks: dict[str, asyncio.Task] = {}
 
@@ -154,11 +151,7 @@ class DeploymentRoutes:
                     self._shared("version", self._registry_version)
                 )
             self._checked_at = time.monotonic()
-            if (
-                not self._loaded
-                or version != self._version
-                or time.monotonic() - self._read_at >= REREAD_S
-            ):
+            if not self._loaded or version != self._version:
                 await self._reload(version)
         except Exception as exc:
             self._checked_at = time.monotonic()
@@ -197,7 +190,6 @@ class DeploymentRoutes:
                 skipped.add(name)
         self._definitions, self._skipped = definitions, skipped
         self._version, self._loaded = version, True
-        self._read_at = time.monotonic()
 
     @staticmethod
     def _exact(definitions: Iterable[Routable], definition_id: str) -> Routable | None:

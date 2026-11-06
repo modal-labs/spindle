@@ -22,7 +22,6 @@ from spindle.control_plane import ControlPlane, create_control_plane_app
 from spindle.control_plane.deployments import (
     DeploymentConflict,
     DeploymentRequest,
-    REREAD_S,
     VERSION_CHECK_S,
     DeploymentNotFound,
     DeploymentRoutes,
@@ -478,18 +477,6 @@ async def test_a_retried_write_repairs_a_lost_version_update(retried):
             await writer.remove("variant")
     reader._checked_at -= VERSION_CHECK_S
     assert (await reader.get("variant") is not None) == (retried == "add")
-
-
-@pytest.mark.anyio
-async def test_a_lost_version_update_is_caught_by_the_periodic_reread():
-    base = resolved()
-    routes, store = routes_for(base)
-    await routes.definitions()
-    added = resolved(recipe(name="added"))
-    await store.put(added.name, added.model_dump(mode="json"))  # no version update
-    assert await routes.get(added.name) is None
-    routes._read_at -= REREAD_S
-    assert (await routes.get(added.name)).name == added.name
 
 
 @pytest.mark.anyio
