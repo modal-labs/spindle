@@ -158,7 +158,9 @@ class DeploymentRoutes:
             if check or not self._loaded:
                 # A miss must not answer "not found" from a list it couldn't refresh.
                 raise RegistryUnavailable(f"registry read failed: {exc}") from exc
-            logger.exception("Registry read failed; serving the last recipe list")
+            logger.warning(
+                "Registry read failed (%s); serving the last recipe list", exc
+            )
         return self._definitions
 
     async def _reload(self, version: object = None) -> None:
@@ -168,16 +170,13 @@ class DeploymentRoutes:
             await asyncio.shield(self._shared("read", self._read_registry))
 
     async def _read_registry(self) -> None:
-        try:
-            version = await self._registry_version()
-            kv = self.kv()
-            names = await kv.list_keys("")
-            rows = await asyncio.gather(
-                *(kv.get(name) for name in names), return_exceptions=True
-            )
-        except Exception:
-            self._checked_at = time.monotonic()
-            raise
+        # Version first, so a change that lands mid-read is caught by the next check.
+        version = await self._registry_version()
+        kv = self.kv()
+        names = await kv.list_keys("")
+        rows = await asyncio.gather(
+            *(kv.get(name) for name in names), return_exceptions=True
+        )
         definitions, skipped = [], set()
         for name, row in zip(names, rows):
             try:

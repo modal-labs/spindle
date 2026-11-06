@@ -375,6 +375,9 @@ def create_control_plane_app(
         if stop_apps is not None:
             await stop_apps(current)
         removed = await routes.remove(name)
+        if stop_apps is not None:
+            # Again, for an app the deploy worker finished between the stop and the removal.
+            await stop_apps(current)
         if placed:
             logging.getLogger(__name__).warning(
                 "Removed %s; orphaned models %s",

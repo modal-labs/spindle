@@ -14,7 +14,7 @@ from huggingface_hub import snapshot_download
 from stitch.pools.modal_flash import ModalFlashPool
 
 from spindle.control_plane import ControlPlane, create_control_plane_app
-from spindle.control_plane.deployments import DeploymentRoutes
+from spindle.control_plane.deployments import DeploymentRoutes, RegistryUnavailable
 from spindle.control_plane.keys import model_key, placement_key, trainer_demand_key
 from spindle.control_plane.queues import RECENT_WINDOW_S, prune_queue_events
 from spindle.control_plane.records import ModelRecord
@@ -898,7 +898,11 @@ async def deploy_apps(name: str) -> None:
                 raise RuntimeError(f"could not look up {app_name}")
             if not exists:
                 await asyncio.to_thread(_deploy_app, deployment, role)
-                if await DEPLOYMENTS.get(name) is None:
+                try:
+                    removed = await DEPLOYMENTS.get(name) is None
+                except RegistryUnavailable:
+                    removed = False  # a DELETE meanwhile stops the apps itself
+                if removed:
                     # Removed while deploying; a DELETE before the app existed missed it.
                     await _stop_apps(deployment)
                     return

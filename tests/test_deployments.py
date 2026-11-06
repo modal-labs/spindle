@@ -1101,14 +1101,38 @@ async def test_adding_a_config_starts_its_app_deploy_and_the_listing_tracks_it()
 
 
 @pytest.mark.anyio
+async def test_removing_a_config_stops_an_app_whose_deploy_finished_during_the_delete():
+    base = resolved()
+    routes, _ = routes_for(base)
+    deployed, stopped = set(), []
+
+    async def stop_apps(definition):
+        if not deployed:  # the deploy worker's modal deploy returns right after this
+            deployed.add(definition.trainer_app_name)
+        else:
+            stopped.extend(deployed)
+
+    async with client_for(routes, stop_apps=stop_apps) as client:
+        await client.post(
+            "/api/v1/spindle/deployments",
+            json={"name": "variant", "base": base.name, "overrides": {}},
+        )
+        variant = await routes.get("variant")
+        removed = await client.delete("/api/v1/spindle/deployments/variant")
+    assert removed.status_code == 200
+    assert stopped == [variant.trainer_app_name]
+    assert await routes.get("variant") is None
+
+
+@pytest.mark.anyio
 async def test_removing_a_config_models_still_train_on_needs_force_and_stops_its_apps():
     base = resolved()
     routes, _ = routes_for(base)
     plane = InMemoryKeyValueStore()
-    stopped = []
+    stopped = set()
 
     async def stop_apps(definition):
-        stopped.append(definition.name)
+        stopped.add(definition.name)
 
     model = ModelRecord(
         model_id="session:train:0",
@@ -1131,14 +1155,14 @@ async def test_removing_a_config_models_still_train_on_needs_force_and_stops_its
         assert refused.json()["models"] == [
             {"model_id": model.model_id, "session_id": "session", "created_at": 1.0}
         ]
-        assert stopped == []
+        assert stopped == set()
         assert await routes.get("variant") is not None
         forced = await client.delete("/api/v1/spindle/deployments/variant?force=true")
         assert forced.status_code == 200, forced.text
         # The orphaned model still names the config, but it is gone: 404, not 409.
         again = await client.delete("/api/v1/spindle/deployments/variant")
         assert again.status_code == 404
-    assert stopped == ["variant"]
+    assert stopped == {"variant"}
     assert await routes.get("variant") is None
 
 
