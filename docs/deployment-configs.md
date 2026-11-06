@@ -190,7 +190,26 @@ Every recipe a frontend serves is one `<app_id>/<recipe>.json` config file in th
 
 Upgrading a frontend that still ships a configs file needs no extra step: `spindle deploy` on the new version writes every recipe the old frontend serves to the registry before the swap, so nothing drops out and unchanged apps are not deployed again.
 
-## Add or remove a config through the API
+## Add or remove a config on a running frontend
+
+Anyone with the frontend's API key can add and remove configs. There are two ways to add configurations: SDK or REST API.
+
+### SDK
+
+~~~bash
+uv run spindle add qwen35-9b-lora-16k-h200 --base qwen35-9b-lora-16k \
+  --trainer_gpu=H200 --miles_cfg.max_tokens_per_gpu=8192
+~~~
+
+`spindle add` waits until the config's apps are ready. To remove a config:
+
+~~~bash
+uv run spindle remove qwen35-9b-lora-16k-h200
+~~~
+
+If models still train on it, `spindle remove` lists them and prompts the user first; `--force` skips the interactive prompt.
+
+### REST API
 
 `POST /api/v1/spindle/deployments` writes a config into a running frontend's registry and deploys its trainer and inference apps in the background, without redeploying the frontend. Send a new `name` with either the deployed config to start from as `base` plus the settings to change as `overrides` (the same dotted keys as a config's `overrides`), or a full `recipe`:
 
@@ -209,8 +228,6 @@ Configs deployed before this API are already registered and listed. To move a co
 Each listed config reports `apps` as `"deploying"`, `"ready"`, `"failed"` (with `apps_error`) or `"missing"`. Sending the same config again retries a failed deploy.
 
 If you find a config that clearly beats the current baselines, please upstream it to Spindle as a bundled config.
-
-Anyone with the frontend's API key can add and remove configs.
 
 ## Update isolation
 

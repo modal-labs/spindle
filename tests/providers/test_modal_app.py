@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import importlib
 import json
 import subprocess
@@ -16,6 +17,7 @@ from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.errors import RecordNotFound
 from spindle.providers.local import InMemoryKeyValueStore
+from tests.support import RoutedTestStore
 from spindle.providers.modal import fft_pool
 from spindle.providers.modal.capacity import gpu_label, gpu_wait
 from spindle.providers.modal.engines import EngineInstanceRecord
@@ -109,7 +111,9 @@ def test_transitional_trainer_at_cap_keeps_capacity_pending(
         return None
 
     engines = SimpleNamespace(list_instances=list_instances)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
     monkeypatch.setattr(modal_app, "ModalSessionKeyValueStores", SimpleNamespace)
     monkeypatch.setattr(modal_app, "ModalEnginePlatform", lambda *args: engines)
     monkeypatch.setattr(modal_app, "kick_trainer_reconciler", kick)
@@ -130,7 +134,9 @@ def test_ensure_pool_deploys_pinned_base_pool(monkeypatch) -> None:
         return "https://gateway"
 
     weights_ready(monkeypatch, FULL_DEFINITION)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
     monkeypatch.setattr(modal_app, "fft_pool_kv", lambda: registry)
     monkeypatch.setattr(modal_app, "ModalSessionKeyValueStores", SimpleNamespace)
     monkeypatch.setattr(
@@ -166,7 +172,9 @@ def test_prepare_model_spawns_sized_latest_pool_for_full_models(monkeypatch) -> 
         spawned.append(spec)
 
     weights_ready(monkeypatch, FULL_DEFINITION)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
     monkeypatch.setattr(modal_app, "fft_pool_kv", InMemoryKeyValueStore)
     monkeypatch.setattr(modal_app, "ModalSessionKeyValueStores", SimpleNamespace)
     monkeypatch.setattr(
@@ -220,7 +228,7 @@ def test_prepare_model_leaves_lora_pool_to_trainer_boot(
         spawned.append(spec)
 
     weights_ready(monkeypatch, LORA_DEFINITION)
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(modal_app, "ModalSessionKeyValueStores", SimpleNamespace)
     monkeypatch.setattr(
         modal_app,
@@ -272,7 +280,7 @@ def weight_downloads(monkeypatch, registry, calls):
             raise state
         return state
 
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(modal_app, "fft_pool_kv", InMemoryKeyValueStore)
     monkeypatch.setattr(modal_app, "ModalSessionKeyValueStores", SimpleNamespace)
     monkeypatch.setattr(
@@ -565,7 +573,7 @@ def test_execute_sample_waits_for_weights_and_deploys_the_base_pool(
 
     monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "wk-a")
     monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "ws-a")
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(modal_app, "_start_weights_download", start)
     call = SimpleNamespace(get=SimpleNamespace(aio=finished))
     monkeypatch.setattr(
@@ -602,7 +610,7 @@ def test_prepare_model_assets_marks_weights_ready_after_commit(monkeypatch) -> N
         events.append(("commit",))
 
     monkeypatch.setattr("spindle.providers.modal.app.snapshot_download", download)
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(
         modal_app,
         "model_assets",
@@ -631,7 +639,7 @@ def test_ensure_pool_sizes_latest_pool_from_model_rollout_config(monkeypatch) ->
         await registry.put(f"fft_pool:{FFTPoolSpec.from_dict(spec).app_name}", spec)
         return "https://gateway"
 
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: kv)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(kv))
     monkeypatch.setattr(modal_app, "fft_pool_kv", lambda: registry)
     monkeypatch.setattr(modal_app, "ModalSessionKeyValueStores", SimpleNamespace)
     monkeypatch.setattr(
@@ -745,7 +753,9 @@ def test_execute_sample_routes_lora_models_to_shared_pool(monkeypatch) -> None:
         SimpleNamespace(remote=SimpleNamespace(aio=ensure)),
     )
     monkeypatch.setattr(modal_app, "lora_pool_gateway", gateway)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
     monkeypatch.setattr(modal_app, "sample_task", sample)
     task = {
         "engine_definition_id": LORA_DEFINITION,
@@ -775,7 +785,7 @@ def test_ensure_lora_pool_records_deployment(monkeypatch) -> None:
     registry = InMemoryKeyValueStore()
     spec = LoraPoolSpec(LORA_DEFINITION)
 
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(
         modal_app,
         "deploy_lora_pool",
@@ -881,7 +891,9 @@ def test_cleanup_redeploys_pool_touched_while_stopping(monkeypatch) -> None:
 
     monkeypatch.setattr(modal_app, "_pool_touches", {})
     monkeypatch.setattr(modal_app, "fft_pool_kv", lambda: registry)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
     monkeypatch.setattr(modal_app, "ModalFlashPool", Pool)
     monkeypatch.setattr(modal_app, "stop_pool", stop)
     monkeypatch.setattr(
@@ -914,7 +926,7 @@ def test_cleanup_stops_superseded_lora_pool(monkeypatch) -> None:
         created_at=1.0,
     )
 
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(
         modal_app,
         "stop_lora_pool",
@@ -950,7 +962,7 @@ def test_cleaner_loses_models_on_removed_definitions(monkeypatch) -> None:
         added,
     )
     stopped = []
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: kv)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(kv))
     monkeypatch.setattr(modal_app, "fft_pool_kv", lambda: registry)
     monkeypatch.setattr(
         modal_app, "stop_pool", lambda spec: stopped.append(spec.app_name)
@@ -1074,7 +1086,9 @@ def test_pool_cleanup_continues_after_failure_and_retries_entry(monkeypatch, cap
             raise RuntimeError("stop unavailable")
 
     monkeypatch.setattr(modal_app, "fft_pool_kv", lambda: registry)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
     monkeypatch.setattr(modal_app, "stop_pool", stop)
 
     async def run():
@@ -1099,7 +1113,9 @@ def test_cleanup_removes_already_stopped_pool_from_registry(monkeypatch):
     spec = FFTPoolSpec("definition", "stopped", True, 0)
     key = f"fft_pool:{spec.app_name}"
     monkeypatch.setattr(modal_app, "fft_pool_kv", lambda: registry)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
     monkeypatch.setattr(fft_pool.shutil, "which", lambda _: "/bin/modal")
     monkeypatch.setattr(
         fft_pool.subprocess,
@@ -1141,7 +1157,7 @@ def test_concurrent_lora_pool_checks_only_resolve_once(monkeypatch, missing):
         return "https://gateway"
 
     monkeypatch.setattr(modal_app, "lora_pool_gateway", lookup)
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(
         modal_app,
         "ensure_lora_pool",
@@ -1186,7 +1202,7 @@ def test_lora_readiness_refreshes_touch_and_recovers_missing_pool(monkeypatch):
         SimpleNamespace(time=lambda: clock[0], monotonic=lambda: clock[0]),
     )
     monkeypatch.setattr(modal_app, "lora_pool_gateway", lookup)
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(
         modal_app,
         "ensure_lora_pool",
@@ -1225,7 +1241,9 @@ def test_lora_readiness_does_not_cache_errors_or_deploy_on_network_failure(monke
         pytest.fail("Only NotFound should deploy a pool")
 
     monkeypatch.setattr(modal_app, "lora_pool_gateway", lookup)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
     monkeypatch.setattr(
         modal_app,
         "ensure_lora_pool",
@@ -1253,7 +1271,9 @@ def test_sampling_session_readiness_reuses_cached_pool(monkeypatch):
         pytest.fail("Warm session creation should not use serialized deployment")
 
     monkeypatch.setattr(modal_app, "lora_pool_gateway", lookup)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
     monkeypatch.setattr(modal_app, "fft_pool_kv", InMemoryKeyValueStore)
     monkeypatch.setattr(modal_app, "ModalSessionKeyValueStores", SimpleNamespace)
     monkeypatch.setattr(
@@ -1283,7 +1303,9 @@ def test_lora_readiness_cache_is_per_definition(monkeypatch):
         return f"https://{spec.app_name}"
 
     monkeypatch.setattr(modal_app, "lora_pool_gateway", lookup)
-    monkeypatch.setattr(modal_app, "shared_kv", InMemoryKeyValueStore)
+    monkeypatch.setattr(
+        modal_app, "shared_kv", lambda: RoutedTestStore(InMemoryKeyValueStore())
+    )
 
     async def run():
         first = LoraPoolSpec(LORA_DEFINITION)
@@ -1307,7 +1329,7 @@ def test_lora_cleanup_continues_after_failure_and_retries(monkeypatch, caplog):
         if spec.definition_id == "failed-lora" and fail:
             raise RuntimeError("stop unavailable")
 
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(modal_app, "stop_lora_pool", stop)
 
     async def run():
@@ -1330,7 +1352,7 @@ def test_startup_failure_expires_so_transient_errors_do_not_disable_training(
 ):
     app = importlib.import_module("spindle.providers.modal.app")
     registry = InMemoryKeyValueStore()
-    monkeypatch.setattr(app, "shared_kv", lambda: registry)
+    monkeypatch.setattr(app, "shared_kv", lambda: RoutedTestStore(registry))
     monkeypatch.setattr(app.time, "time", lambda: 1000.0)
 
     async def check():
@@ -1378,7 +1400,7 @@ def test_trainer_gpu_wait_reports_the_recipes_gpus(monkeypatch) -> None:
 def app_deploy_fakes(monkeypatch, deployed):
     modal_app = importlib.import_module("spindle.providers.modal.app")
     store = InMemoryKeyValueStore()
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: store)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(store))
 
     async def exists(name):
         return name in deployed
@@ -1481,7 +1503,7 @@ def test_stop_apps_stops_only_deployed_apps_and_forgets_the_deploy(monkeypatch):
 def test_a_failing_app_lookup_reports_unknown_and_starts_no_deploy(monkeypatch):
     modal_app = importlib.import_module("spindle.providers.modal.app")
     store = InMemoryKeyValueStore()
-    monkeypatch.setattr(modal_app, "shared_kv", lambda: store)
+    monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(store))
     lookup = AsyncMock(side_effect=RuntimeError("rate limited"))
     monkeypatch.setattr(modal.App, "lookup", SimpleNamespace(aio=lookup))
     spawn = AsyncMock()
@@ -1493,3 +1515,66 @@ def test_a_failing_app_lookup_reports_unknown_and_starts_no_deploy(monkeypatch):
     spawn.assert_not_awaited()
     with pytest.raises(RuntimeError, match="could not look up"):
         asyncio.run(modal_app.deploy_apps.local(recipe.name))
+
+
+def test_app_deploy_records_route_to_a_known_shared_store():
+    from spindle.providers.modal.kv import KEY_STORES, RoutedKeyValueStore
+
+    modal_app = importlib.import_module("spindle.providers.modal.app")
+    key = modal_app._app_deploy_key("variant")
+    stores = {domain: object() for domain in set(KEY_STORES.values())}
+    assert RoutedKeyValueStore(stores)._store(key) is stores["engines"]
+
+
+@pytest.mark.parametrize(
+    "step", ["lookup", "claim", "spawn", "record_call", "worker_died"]
+)
+def test_a_crash_at_any_step_of_a_deploy_leaves_a_status_a_repost_recovers_from(
+    monkeypatch, step
+):
+    """No step of starting or running a deploy can strand it as "deploying"."""
+    modal_app, store = app_deploy_fakes(monkeypatch, set())
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
+    now = [1_000.0]
+    monkeypatch.setattr(modal_app.time, "time", lambda: now[0])
+    calls = iter(SimpleNamespace(object_id=f"fc-{i}") for i in range(5))
+    spawn = AsyncMock(side_effect=lambda name: next(calls))
+    monkeypatch.setattr(modal_app.deploy_apps, "spawn", SimpleNamespace(aio=spawn))
+    # Every spawned worker has died without recording an outcome.
+    monkeypatch.setattr(modal_app, "_call_running", AsyncMock(return_value=False))
+
+    with monkeypatch.context() as failing:
+        if step == "lookup":
+
+            async def unknown(name):
+                return None
+
+            failing.setattr(modal_app, "_app_exists", unknown)
+        elif step == "claim":
+            failing.setattr(
+                store, "put_if_absent", AsyncMock(side_effect=RuntimeError("down"))
+            )
+        elif step == "spawn":
+            failing.setattr(
+                modal_app.deploy_apps,
+                "spawn",
+                SimpleNamespace(aio=AsyncMock(side_effect=RuntimeError("down"))),
+            )
+        elif step == "record_call":
+            put = store.put
+
+            async def put_fails_for_the_call_id(key, value):
+                if "call_id" in value:
+                    raise RuntimeError("down")
+                await put(key, value)
+
+            failing.setattr(store, "put", put_fails_for_the_call_id)
+        with contextlib.suppress(RuntimeError):
+            asyncio.run(modal_app._start_app_deploy(recipe))
+
+    now[0] += modal_app.APP_DEPLOY_CLAIM_S + 1
+    status = asyncio.run(modal_app._apps_status(recipe))["apps"]
+    assert status in {"missing", "failed"}, status
+    spawned = spawn.await_count
+    asyncio.run(modal_app._start_app_deploy(recipe))  # what a re-sent POST does
+    assert spawn.await_count == spawned + 1

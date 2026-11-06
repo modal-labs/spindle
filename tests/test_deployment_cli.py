@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import httpx
 import modal
 import pytest
 from rich.console import Console
@@ -582,6 +583,190 @@ def test_lifecycle_change_refuses_to_reset_unlisted_recipes(deployed):
     assert deployed.calls == []
 
 
+def mock_frontend_client(monkeypatch, handler):
+    client_type = httpx.Client
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        cli.httpx,
+        "Client",
+        lambda **kwargs: client_type(transport=transport, **kwargs),
+    )
+    monkeypatch.setenv("TINKER_BASE_URL", "https://frontend.example/")
+    monkeypatch.setenv("TINKER_API_KEY", "test-key")
+
+
+def frontend_that_deploys(statuses, requests=None):
+    """A fake frontend: POST registers, then the listing reports each status in turn."""
+    statuses = iter(statuses)
+
+    def handle(request):
+        if requests is not None:
+            requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(202, json={"deployment": {}, "config": {}})
+        return httpx.Response(
+            200, json={"deployments": [{"name": "variant", **next(statuses)}]}
+        )
+
+    return handle
+
+
+def test_add_posts_json_parsed_fields_then_waits_until_the_apps_are_ready(
+    monkeypatch, deployed, capsys
+):
+    requests = []
+    handle = frontend_that_deploys(
+        [{"apps": "deploying"}, {"apps": "deploying"}, {"apps": "ready"}], requests
+    )
+    mock_frontend_client(monkeypatch, handle)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    cli.main(
+        [
+            "add",
+            "variant",
+            "--base",
+            "qwen35-9b-lora-16k",
+            "--trainer_gpus_per_node=4",
+            "--weights_revision",
+            '"1234"',
+            "--trainer_gpu=H200",
+            "--inference_gpu",
+            '["H100","B300"]',
+            "--model_weights=null",
+        ]
+    )
+    request = requests[0]
+    assert request.url == "https://frontend.example/api/v1/spindle/deployments"
+    assert request.headers["x-api-key"] == "test-key"
+    assert json.loads(request.content) == {
+        "name": "variant",
+        "base": "qwen35-9b-lora-16k",
+        "overrides": {
+            "trainer_gpus_per_node": 4,
+            "weights_revision": "1234",
+            "trainer_gpu": "H200",
+            "inference_gpu": ["H100", "B300"],
+            "model_weights": None,
+        },
+    }
+    assert [r.method for r in requests] == ["POST", "GET", "GET", "GET"]
+    assert deployed.calls == []
+    assert "Added variant." in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "message"),
+    [
+        (["--not_a_setting=1"], "unknown recipe field"),
+        (["--trainer_gpu=H100", "--trainer_gpu=B200"], "duplicate field"),
+        (["--trainer_gpu"], "missing value"),
+        (["--trainer_gpu", "--trainer_gpus_per_node=4"], "missing value"),
+        (["--=1"], "expected a --FIELD=VALUE recipe field"),
+        (["extra"], "expected a --FIELD=VALUE recipe field"),
+        (["--all"], "unknown recipe field: all"),
+        (["--env", "dev"], "unknown recipe field: env"),
+        (["--set", "gpu=H200"], "unknown recipe field: set"),
+        (["--name=other"], "not --name"),
+    ],
+)
+def test_add_cli_validation_fails_before_http(extra_args, message, monkeypatch, capsys):
+    requests = []
+    monkeypatch.setattr(cli.httpx, "Client", lambda **kwargs: requests.append(kwargs))
+    monkeypatch.setenv("TINKER_BASE_URL", "https://frontend.example")
+    monkeypatch.setenv("TINKER_API_KEY", "test-key")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["add", "variant", "--base", "base", *extra_args])
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("args", "code", "message"),
+    [
+        (["add", "variant"], 2, "--base"),
+        (["add", "--base", "base"], 2, "name"),
+        (["add", "variant", "--base"], 2, "expected one argument"),
+        (["add", "variant", "--bas", "base"], 2, "--base"),
+        (["deploy", "--trainer_gpu=H200"], 2, "unrecognized arguments"),
+        (["remove", "x", "--all"], 2, "unrecognized arguments"),
+        (["add", "variant", "--base", "base"], 1, "TINKER_BASE_URL"),
+    ],
+)
+def test_add_cli_rejects_bad_invocations_before_http(
+    args, code, message, monkeypatch, capsys
+):
+    requests = []
+    monkeypatch.setattr(cli.httpx, "Client", lambda **kwargs: requests.append(kwargs))
+    monkeypatch.delenv("TINKER_BASE_URL", raising=False)
+    monkeypatch.setenv("TINKER_API_KEY", "test-key")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(args)
+    assert exc.value.code == code
+    assert message in capsys.readouterr().err
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "message"),
+    [
+        (
+            400,
+            {"error": "invalid_request", "message": "unknown base deployment"},
+            "unknown base deployment",
+        ),
+        (409, {"error": "conflict", "message": "different settings"}, "409"),
+        (405, {"message": "method not allowed"}, "predates the deployments API"),
+    ],
+)
+def test_add_http_errors_exit(status, body, message, monkeypatch, capsys):
+    mock_frontend_client(monkeypatch, lambda request: httpx.Response(status, json=body))
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["add", "variant", "--base", "base"])
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err
+
+
+def test_remove_deletes_the_named_config_with_the_proxy_token_when_set(
+    monkeypatch, capsys
+):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={"deployment": {"name": "variant"}})
+
+    mock_frontend_client(monkeypatch, handle)
+    cli.main(["remove", "variant"])
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "wk-test")
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "ws-test")
+    cli.remove_deployment("variant")
+    assert [(r.method, r.url.path) for r in requests] == [
+        ("DELETE", "/api/v1/spindle/deployments/variant")
+    ] * 2
+    assert requests[0].headers["X-API-Key"] == "test-key"
+    assert "modal-key" not in requests[0].headers
+    assert requests[1].headers["modal-key"] == "wk-test"
+    assert requests[1].headers["modal-secret"] == "ws-test"
+    assert "Removed variant" in capsys.readouterr().out
+
+
+def test_remove_reports_unknown_names_and_old_frontends(monkeypatch):
+    responses = iter(
+        [
+            httpx.Response(
+                404, json={"error": "not_found", "message": "no deployment named 'x'"}
+            ),
+            httpx.Response(405),
+        ]
+    )
+    mock_frontend_client(monkeypatch, lambda request: next(responses))
+    with pytest.raises(ValueError, match="no deployment named 'x'"):
+        cli.remove_deployment("x")
+    with pytest.raises(ValueError, match="predates the deployments API"):
+        cli.remove_deployment("x")
+
+
 def test_app_flag_names_every_app_after_the_frontend(deployed):
     cli.main(["deploy", "qwen35-9b-lora-16k", "--app", "my-spindle", "--env", "dev"])
     assert deployed.apps == {
@@ -650,3 +835,68 @@ def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, caps
     assert calls == [["app", "list", "--json"]]
     assert len(deleted) == 1
     assert "No running apps for my-spindle" in capsys.readouterr().out
+
+
+def test_add_reports_a_failed_deploy_and_how_to_retry(monkeypatch):
+    handle = frontend_that_deploys(
+        [{"apps": "deploying"}, {"apps": "failed", "apps_error": "no H200 quota"}]
+    )
+    mock_frontend_client(monkeypatch, handle)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    with pytest.raises(ValueError, match="no H200 quota.*same spindle add again"):
+        cli.add_deployment("variant", base="qwen35-9b-lora-16k", overrides={})
+
+
+def test_add_posts_again_when_no_deploy_is_running(monkeypatch):
+    requests = []
+    handle = frontend_that_deploys(
+        [{"apps": "missing"}, {"apps": "deploying"}, {"apps": "ready"}], requests
+    )
+    mock_frontend_client(monkeypatch, handle)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    cli.add_deployment("variant", base="b", overrides={})
+    assert [r.method for r in requests] == ["POST", "GET", "POST", "GET", "GET"]
+
+
+def test_add_gives_up_after_its_timeout(monkeypatch):
+    mock_frontend_client(
+        monkeypatch, frontend_that_deploys([{"apps": "deploying"}] * 3)
+    )
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    with pytest.raises(ValueError, match="not ready after 0s"):
+        cli.add_deployment("variant", base="b", overrides={}, timeout_s=0)
+
+
+def test_add_rejects_a_frontend_that_does_not_deploy_apps(monkeypatch):
+    mock_frontend_client(monkeypatch, frontend_that_deploys([{}]))
+    with pytest.raises(ValueError, match="does not deploy apps"):
+        cli.add_deployment("variant", base="b", overrides={})
+
+
+def test_remove_lists_training_models_and_asks_before_forcing(monkeypatch, capsys):
+    requests = []
+    models = [{"model_id": "s:train:0", "session_id": "s", "created_at": 1.0}]
+
+    def handle(request):
+        requests.append(request)
+        if request.url.params.get("force") == "true":
+            return httpx.Response(200, json={"deployment": {"name": "variant"}})
+        return httpx.Response(
+            409, json={"error": "conflict", "message": "busy", "models": models}
+        )
+
+    mock_frontend_client(monkeypatch, handle)
+    with pytest.raises(ValueError, match="--force"):
+        cli.remove_deployment("variant", confirm=lambda question: False)
+    assert "s:train:0 (session s)" in capsys.readouterr().out
+    cli.remove_deployment("variant", confirm=lambda question: True)
+    assert "Removed variant" in capsys.readouterr().out
+    requests.clear()
+    capsys.readouterr()
+    cli.main(["remove", "variant", "--force"])
+    assert [r.url.params.get("force") for r in requests] == [None, "true"]
+    assert "Warning: removing variant ends training" in capsys.readouterr().out
+    requests.clear()
+    with pytest.raises(SystemExit):
+        cli.main(["remove", "variant"])
+    assert len(requests) == 1

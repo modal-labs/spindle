@@ -10,11 +10,13 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import Future
 from functools import partial
 from importlib import resources
 from pathlib import Path
 
+import httpx
 import modal
 from rich.console import Console
 
@@ -48,6 +50,9 @@ from spindle.providers.modal.lora_pool import LoraPoolSpec
 from spindle.version import __version__, deployment_tag, source_commit
 
 
+RECIPE_FIELDS = frozenset(key for key in vars(BaseConfig) if not key.startswith("_"))
+ADD_POLL_S = 10
+ADD_TIMEOUT_S = 60 * 60
 NO_CONFIGS = (
     "No configs given. Run `spindle deploy` in a terminal to pick models interactively, "
     "pass config files or bundled config names (e.g. `spindle deploy qwen35-9b-lora-16k`), "
@@ -328,6 +333,112 @@ def in_background(step):
     return future
 
 
+def _frontend_client():
+    base_url = os.environ.get("TINKER_BASE_URL")
+    api_key = os.environ.get("TINKER_API_KEY")
+    if not base_url or not api_key:
+        raise ValueError(
+            "Set TINKER_BASE_URL and TINKER_API_KEY to the Spindle frontend's URL and API key."
+        )
+    headers = {"X-API-Key": api_key}
+    if os.environ.get("MODAL_PROXY_TOKEN_ID"):
+        headers["Modal-Key"] = os.environ["MODAL_PROXY_TOKEN_ID"]
+        headers["Modal-Secret"] = os.environ.get("MODAL_PROXY_TOKEN_SECRET", "")
+    return httpx.Client(base_url=base_url.rstrip("/"), headers=headers, timeout=60)
+
+
+def _response_body(response, action):
+    if response.status_code == 405:
+        raise ValueError(
+            "This frontend predates the deployments API; redeploy it once with spindle deploy."
+        )
+    if response.is_error:
+        try:
+            message = response.json()["message"]
+        except (ValueError, KeyError, TypeError):
+            message = response.text
+        raise ValueError(f"{action} failed ({response.status_code}): {message}")
+    return response.json()
+
+
+def add_deployment(
+    name, *, base, overrides, poll_s=ADD_POLL_S, timeout_s=ADD_TIMEOUT_S
+):
+    """Register one config through the frontend's API and wait until its apps are ready."""
+    path = "/api/v1/spindle/deployments"
+    deadline = time.monotonic() + timeout_s
+    with _frontend_client() as client:
+        body = {"name": name, "base": base, "overrides": overrides}
+        _response_body(client.post(path, json=body), f"Adding {name}")
+        print(f"Registered {name}; the frontend is deploying its apps.")
+        while True:
+            listed = _response_body(client.get(path), "Listing deployments")
+            row = next((d for d in listed["deployments"] if d["name"] == name), None)
+            if row is None:
+                raise ValueError(f"{name} is no longer registered")
+            if "apps" not in row:
+                raise ValueError(
+                    "This frontend does not deploy apps; redeploy it once with spindle deploy."
+                )
+            if row["apps"] == "ready":
+                break
+            if row["apps"] == "missing":
+                # No deploy is running (one never started); posting again starts it.
+                _response_body(client.post(path, json=body), f"Adding {name}")
+            if row["apps"] == "failed":
+                raise ValueError(
+                    f"Deploying {name}'s apps failed: {row.get('apps_error')}. "
+                    "Run the same spindle add again to retry."
+                )
+            if time.monotonic() > deadline:
+                raise ValueError(f"{name}'s apps were not ready after {timeout_s}s.")
+            time.sleep(poll_s)
+    print(f"Added {name}. Train on it by passing base_model={name!r}.")
+
+
+def remove_deployment(name, *, force=False, confirm=None):
+    """Remove one config from a running frontend, warning first if models train on it."""
+    path = f"/api/v1/spindle/deployments/{name}"
+    with _frontend_client() as client:
+        response = client.delete(path)
+        if response.status_code == 409:
+            print(f"Warning: removing {name} ends training for these models:")
+            for model in response.json().get("models", []):
+                print(f"  {model['model_id']} (session {model['session_id']})")
+            if not force and (confirm is None or not confirm(f"Remove {name} anyway?")):
+                raise ValueError(
+                    f"Kept {name}. Rerun with --force to remove it anyway."
+                )
+            response = client.delete(path, params={"force": "true"})
+        _response_body(response, f"Removing {name}")
+    print(f"Removed {name} and stopped its apps.")
+
+
+def parse_fields(tokens):
+    """`--FIELD=VALUE` / `--FIELD VALUE` tokens into recipe overrides."""
+    overrides = {}
+    tokens = iter(tokens)
+    for token in tokens:
+        field, separator, value = token.removeprefix("--").partition("=")
+        if not token.startswith("--") or not field:
+            raise ValueError(f"expected a --FIELD=VALUE recipe field, got {token!r}")
+        if field.split(".", 1)[0] not in RECIPE_FIELDS:
+            raise ValueError(f"unknown recipe field: {field}")
+        if field == "name":
+            raise ValueError("pass the config name as the first argument, not --name")
+        if field in overrides:
+            raise ValueError(f"duplicate field: {field}")
+        if not separator:
+            value = next(tokens, None)
+            if value is None or value.startswith("--"):
+                raise ValueError(f"missing value for --{field}")
+        try:
+            overrides[field] = json.loads(value)
+        except ValueError:
+            overrides[field] = value
+    return overrides
+
+
 class PrintVersion(argparse.Action):
     def __init__(self, option_strings, dest, **kwargs):
         super().__init__(
@@ -369,6 +480,22 @@ def parser():
     )
     apply.add_argument(
         "--refresh-inference", action="append", default=[], metavar="CONFIG_NAME"
+    )
+    add = commands.add_parser(
+        "add",
+        help="Add a config to a running frontend: spindle add NAME --base BASE --FIELD=VALUE ...",
+        allow_abbrev=False,
+    )
+    add.add_argument("name")
+    add.add_argument("--base", required=True, help="Deployed config to start from")
+    remove = commands.add_parser(
+        "remove", help="Remove a config from a running frontend"
+    )
+    remove.add_argument("name")
+    remove.add_argument(
+        "--force",
+        action="store_true",
+        help="Remove it even if models still train on it, without asking",
     )
     halt = commands.add_parser(
         "stop", help="Stop a deployment's frontend, trainers, and sampler pools"
@@ -432,9 +559,27 @@ def install_skills(project_dir: Path | None, force: bool) -> None:
 
 def main(argv=None):
     cli = parser()
-    args = cli.parse_args(argv)
+    args, fields = cli.parse_known_args(argv)
+    if fields and args.command != "add":
+        cli.error(f"unrecognized arguments: {' '.join(fields)}")
     try:
-        if args.command == "config":
+        if args.command == "add":
+            add_deployment(args.name, base=args.base, overrides=parse_fields(fields))
+        elif args.command == "remove":
+            remove_deployment(
+                args.name,
+                force=args.force,
+                confirm=(
+                    (
+                        lambda question: (
+                            input(f"{question} [y/N] ").strip().lower() in {"y", "yes"}
+                        )
+                    )
+                    if interactive()
+                    else None
+                ),
+            )
+        elif args.command == "config":
             if args.action == "init":
                 module = config_path(args.preset).stem
                 if not config_path(args.preset).is_file():

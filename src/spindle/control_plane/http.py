@@ -355,6 +355,9 @@ def create_control_plane_app(
 
     @app.delete("/api/v1/spindle/deployments/{name}")
     async def remove_deployment(name: str, force: bool = False):
+        current = await routes.get(name)
+        if current is None:
+            raise DeploymentNotFound(f"no deployment named {name!r}")
         placed = await placed_models(name)
         if placed and not force:
             return JSONResponse(
@@ -367,8 +370,7 @@ def create_control_plane_app(
                 },
             )
         # Stop the apps first, so a failed stop leaves the config for a retry.
-        current = await routes.get(name)
-        if current is not None and stop_apps is not None:
+        if stop_apps is not None:
             await stop_apps(current)
         removed = await routes.remove(name)
         if placed:

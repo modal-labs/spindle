@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 REGISTRY_TTL_S = 5.0
 MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
-RECIPE_FIELDS = frozenset(key for key in vars(BaseConfig) if not key.startswith("_"))
 
 
 class DeploymentConflict(ValueError):

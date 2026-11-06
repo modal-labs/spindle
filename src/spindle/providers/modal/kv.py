@@ -53,6 +53,7 @@ KEY_STORES = {
     "lora_pool": "engines",
     "sampler_warm": "engines",
     "deployment_failure": "engines",
+    "app_deploy": "engines",
     "engine_call": "engines",
     "engine_current": "engines",
     "trainer_plan": "engines",

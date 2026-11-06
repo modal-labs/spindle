@@ -1093,6 +1093,9 @@ async def test_removing_a_config_models_still_train_on_needs_force_and_stops_its
         assert await routes.get("variant") is not None
         forced = await client.delete("/api/v1/spindle/deployments/variant?force=true")
         assert forced.status_code == 200, forced.text
+        # The orphaned model still names the config, but it is gone: 404, not 409.
+        again = await client.delete("/api/v1/spindle/deployments/variant")
+        assert again.status_code == 404
     assert stopped == ["variant"]
     assert await routes.get("variant") is None
 

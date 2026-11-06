@@ -15,6 +15,7 @@ import spindle
 import spindle.backends.deployment as backend
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.local import InMemoryKeyValueStore
+from tests.support import RoutedTestStore
 from spindle.providers.modal import (
     deployment_apps,
     deployment_configs,
@@ -214,7 +215,7 @@ def test_startup_failure_is_visible_and_blocks_new_spawns(monkeypatch):
     app = importlib.import_module("spindle.providers.modal.app")
     store = InMemoryKeyValueStore()
     row = deployment()
-    monkeypatch.setattr(app, "shared_kv", lambda: store)
+    monkeypatch.setattr(app, "shared_kv", lambda: RoutedTestStore(store))
 
     async def run():
         await store.put(
