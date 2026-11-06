@@ -45,7 +45,7 @@ from spindle.startup_timing import timeline
 
 from . import allgather_cp_lora, expert_lora_compat, host_syncs
 from .volumes import install_cross_node_checkpoint_publish, sync_checkpoint_volume
-from .optimizer_overlap import optim_step_with_forward_backward
+from .optimizer_overlap import optim_step_group
 from .profiling import RankProfiler, TorchProfileConfig
 from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
 from .replay import install_replay_hooks
@@ -150,14 +150,19 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
     def optim_step(self, *args, **kwargs):
         return self._profiled("optim_step", *args, **kwargs)
 
-    def optim_step_with_forward_backward(
-        self, *, batch_id, rollout_data_ref, adam_params_by_slot, forward_only=False
+    def optim_step_group(
+        self,
+        *,
+        adam_params_by_slot,
+        batch_id=None,
+        rollout_data_ref=None,
+        forward_only=False,
     ):
-        return optim_step_with_forward_backward(
+        return optim_step_group(
             self,
+            adam_params_by_slot=adam_params_by_slot,
             batch_id=batch_id,
             rollout_data_ref=rollout_data_ref,
-            adam_params_by_slot=adam_params_by_slot,
             forward_only=forward_only,
         )
 

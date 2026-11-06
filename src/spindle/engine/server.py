@@ -22,6 +22,7 @@ from .api import (
     FutureState,
     FutureStatus,
     OperationKind,
+    command_error,
 )
 from .ingress import decode_forward_backward, decode_json_operation
 from .operations import (
@@ -150,7 +151,7 @@ class Engine:
         if max_forward_backward_models is not None and max_forward_backward_models < 1:
             raise ValueError("max_forward_backward_models must be positive")
         if overlap_optimizer_step and not callable(
-            getattr(executor, "execute_optimizer_forward_backward", None)
+            getattr(executor, "execute_optimizer_group", None)
         ):
             raise ValueError("executor does not support optimizer overlap")
         self.overlap_optimizer_step = overlap_optimizer_step
@@ -492,11 +493,8 @@ class Engine:
                 await self._capture_for_persistence(operation)
                 continue
             models = tuple(dict.fromkeys(item.model_id for item in operations))
-            name = (
-                "optimizer_forward_backward"
-                if operation.kind == OperationKind.OPTIM_STEP and len(operations) > 1
-                else operation.kind.value
-            )
+            grouped = operation.kind == OperationKind.OPTIM_STEP and len(operations) > 1
+            name = "optimizer_group" if grouped else operation.kind.value
             self._observe_state(models, f"executing:{name}")
             if operation.kind == OperationKind.LOAD_WEIGHTS:
                 await self._join_persistence()
@@ -507,8 +505,8 @@ class Engine:
             )
             started = time.time()
             try:
-                if operation.kind == OperationKind.OPTIM_STEP and len(operations) > 1:
-                    results = await self.executor.execute_optimizer_forward_backward(
+                if grouped:
+                    results = await self.executor.execute_optimizer_group(
                         tuple(
                             Command(
                                 item.model_id,
@@ -532,14 +530,16 @@ class Engine:
                         ),
                     )
                 states = tuple(
-                    FutureState(FutureStatus.COMPLETE, result=result)
+                    FutureState(FutureStatus.FAILED, error=error)
+                    if (error := command_error(result)) is not None
+                    else FutureState(FutureStatus.COMPLETE, result=result)
                     for result in results
                 )
                 mark(
                     "engine.op.exec_end",
                     kind=name,
                     request_ids=[item.request_id for item in operations],
-                    ok=True,
+                    ok=all(state.status == FutureStatus.COMPLETE for state in states),
                 )
             except Exception as exc:  # noqa: BLE001
                 error = _failure(exc, f"{name} x{len(operations)}")
@@ -842,14 +842,13 @@ class Engine:
         )
 
         if self.overlap_optimizer_step and ready[0].kind == OperationKind.OPTIM_STEP:
-            independent = [
-                item
-                for item in ready[1:]
-                if item.kind in BATCHED_OPERATIONS
-                and item.model_id != ready[0].model_id
+            optimizers = [
+                item for item in ready if item.kind == OperationKind.OPTIM_STEP
             ]
-            if independent:
-                return (ready[0], *self._batch_forward_backward(independent))
+            forwards = [item for item in ready if item.kind in BATCHED_OPERATIONS]
+            if len(optimizers) > 1 or forwards:
+                batched = self._batch_forward_backward(forwards) if forwards else ()
+                return (*optimizers, *batched)
         return self._batch_forward_backward(ready)
 
     def _batch_forward_backward(self, ready: list[Operation]) -> tuple[Operation, ...]:

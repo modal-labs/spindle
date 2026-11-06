@@ -21,10 +21,10 @@ from spindle.engine.operations import (
 )
 from spindle.engine.training_transport import (
     decode_batch,
-    decode_optimizer_batch,
+    decode_optimizer_group,
     decode_payload,
     encode_batch,
-    encode_optimizer_batch,
+    encode_optimizer_group,
     encode_payload,
 )
 from spindle.errors import SequenceConflict
@@ -267,23 +267,32 @@ def test_binary_matches_previous_json_backend_path(seed):
                     assert x == y
 
 
-def test_optimizer_batch_preserves_binary_training_values():
+@pytest.mark.parametrize("forwards", [0, 1])
+def test_optimizer_group_preserves_binary_training_values(forwards):
     original = payload()
-    commands = (
+    optimizers = (
         Command(
             "optimizer",
             OperationKind.OPTIM_STEP,
             AdamParams(learning_rate=0.000123456789),
         ),
-        Command(
-            "forward",
-            OperationKind.FORWARD_BACKWARD,
-            original,
-            encode_payload(original),
-        ),
+        Command("other", OperationKind.OPTIM_STEP, AdamParams(beta1=0.5)),
     )
-    decoded = decode_optimizer_batch(encode_optimizer_batch(commands))
-    assert decoded[0] == commands[0]
-    assert serialize_operation_payload(
-        decoded[1].payload
-    ) == serialize_operation_payload(original)
+    commands = optimizers + (
+        (
+            Command(
+                "forward",
+                OperationKind.FORWARD_BACKWARD,
+                original,
+                encode_payload(original),
+            ),
+        )
+        * forwards
+    )
+    decoded = decode_optimizer_group(encode_optimizer_group(commands))
+    assert decoded[:2] == optimizers
+    assert len(decoded) == len(commands)
+    if forwards:
+        assert serialize_operation_payload(
+            decoded[2].payload
+        ) == serialize_operation_payload(original)

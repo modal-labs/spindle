@@ -20,7 +20,13 @@ from spindle.backends.contract import (
     ModelSpec,
 )
 
-from .api import BATCHED_OPERATIONS, Command, OperationKind
+from .api import (
+    BATCHED_OPERATIONS,
+    Command,
+    OperationKind,
+    command_failure,
+    split_optimizer_group,
+)
 from .operations import (
     LoadCheckpointPayload,
     OperationPayload,
@@ -205,29 +211,26 @@ class DistributedExecutor:
             forward_only=kind == OperationKind.FORWARD,
         )
 
-    async def execute_optimizer_forward_backward(
+    async def execute_optimizer_group(
         self, executions: tuple[Command, ...]
     ) -> tuple[object, ...]:
-        if len(executions) < 2 or executions[0].kind != OperationKind.OPTIM_STEP:
-            raise ValueError(
-                "overlap requires an optimizer step followed by a forward batch"
-            )
-        optimizer, *forwards = executions
-        if not isinstance(optimizer.payload, AdamParams):
-            raise TypeError("optim_step requires an optimizer payload")
-        if any(item.model_id == optimizer.model_id for item in forwards):
-            raise ValueError("optimizer and forward batch must use different adapters")
-        batch = self._forward_batch(tuple(forwards))
-        output, forwards_output = await asyncio.to_thread(
+        optimizers, forwards = split_optimizer_group(executions)
+        batch = self._forward_batch(forwards) if forwards else None
+        outputs, forwards_output = await asyncio.to_thread(
             self._dispatch,
             self.command_group,
-            "optim_step_with_forward_backward",
-            (optimizer.model_id, optimizer.payload, batch),
+            "optim_step_group",
+            (tuple((item.model_id, item.payload) for item in optimizers), batch),
         )
-        if len(forwards_output) != len(forwards):
+        if len(outputs) != len(optimizers) or len(forwards_output) != len(forwards):
             raise RuntimeError("backend returned the wrong result count")
         return (
-            output.model_dump(mode="json"),
+            *(
+                command_failure(output)
+                if isinstance(output, str)
+                else output.model_dump(mode="json")
+                for output in outputs
+            ),
             *(_serialize_forward_output(item) for item in forwards_output),
         )
 

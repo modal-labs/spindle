@@ -49,19 +49,46 @@ grouped and their variable-length sequences packed under the backend's token
 budget.
 
 Set `trainer_overlap_optimizer_step=True` in a Miles LoRA recipe to let the
-scheduler pair one ready optimizer step with a compatible forward or
-forward/backward batch for other adapters. The setting is experimental and
-disabled by default. The stock Tinker API is unchanged: submit each adapter's
-operations in order without waiting for unrelated adapters' futures.
+scheduler group every ready optimizer step (one per adapter) with a compatible
+forward or forward/backward batch for other adapters. The setting is
+experimental and disabled by default. The stock Tinker API is unchanged: submit
+each adapter's operations in order without waiting for unrelated adapters'
+futures.
 
-The pair is dispatched as one command to all trainer ranks. The optimizer uses
-copies of its adapter's gradients and weights on a separate CUDA stream, so
-backward can reset shared gradient buffers and routed kernels can read stable
-weights from every slot. Updated weights are copied back after backward. Gradient-norm reductions finish before forward
-starts; parameter all-gathers run after the forward/backward batch and optimizer
-compute finish. Later commands, snapshots, and unloads wait for the whole pair.
-Both futures resolve after the pair completes. This pairs already queued work;
-it does not admit new work into an executing pair or overlap an adapter's update
+The group is dispatched as one command to all trainer ranks. One staging round
+gives every slot in the group copies of its gradients and weights, so backward
+can reset shared gradient buffers and routed kernels read stable weights from
+every slot. Each slot's optimizer runs its own `apply_adam_params`,
+`prepare_grads`, `clip_and_step` and `zero_grads`; the step math is enqueued
+round-robin on a pool of side CUDA streams (`SPINDLE_OPTIMIZER_STREAMS` in the
+trainer environment, default 4) while the forward/backward batch runs on the
+compute stream. After the batch returns and the side streams drain, the updated
+weights are copied back in one round and the parameters of every stepped slot
+are all-gathered in ascending slot order.
+
+Collectives follow one rule: Spindle issues every collective from the actor
+thread in ascending slot order, which is the same on every rank. For each slot
+in turn, the optimizer's gradient-norm reduction inside `clip_and_step` finishes
+before the forward starts, then a one-element all-reduce agrees whether that
+slot's step failed on any rank; the all-gathers after the batch use the same
+order. Only collective-free step math runs concurrently. A PyTorch process group
+runs its collectives on one internal stream in issue order, so the side streams
+cannot reorder them. An optimizer whose step math issues its own collectives
+still sees a rank-identical order, but those collectives overlap the batch's
+collectives on other process groups, as data-parallel gradient overlap already
+does.
+
+A slot whose step raises fails only that adapter's future; the other slots
+commit and the batch returns its outputs. The failed slot keeps its previous
+weights and drops its accumulated gradients, but its optimizer state may be
+partially updated, so load a checkpoint before training that adapter further. A
+rank-local failure raised before the slot's gradient-norm reduction leaves the
+ranks with different collective sequences; the trainer's watchdog then fails
+the cell, as the serial loop does today.
+
+Later commands, snapshots, and unloads wait for the whole group. Every future
+in the group resolves after it completes. This groups already queued work; it
+does not admit new work into an executing group or overlap an adapter's update
 with its own forward/backward. GPU latency and multi-rank behavior require
 validation before enabling the setting in a deployment.
 

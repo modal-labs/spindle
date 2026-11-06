@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from spindle.backends.miles_runtime import runtime as miles_runtime
+from spindle.backends.miles_runtime.optimizer_overlap import REMOTE_FAILURE
 from spindle.backends.miles_runtime.runtime import (
     MilesRuntime,
     _allow_allgather_cp_bshd_multi_lora,
@@ -296,25 +297,30 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch, overlap):
     ]
 
     async def execute_slots(
-        method, *, batch_id, rollout_data_ref, adam_params_by_slot, forward_only
+        method, *, adam_params_by_slot, batch_id, rollout_data_ref, forward_only
     ):
-        assert method == "optim_step_with_forward_backward"
+        assert method == "optim_step_group"
         assert not forward_only
         result = await forward_backward(batch_id=batch_id, data_ref=rollout_data_ref)
+        outcomes = [
+            {2: {"grad_norm": 0.5}, 3: {"error": REMOTE_FAILURE}},
+            {2: {"grad_norm": 0.5}, 3: {"error": "RuntimeError: boom"}},
+        ]
         return [
-            dict(item, optimizer_outcomes={2: {"grad_norm": 0.5}}) for item in result
+            dict(item, optimizer_outcomes=outcome)
+            for item, outcome in zip(result, outcomes, strict=True)
         ]
 
     bridge = _array_bridge(
         SimpleNamespace(forward_backward=forward_backward, _execute_slots=execute_slots)
     )
-    kwargs = {"adam_params_by_slot": {2: {}}} if overlap else {}
+    kwargs = {"adam_params_by_slot": {2: {}, 3: {}}} if overlap else {}
     outputs = asyncio.run(
         bridge._execute_batch("forward_backward", 1, rows, "ppo", {}, **kwargs)
     )
     if overlap:
         outputs, outcomes = outputs
-        assert outcomes == {2: {"grad_norm": 0.5}}
+        assert outcomes == {2: {"grad_norm": 0.5}, 3: {"error": "RuntimeError: boom"}}
 
     (sent,) = store.values
     assert [mask.tolist() for mask in sent["loss_masks"]] == [[1, 1, 1], [1, 1]]

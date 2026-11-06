@@ -34,7 +34,7 @@ def test_stock_sdk_can_pipeline_independent_adapters(sdk_garbage_collected_off_l
                         await asyncio.sleep(0.01)
             return await super().execute_forward_backward_batch(commands)
 
-        async def execute_optimizer_forward_backward(self, commands):
+        async def execute_optimizer_group(self, commands):
             assert commands[0].model_id != commands[1].model_id
             paired.set()
             return tuple(
