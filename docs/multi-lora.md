@@ -162,9 +162,10 @@ time and memory do not grow with `num_choices`. Batches that mix widths score
 each column separately, and their vocabulary work and memory grow with
 `num_choices`.
 
-# Deterministic Training (Experimental) 
+# Deterministic Training (Experimental)
 
-The deterministic path aims to give each client the same training results regardless of which other clients share its batches (think of it as batch-invariance for training). It uses deterministic attention kernels, fixed reduction layouts, and ordered per-client gradient accumulation, alongside batch-invariant inference.
-
-To enable it, build the patched FA3 artifacts, set SPINDLE_MILES_FA3_ARTIFACTS to their directory before deployment, and use the qwen3_5_9b_base_miles_lora_deterministic definition. The Tinker training code stays the same. We've validated on small math experiments (see  [LoRA validation](lora_validation.md) deterministic training section) but still need to do larger validation. Our changes to fa3 to make it deterministic also come at a throughput cost, and so this path remains experimental for now. 
-
+Use the `qwen3-8b-lora-32k-deterministic` or
+`qwen35-9b-lora-16k-deterministic` recipe. The Qwen3.5 recipe requires patched FA3
+artifacts selected by `SPINDLE_MILES_FA3_ARTIFACTS`. Both require Hopper SM90 and
+DP1/CP1, and keep clients in separate microbatches by default. Tinker training
+code stays the same. See [deterministic recipes and setup](deterministic-training.md).

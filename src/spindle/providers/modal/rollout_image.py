@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import modal
 
 from .image_dependencies import (
@@ -39,6 +41,11 @@ image = (
         'assert hasattr(bindings.RustUnifiedTreeCoreBinding, "routing_snapshot_delta")\'',
     )
     .env({"SGLANG_RUST_BUILD_MODE": "never"})
+    .run_commands(
+        "python - /sgl-workspace/sglang/python/sglang <<'PY'\n"
+        + Path(__file__).with_name("sglang_determinism_patch.py").read_text()
+        + "\nPY\n"
+    )
     .pip_install(*CORE_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE)
     .pip_install("huggingface-hub")
     .env(

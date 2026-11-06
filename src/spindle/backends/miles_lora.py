@@ -317,6 +317,12 @@ class MilesCommandBackend(Backend):
             "checkpoint_format": "miles_torch_dist",
             "backend": "miles",
             "miles_revision": self.runtime.revision,
+            "numerics": {
+                "deterministic_training": self.config.deterministic_training,
+                "deterministic_gdn": self.config.deterministic_gdn,
+                "deterministic_pack_clients": self.config.deterministic_pack_clients,
+                "tp_reduce_precision": self.config.tp_reduce_precision,
+            },
             "base_model": self.base_model,
             "engine_definition_id": os.environ.get("SPINDLE_DEFINITION_ID"),
             "parameterization": {"type": "lora"},
