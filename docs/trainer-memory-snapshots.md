@@ -1,9 +1,12 @@
 # Trainer runtime memory snapshots
 
-**Result:** a separate four-H100 container restored the warmed 9B Miles trainer,
-matched the saved model/gradient/optimizer/RNG state and all process groups, and
-completed another backward/Adam update. This required socket NCCL and a stable
-loopback Ray cluster. The default communication configuration stalled capture.
+**Result:** a separate four-H100 container restored the warmed 9B Miles trainer
+with **GPU P2P/CUMEM NCCL**, matched the saved model/gradient/optimizer/RNG state,
+passed all process-group checks and completed another backward/Adam update.
+This uses explicit per-actor NCCL suspend/resume, `NCCL_CUMEM_ENABLE=1`, NVLS
+disabled, and stable loopback addresses for Ray and communication bootstrap.
+The first forward matches exactly; numerical training-continuation parity
+remains unproven. Earlier socket-NCCL results are retained below.
 
 This experiment asks whether a new container can resume an initialized Spindle
 trainer from a Modal CPU/GPU memory snapshot, without loading model or optimizer
@@ -37,6 +40,8 @@ The capture and restore sequence was:
    128-token backward/Adam update, run a reference forward, and record per-rank
    state hashes and collective results. The adapter is already trained for one
    step at this boundary; the saved state is more than frozen base weights.
+   In suspend mode, verify a communicator suspend/resume round trip, then suspend
+   every registered NCCL group again before returning from the snapshot hook.
 3. **Let Modal capture the container.** The class enables
    `enable_memory_snapshot=True` and
    `experimental_options={"enable_gpu_snapshot": True}`. After the snapshot hook
@@ -49,6 +54,8 @@ The capture and restore sequence was:
    process tree and CUDA state before `@modal.enter(snap=False)` runs. The
    `MilesCommandBackend` constructor, `ray.init()`, actor/model initialization,
    LoRA slot loading and warmup hook are skipped. Ray is retained, not restarted.
+   In suspend mode, the post-restore hook resumes the saved NCCL backends on
+   every actor before submitting any training work.
    The harness makes no application-level model or optimizer checkpoint-load call
    on this path.
 5. **Verify the restored runtime.** Generate a fresh boot ID after restore, run
@@ -177,6 +184,38 @@ workaround, not support for the default high-performance communication path.
 Use a separate `SPINDLE_SNAPSHOT_APP` for each variant to preserve the evidence
 and avoid invalidating snapshots from another configuration.
 
+For explicit communicator suspension, set `SPINDLE_SNAPSHOT_COMMS=suspend`.
+After warmup and the initial collective probes, the driver stops submitting
+training commands. Each actor barriers its NCCL groups in consistent order,
+synchronizes CUDA, then calls `group._get_backend(device).suspend()` on each
+initialized group, including the default group. PyTorch 2.13 exposes these
+backend methods; they call `ncclCommSuspend(comm, NCCL_SUSPEND_MEM)` and
+`ncclCommResume(comm)` with NCCL 2.29.7 or newer. They are not the vLLM-specific
+`suspend_device_comms()` / `resume_device_comms()` helpers.
+
+The harness first performs a suspend/resume round trip without a snapshot and
+checks all state fingerprints, group collectives and reference log probabilities.
+It then suspends again for capture. The post-restore hook resumes every saved
+backend before verification runs, in both the original and cloned containers.
+This mode also selects loopback for NCCL/Gloo bootstrap sockets and explicitly
+sets `NCCL_CUMEM_ENABLE=1`: Miles otherwise defaults it to `0`, which selects the
+legacy P2P/IPC path rather than the P2P/CUMEM path used by the successful controls.
+Selecting loopback does not disable GPU P2P communication.
+Missing APIs and suspension failures raise errors instead of silently skipping
+communicators. This mode only handles the idle, one-GPU-per-actor workload in
+this harness; it does not coordinate arbitrary concurrent training submissions.
+
+```bash
+export SPINDLE_SNAPSHOT_APP=spindle-qwen9b-nccl-suspend-cumem-1106
+export SPINDLE_SNAPSHOT_TRANSPORT=no-nvls
+export SPINDLE_SNAPSHOT_RAY_IP=127.0.0.1
+export SPINDLE_SNAPSHOT_COMMS=suspend
+uv run modal deploy tests/manual/benchmark_qwen9b_memory_snapshot.py
+uv run modal run tests/manual/benchmark_qwen9b_memory_snapshot.py \
+  --mode snapshot --repeats 3 --require-restore \
+  --output /tmp/qwen9b-nccl-suspend.json
+```
+
 `tests/manual/benchmark_ray_memory_snapshot.py` is a CPU-only control using the
 same Miles image. Deploy it before running it. It snapshots a local Ray cluster
 and four stateful actors, then verifies actor identities and mutations after
@@ -258,7 +297,97 @@ ran on **4 H200s**, because Modal upgraded the requested H100s. The harness pins
 [`qwen9b-socket-capture.json`](assets/trainer-memory-snapshots/qwen9b-socket-capture.json).
 It is not evidence of a separate restored container by itself.
 
-### Full trainer restore
+### Explicit NCCL suspension (2026-11-06)
+
+The follow-up uses PyTorch 2.13's backend `suspend()` / `resume()` methods on
+every initialized NCCL group, with NVLS disabled and GPU P2P retained. A
+pre-capture control checks that suspension alone preserves the initialized
+trainer before testing platform checkpoint/restore.
+
+The initial 9B run successfully suspended and resumed all **48 distinct NCCL
+groups** (18 memberships per rank). All 58 NCCL/Gloo collective checks and
+model/gradient/optimizer/RNG fingerprints matched, and the reference forward
+had maximum log-probability error **0.0**. A second suspension completed in
+roughly **17 ms per rank**, but capture then stalled for more than five minutes
+and was cancelled. No post-capture hook or restored trainer ran in this attempt.
+The transport logs show **P2P/IPC**, with `NCCL_CUMEM_ENABLE=0` set by Miles.
+Evidence is in [`qwen9b-nccl-suspend.json`](assets/trainer-memory-snapshots/qwen9b-nccl-suspend.json).
+
+Standalone subprocess controls separated NCCL behavior from the model and Ray:
+
+| Control | Capture/restore result |
+| --- | --- |
+| 2 H100s, one NCCL group, NVLS off, P2P/CUMEM | Two different containers restored the saved worker PIDs and tensor sums, resumed NCCL, and passed all-reduce |
+| 4 H100s, the trainer's 48 NCCL / 10 Gloo group definitions, NVLS off, P2P/CUMEM | A different container restored and passed collectives on every group; each rank resumed 18 NCCL memberships |
+| 2 H100s, same single-group control with only `NCCL_CUMEM_ENABLE=0` added | Pre-capture suspend/resume passed, but capture stalled for more than two minutes and was cancelled |
+
+The successful controls log **P2P/CUMEM**, not socket data transport. They
+demonstrate functioning NCCL collectives after real snapshot restoration, but
+only check a small tensor's sum and the saved processes; they do not contain a
+model, gradients, optimizer, Ray cluster or training step. A second four-GPU
+call initialized a new snapshot rather than restoring the first; the later
+successful clone explicitly matches the first snapshot's initialization ID,
+creator and worker state.
+
+Control results and bounded transport excerpts are retained in
+[`nccl-suspend-minimal.json`](assets/trainer-memory-snapshots/nccl-suspend-minimal.json),
+[`nccl-suspend-groups.json`](assets/trainer-memory-snapshots/nccl-suspend-groups.json)
+and [`nccl-suspend-legacy.json`](assets/trainer-memory-snapshots/nccl-suspend-legacy.json).
+The exact diagnostic scripts and group layout are archived in
+[`nccl-suspend-control-sources.json`](assets/trainer-memory-snapshots/nccl-suspend-control-sources.json);
+extract its `source_files` under `/tmp` and run the corresponding Modal deploy/run
+commands with the repository's `src` on `PYTHONPATH` to reproduce them.
+
+### Full trainer restore with P2P/CUMEM (2026-11-06)
+
+With `NCCL_CUMEM_ENABLE=1`, the full 9B trainer captured successfully and a
+**different four-H100 container restored it**. The existing communicator objects
+were retained; the hooks suspended and resumed their NCCL-managed resources.
+NCCL channel logs show GPU **P2P/CUMEM**. The successful settings retain GPU P2P
+and shared-memory transport support while disabling NVLS; no throughput
+comparison against normal NCCL or the socket workaround was performed.
+
+| Check | Result |
+| --- | --- |
+| Snapshot initialization ID | `5cf46e87aebe4de0b096c607364b4dae` in producer and clone |
+| Producer container | `ta-01M6RRFDC2B3G7FKX5PBKR5SER` |
+| Restored container | `ta-01M6RRVVXD6Q07N9H3QRV6S8FR` |
+| Saved actor PIDs, parameters/buffers/gradients, Adam and RNG fingerprints | Exact match |
+| Group checks after resume | All 48 NCCL / 10 Gloo definitions passed; 18 NCCL memberships resumed per rank |
+| Reference forward | Maximum log-probability error **0.0** |
+| Continued training | Backward/Adam succeeded; optimizer step advanced from 1 to 2; weights and optimizer changed |
+| Producer initialization, after imports and before suspension control | **254.38 s** |
+| Platform restore log to post-restore hook | Approximately **13 s**, excluding scheduling |
+| NCCL resume on restored actors | Approximately **1.71 s per rank**, running concurrently |
+| Verification after communicator resume | **12.79 s**, including hashes, all groups and another training step |
+
+The platform restore log appeared at 15:50:32 UTC, the post-restore hook at
+15:50:45 UTC, and communicator recovery completed at 15:50:47 UTC. These
+second-resolution logs measure combined platform stages; they are not isolated
+storage/GPU timings or a production persistent-cache benchmark. The earlier
+snapshot-building run took 302.43 s to initialize. Another call waited for H100
+capacity and built the second snapshot; only the third call actually restored.
+
+**Numerical continuation parity remains unproven.** The clone started from
+identical saved state and reproduced the first forward exactly. After the next
+update, model and optimizer hashes differed from the producer's; RNG hashes
+still matched. The maximum post-update log-probability difference was
+**0.2948008**, and gradient norms were 570.7933 versus 570.8847. Two independent
+fresh initializations also differed in model/optimizer fingerprints before
+capture and in their reference outputs (maximum difference 0.1976738), despite
+matching RNG fingerprints. That shows variation already exists before cloning;
+it does not establish that the restored continuation's numerical differences
+are acceptable or entirely explained by ordinary nondeterminism.
+
+Raw results, per-rank suspend/resume inventories, reference/post-update outputs,
+transport excerpts, source hashes and continuation comparisons are in
+[`qwen9b-nccl-cumem-restored.json`](assets/trainer-memory-snapshots/qwen9b-nccl-cumem-restored.json).
+This establishes a functional, single-container, TP=4 LoRA trainer restored with
+GPU P2P communication. NVLS-enabled snapshots, multi-node/RDMA restoration,
+full-parameter optimizer state and production frontend integration remain
+untested. All experiment apps were stopped afterward.
+
+### Full trainer restore with socket NCCL (2026-11-05)
 
 The combined configuration passed in a **separate container on four H100s**:
 

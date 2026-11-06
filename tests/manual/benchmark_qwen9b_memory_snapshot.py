@@ -29,10 +29,14 @@ else:
     image = modal.Image.debian_slim()
 transport = os.environ.get("SPINDLE_SNAPSHOT_TRANSPORT", "default")
 ray_ip = os.environ.get("SPINDLE_SNAPSHOT_RAY_IP", "auto")
+comms_lifecycle = os.environ.get("SPINDLE_SNAPSHOT_COMMS", "none")
+if comms_lifecycle not in {"none", "suspend"}:
+    raise ValueError(f"unknown communicator lifecycle {comms_lifecycle}")
 trainer_env = {
     "SPINDLE_SNAPSHOT_APP": APP_NAME,
     "SPINDLE_SNAPSHOT_TRANSPORT": transport,
     "SPINDLE_SNAPSHOT_RAY_IP": ray_ip,
+    "SPINDLE_SNAPSHOT_COMMS": comms_lifecycle,
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
     "TORCHINDUCTOR_COMPILE_THREADS": "1",
     "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
@@ -55,6 +59,14 @@ elif transport == "no-nvls":
     trainer_env["NCCL_NVLS_ENABLE"] = "0"
 elif transport != "default":
     raise ValueError(f"unknown transport {transport}")
+if comms_lifecycle == "suspend":
+    # This probe is single-container. Keep bootstrap/control sockets local;
+    # this does not disable the GPU P2P transport.
+    # Miles defaults cuMem off. Explicitly use the allocation path exercised
+    # by the successful standalone NCCL suspend/resume snapshot controls.
+    trainer_env.update(
+        NCCL_SOCKET_IFNAME="lo", GLOO_SOCKET_IFNAME="lo", NCCL_CUMEM_ENABLE="1"
+    )
 
 
 @app.function(
@@ -109,6 +121,7 @@ class Trainer:
         ).splitlines()
         started = time.monotonic()
         print("SNAPSHOT_PHASE initialize", self.initialization_id, flush=True)
+        print("SNAPSHOT_PHASE trainer_env", json.dumps(trainer_env), flush=True)
         assets.reload()
         assert Path(f"/assets/{MODEL}/model.safetensors.index.json").exists()
         runtime_module = miles_runtime.runtime
@@ -163,6 +176,34 @@ class Trainer:
         self.reference = self.forward()
         self.before = self.probe()
         self.initialization_s = time.monotonic() - started
+        self.suspended_comms = []
+        self.suspend_control = None
+        if comms_lifecycle == "suspend":
+            suspended = self.actor_command("snapshot_suspend_comms")
+            resumed = self.actor_command("snapshot_resume_comms")
+            assert self.probe() == self.before
+            control_forward = self.forward()
+            control_error = max(
+                abs(a - b) for a, b in zip(control_forward, self.reference, strict=True)
+            )
+            assert control_error <= 1e-5, control_error
+            self.before = self.probe()
+            self.suspend_control = {
+                "suspended": suspended,
+                "resumed": resumed,
+                "max_logprob_error": control_error,
+            }
+            print(
+                "SNAPSHOT_PHASE suspend_control_passed",
+                json.dumps(self.suspend_control),
+                flush=True,
+            )
+            self.suspended_comms = self.actor_command("snapshot_suspend_comms")
+            print(
+                "SNAPSHOT_PHASE comms_suspended",
+                json.dumps(self.suspended_comms),
+                flush=True,
+            )
         print(
             "SNAPSHOT_PHASE ready_to_capture",
             json.dumps(
@@ -180,14 +221,28 @@ class Trainer:
         return list(output.loss_fn_outputs[0]["logprobs"].data)
 
     def probe(self):
+        return self.actor_command("snapshot_probe")
+
+    def actor_command(self, name):
         runtime = self.backend.runtime
-        return runtime._run(runtime._trainer._execute_slots("snapshot_probe"))
+        return runtime._run(runtime._trainer._execute_slots(name))
 
     @modal.enter(snap=False)
     def restored(self):
+        self.recover_runtime()
+
+    def recover_runtime(self):
         self.restore_hook_at = time.monotonic()
         self.boot_id = uuid.uuid4().hex
         print("SNAPSHOT_PHASE post_restore", self.boot_id, flush=True)
+        self.resumed_comms = []
+        if comms_lifecycle == "suspend":
+            self.resumed_comms = self.actor_command("snapshot_resume_comms")
+            print(
+                "SNAPSHOT_PHASE comms_resumed",
+                json.dumps(self.resumed_comms),
+                flush=True,
+            )
 
     @modal.method()
     def verify(self):
@@ -227,6 +282,11 @@ class Trainer:
                 os.environ["MODAL_TASK_ID"] != self.snapshot_creator_task_id
             ),
             "transport": transport,
+            "trainer_env": trainer_env,
+            "comms_lifecycle": comms_lifecycle,
+            "suspend_control": self.suspend_control,
+            "suspended_comms": self.suspended_comms,
+            "resumed_comms": self.resumed_comms,
             "ray_ip": ray_ip,
             "ray_nodes": self.ray_nodes,
             "hardware": self.hardware,
@@ -265,8 +325,9 @@ options = dict(
 @app.cls(**options)
 class Baseline(Trainer):
     @modal.enter()
-    def initialize(self):
+    def restored(self):
         self.initialize_runtime()
+        self.recover_runtime()
 
 
 @app.cls(

@@ -4,6 +4,7 @@ import hashlib
 import os
 import pickle
 import random
+import time
 
 import numpy as np
 import torch
@@ -36,6 +37,56 @@ def digest(value):
 
 
 class SnapshotProbeActor(SpindleMilesTrainRayActor):
+    def snapshot_suspend_comms(self):
+        from torch.distributed.distributed_c10d import _world
+
+        # The driver submits no further trainer commands until resume. All
+        # earlier commands have completed before this actor RPC is dispatched.
+        assert not hasattr(self, "_snapshot_suspended_comms")
+        device = torch.device("cuda", torch.cuda.current_device())
+        groups = [
+            (name, group)
+            for group, name in sorted(_world.pg_names.items(), key=lambda pair: pair[1])
+            if "nccl" in str(dist.get_backend(group))
+        ]
+        assert groups, "No NCCL groups found"
+        for _, group in groups:
+            dist.barrier(group=group)
+        torch.cuda.synchronize()
+        self._snapshot_suspended_comms = []
+        started = time.monotonic()
+        for name, group in groups:
+            backend = group._get_backend(device)
+            print(
+                f"SNAPSHOT_COMM suspending rank={dist.get_rank()} group={name}",
+                flush=True,
+            )
+            backend.suspend()
+            self._snapshot_suspended_comms.append((name, backend))
+        torch.cuda.synchronize()
+        return {
+            "rank": dist.get_rank(),
+            "groups": [name for name, _ in self._snapshot_suspended_comms],
+            "elapsed_s": time.monotonic() - started,
+        }
+
+    def snapshot_resume_comms(self):
+        started = time.monotonic()
+        groups = self._snapshot_suspended_comms
+        for name, backend in groups:
+            print(
+                f"SNAPSHOT_COMM resuming rank={dist.get_rank()} group={name}",
+                flush=True,
+            )
+            backend.resume()
+        torch.cuda.synchronize()
+        del self._snapshot_suspended_comms
+        return {
+            "rank": dist.get_rank(),
+            "groups": [name for name, _ in groups],
+            "elapsed_s": time.monotonic() - started,
+        }
+
     def snapshot_probe(self):
         # Exercise every existing process group, including lazily initialized
         # groups, before snapshotting and again after restoring.
