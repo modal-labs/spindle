@@ -56,6 +56,7 @@ KEY_STORES = {
     "deployment_failure": "engines",
     "app_deploy": "engines",
     "registry_version": "engines",
+    "registry_claim": "engines",
     "engine_call": "engines",
     "engine_current": "engines",
     "trainer_plan": "engines",

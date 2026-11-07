@@ -19,6 +19,9 @@ from spindle.providers.contracts import KeyValueStore
 logger = logging.getLogger(__name__)
 
 REGISTRY_VERSION_KEY = "registry_version:deployments"
+REGISTRY_CLAIM_PREFIX = "registry_claim:"
+# A claim this old was left by a container that died mid-add.
+CLAIM_TIMEOUT_S = 60.0
 # How long a container serves its list between registry version checks.
 VERSION_CHECK_S = 1.0
 MAX_APP_NAME_LENGTH = 63
@@ -265,10 +268,26 @@ class DeploymentRoutes:
         """Register a config; the same config again is a no-op."""
         store, config = self._store(), deployment.model_dump(mode="json")
         current = await store.get(deployment.name)
-        if current is None:
+        versions = self._versions()
+        if current is None and versions is None:
             await store.put(deployment.name, config)
-            # Last write wins: read back to catch a concurrent add of the same name.
-            current = await store.get(deployment.name)
+            current = config
+        elif current is None:
+            # The Volume has no atomic create, so a first add holds a short claim.
+            claim_key = REGISTRY_CLAIM_PREFIX + deployment.name
+            claim = await versions.put_if_absent(
+                claim_key, {"recipe": config["recipe"], "at": time.time()}
+            )
+            if not claim.created and time.time() - claim.value["at"] < CLAIM_TIMEOUT_S:
+                current = claim.value
+            else:
+                try:
+                    current = await store.get(deployment.name)
+                    if current is None:
+                        await store.put(deployment.name, config)
+                        current = config
+                finally:
+                    await versions.delete(claim_key)
         # Also on a retry, in case the version update of the first attempt failed.
         await self._changed()
         # The recipe alone, so a frontend upgrade's spindle_version is no conflict.

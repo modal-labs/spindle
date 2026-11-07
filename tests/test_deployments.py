@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import time
 import json
 import sys
 from copy import deepcopy
@@ -22,6 +23,8 @@ from spindle.control_plane import ControlPlane, create_control_plane_app
 from spindle.control_plane.deployments import (
     DeploymentConflict,
     DeploymentRequest,
+    CLAIM_TIMEOUT_S,
+    REGISTRY_CLAIM_PREFIX,
     VERSION_CHECK_S,
     DeploymentNotFound,
     DeploymentRoutes,
@@ -1177,26 +1180,49 @@ async def test_re_adding_after_a_version_bump_is_no_conflict():
     assert (await store.get("variant"))["spindle_version"] == "0.0.1"
 
 
+@pytest.mark.parametrize("same", [True, False])
 @pytest.mark.anyio
-async def test_a_concurrent_add_under_the_same_name_is_a_conflict():
+async def test_concurrent_first_adds_of_one_name_agree_on_a_winner(same):
+    base = resolved()
+    first, store = routes_for(base)
+    second = DeploymentRoutes(first.kv, first.versions)
+    overrides = {} if same else {"trainer_gpu": "B200"}
+    requests = [
+        DeploymentRequest(name="variant", base=base.name),
+        DeploymentRequest(name="variant", base=base.name, overrides=overrides),
+    ]
+    configs = [await first.build(r) for r in requests]
+    get, first_checks = store.get, asyncio.Barrier(2)
+    checked = []
+
+    async def get_after_both_checked(key):
+        value = await get(key)
+        checked.append(key)
+        if len(checked) <= 2:
+            await first_checks.wait()  # both adds find no config before either writes
+        return value
+
+    store.get = get_after_both_checked
+    results = await asyncio.gather(
+        first.add(configs[0]), second.add(configs[1]), return_exceptions=True
+    )
+    conflicts = [r for r in results if isinstance(r, DeploymentConflict)]
+    assert len(conflicts) == (0 if same else 1)
+    winner = configs[results.index(next(r for r in results if isinstance(r, dict)))]
+    assert (await get("variant"))["recipe"] == winner.model_dump(mode="json")["recipe"]
+
+
+@pytest.mark.anyio
+async def test_a_claim_left_by_a_dead_container_expires():
     base = resolved()
     routes, store = routes_for(base)
-    rival = await routes.build(
-        DeploymentRequest(
-            name="variant", base=base.name, overrides={"trainer_gpu": "B200"}
-        )
+    config = await routes.build(DeploymentRequest(name="variant", base=base.name))
+    stale = time.time() - CLAIM_TIMEOUT_S - 1
+    await routes.versions().put(
+        REGISTRY_CLAIM_PREFIX + "variant", {"recipe": {"other": 1}, "at": stale}
     )
-    put = store.put
-
-    async def put_then_overwritten(key, value):
-        await put(key, value)
-        await put(key, rival.model_dump(mode="json"))
-
-    store.put = put_then_overwritten
-    with pytest.raises(DeploymentConflict):
-        await routes.add(
-            await routes.build(DeploymentRequest(name="variant", base=base.name))
-        )
+    await routes.add(config)
+    assert await store.get("variant") is not None
 
 
 async def listed_names(client):
