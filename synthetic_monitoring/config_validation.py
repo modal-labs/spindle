@@ -33,7 +33,7 @@ TRAINER_APPS = {
 }
 DAPO_DIR = "/opt/dapo-math"
 SWE_GYM = "/opt/modal-examples/06_gpu_and_ml/swe_gym/swe_gym.py"
-SWE_GYM_REV = "29c7c4929286d00903339ef863041592a99a2348"
+SWE_GYM_REV = "a590d8b608e526771378dc1bbf0dcb8b03ca0309"
 
 SCRIPTS = {
     "dapo-math": {
@@ -59,10 +59,6 @@ probe_image = (
         " https://github.com/modal-labs/modal-examples.git /opt/modal-examples"
         " && git -C /opt/modal-examples sparse-checkout set 06_gpu_and_ml/swe_gym"
         f" && git -C /opt/modal-examples checkout {SWE_GYM_REV}"
-    )
-    .run_commands(
-        "sed -i 's/\"qwen35-9b-lora-128k\"/MODEL/'"
-        " /opt/modal-examples/06_gpu_and_ml/swe_gym/swe_gym.py",
     )
     .uv_sync(uv_project_dir=str(REPO_ROOT), extra_options="--no-dev")
     .uv_pip_install(
