@@ -356,17 +356,14 @@ def _failed_row(script: str, started: float, error: str) -> dict:
 def launch_nightly() -> list[dict]:
     rows: list[dict] = []
     started = time.time()
-    calls = {script: monitor.spawn(script) for script in SCRIPTS}
-    for script, call in calls.items():
-        spec = SCRIPTS[script]
-        timeout_s = spec["timeout_s"]
-        try:
-            rows.append(call.get(timeout=timeout_s))
-        except Exception as exc:
-            call.cancel()
-            error = f"{type(exc).__name__}: {str(exc) or f'did not finish within {timeout_s}s'}"
+    payloads = list(monitor.map(list(SCRIPTS), return_exceptions=True))
+    for script, payload in zip(SCRIPTS, payloads):
+        if isinstance(payload, Exception):
+            error = f"{type(payload).__name__}: {payload}"
             print(f"error: {script} failed: {error}")
             rows.append(_failed_row(script, started, error))
+        else:
+            rows.append(payload)
     _post_report(rows)
     if any(row["status"] != "success" for row in rows):
         raise RuntimeError("synmon finished with failures")
