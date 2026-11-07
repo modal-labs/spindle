@@ -144,7 +144,7 @@ def run_script(name: str, base_url: str) -> dict[str, float]:
     )
     print("running", " ".join(command))
     started = time.time()
-    subprocess.run(command, check=True, env=env)
+    subprocess.run(command, check=True, env=env, timeout=spec["timeout_s"])
     clients: dict[int | str, list[dict]] = {}
     for path in output.rglob("events.jsonl"):
         for line in path.read_text().splitlines():
