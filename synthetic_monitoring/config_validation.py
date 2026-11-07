@@ -305,6 +305,7 @@ def _post_report(rows: list[dict]) -> None:
     image=probe_image,
     timeout=MONITOR_TIMEOUT_S,
     secrets=[api_secret, hf_secret],
+    single_use_containers=True,
 )
 def monitor(script: str) -> dict:
     started = time.time()
