@@ -54,6 +54,7 @@ def deployment(tmp_path):
             DEFINITIONS,
             api_key=API_KEY,
             user_keys={ALICE_KEY: "alice"},
+            usage_reader=sink,
             retrieve_window=5.0,
         )
         yield stack.enter_context(serve(app)), meter

@@ -564,12 +564,12 @@ def parser():
 def print_usage_costs(args) -> None:
     sink = DirectorySink(args.usage_dir)
     start, end = usage_window(args.since, args.until)
+    usage = sink.read(start.timestamp(), end.timestamp())
     costs = attribute_cost(
-        sink.read(start.timestamp(), end.timestamp()),
+        usage,
         json.loads(args.costs.read_text()),
         Rates(**json.loads(args.rates.read_text())),
-        sessions=sink.sessions(),
-        models=sink.models(),
+        sessions=sink.sessions({row.session_id for row in usage if row.session_id}),
         group_by=args.group_by,
     )
     rows = sorted(costs.items(), key=lambda item: -item[1])
