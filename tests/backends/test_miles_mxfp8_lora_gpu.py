@@ -1,5 +1,4 @@
 import os
-import tempfile
 
 import pytest
 import torch
@@ -7,14 +6,33 @@ import torch
 from spindle.backends.miles_runtime.quantization import pad_expert_slot_ids
 
 
+@pytest.fixture
+def model_parallel(tmp_path):
+    # Megatron process groups exist only in the GPU test image.
+    from megatron.core import parallel_state
+    from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+
+    os.environ.setdefault("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+    torch.distributed.init_process_group(
+        "nccl", init_method=f"file://{tmp_path / 'nccl'}", rank=0, world_size=1
+    )
+    parallel_state.initialize_model_parallel()
+    model_parallel_cuda_manual_seed(42)
+    try:
+        yield
+    finally:
+        parallel_state.destroy_model_parallel()
+        torch.distributed.destroy_process_group()
+
+
 @pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="requires Blackwell and Transformer Engine"
+    not torch.cuda.is_available() or torch.cuda.get_device_capability()[0] != 10,
+    reason="requires Blackwell and Transformer Engine",
 )
-def test_mxfp8_frozen_experts_keep_bf16_lora_gradients():
+def test_mxfp8_frozen_experts_keep_bf16_lora_gradients(model_parallel):
     # Megatron and Transformer Engine are installed only in the GPU image.
     from transformer_engine.common.recipe import MXFP8BlockScaling
     from transformer_engine.pytorch import quantized_model_init
-    from megatron.core import parallel_state
     from megatron.core.extensions.transformer_engine import (
         TEColumnParallelGroupedLinear,
     )
@@ -24,19 +42,12 @@ def test_mxfp8_frozen_experts_keep_bf16_lora_gradients():
         is_mxfp8tensor,
     )
     from megatron.core.process_groups_config import ProcessGroupCollection
-    from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
     from megatron.core.transformer.transformer_config import TransformerConfig
     from megatron.bridge.peft.multi_lora_layers import (
         ExpertSlotRouting,
         MultiLoRAGroupedExpertLinear,
     )
 
-    os.environ.setdefault("CUDA_DEVICE_MAX_CONNECTIONS", "1")
-    torch.distributed.init_process_group(
-        "nccl", init_method="file://" + tempfile.mktemp(), rank=0, world_size=1
-    )
-    parallel_state.initialize_model_parallel()
-    model_parallel_cuda_manual_seed(42)
     config = TransformerConfig(
         num_layers=1,
         hidden_size=128,
@@ -153,5 +164,68 @@ def test_mxfp8_frozen_experts_keep_bf16_lora_gradients():
         "Init-state methods:",
         [name for name in dir(quantized[0]) if "init_val" in name],
     )
-    parallel_state.destroy_model_parallel()
-    torch.distributed.destroy_process_group()
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.cuda.get_device_capability()[0] != 10,
+    reason="requires Blackwell and Transformer Engine",
+)
+def test_vision_stays_bf16_without_disabling_text_mxfp8(model_parallel):
+    # The real vision model and Transformer Engine are GPU-image dependencies.
+    from transformer_engine.common.recipe import MXFP8BlockScaling
+    from transformer_engine.pytorch import Linear, quantized_model_init
+    from megatron.core.extensions.transformer_engine import (
+        TEColumnParallelLinear,
+        TENorm,
+        TERowParallelLinear,
+    )
+    from megatron.core.fp8_utils import is_grouped_mxfp8tensor, is_mxfp8tensor
+    from megatron.core.models.vision.vit_layer_specs import (
+        get_vit_layer_with_transformer_engine_spec,
+    )
+    from megatron.core.process_groups_config import ProcessGroupCollection
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
+        Qwen3VLTransformerConfig,
+    )
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
+        PatchMergerSubmodules,
+    )
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import (
+        Qwen3VLVisionModel,
+    )
+
+    config = Qwen3VLTransformerConfig(
+        num_layers=1,
+        hidden_size=128,
+        num_attention_heads=4,
+        ffn_hidden_size=130,
+        bf16=True,
+        params_dtype=torch.bfloat16,
+        normalization="LayerNorm",
+        out_hidden_size=128,
+        num_position_embeddings=16,
+        deepstack_visual_indexes=[],
+        gradient_accumulation_fusion=False,
+    )
+    spec = get_vit_layer_with_transformer_engine_spec()
+    merger = PatchMergerSubmodules(
+        patch_norm=TENorm,
+        linear_fc1=TEColumnParallelLinear,
+        linear_fc2=TERowParallelLinear,
+    )
+    with quantized_model_init(enabled=True, recipe=MXFP8BlockScaling()):
+        vision = Qwen3VLVisionModel(
+            config,
+            spec,
+            merger,
+            pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
+        )
+        language = Linear(
+            128, 128, params_dtype=torch.bfloat16, device="cuda", bias=False
+        )
+    assert any(p.ndim == 2 and 130 in p.shape for p in vision.parameters())
+    assert all(
+        not is_mxfp8tensor(p) and not is_grouped_mxfp8tensor(p)
+        for p in vision.parameters()
+    )
+    assert is_mxfp8tensor(language.weight)

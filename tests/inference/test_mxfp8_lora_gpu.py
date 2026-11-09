@@ -5,7 +5,8 @@ import torch
 
 
 @pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="requires Blackwell and DeepGEMM"
+    not torch.cuda.is_available() or torch.cuda.get_device_capability()[0] != 10,
+    reason="requires Blackwell and DeepGEMM",
 )
 @pytest.mark.parametrize("masked", [False, True])
 @pytest.mark.parametrize("precision", ["bf16", "mxfp8"])

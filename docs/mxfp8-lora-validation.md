@@ -8,7 +8,7 @@ and an 8,192-token context. The model revision is pinned in both recipes.
 
 Set `miles_cfg.base_quantization="mxfp8"` for the frozen trainer base and
 `sglang_cfg.quantization="mxfp8"` for the sampler. The trainer verifies native
-MXFP8 storage and BF16 trainable parameters before accepting work. Embeddings
+MXFP8 storage and BF16 trainable parameters before accepting work. Embeddings, the vision tower,
 and normalization parameters retain their normal precision. The sampler also
 keeps the 64-channel `in_proj_ba` projection in BF16.
 
