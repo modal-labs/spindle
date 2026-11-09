@@ -41,29 +41,14 @@ python examples/shared-server/with_proxy_auth.py -m tinker_cookbook.recipes.chat
     model_name=Qwen/Qwen3.8-27B base_url=$TINKER_BASE_URL
 ```
 
-In your own code, use `spindle.ServiceClient` from the `modal-spindle` package.
-It reads the proxy token variables above and preserves the installed Tinker SDK's
-client methods and return types:
+For your own scripts, `spindle.ServiceClient` reads the URL, API key, and proxy
+token variables above:
 
 ```python
 import spindle
 
 service = spindle.ServiceClient()
 ```
-
-You can also pass `proxy_token_id` and `proxy_token_secret` explicitly. Both are
-required when either is set. Custom headers override the generated proxy headers.
-Without proxy credentials, the client also works with unprotected deployments.
-
-The client prints server-provided waiting reasons immediately, repeats them every
-60 seconds, and reports stage changes as they arrive. Configure the repeat interval
-with `progress_interval=30`, or set `progress=False` to use Tinker's normal logging.
-Messages use the `spindle.service_client` Python logger. They describe only states
-the server reports; they do not estimate a completion time.
-
-Stock `tinker.ServiceClient` remains supported. For its native proxy headers,
-Tinker 0.36 and newer use `default_headers_overrides`; older releases use
-`default_headers`. Stock Tinker's progress behavior depends on the SDK version.
 
 The server picks the recipe from the client's `base_model`.
 
