@@ -10,6 +10,8 @@ from importlib.metadata import PackageNotFoundError, distribution
 import torch
 import torch.nn.functional as F
 
+from spindle.backends.miles_runtime.quantization import pad_expert_slot_ids
+
 ENV_FLAG = "SPINDLE_HOST_SYNC_PATCHES"
 BRIDGE_COMMIT = "8cd3466d14d2337c8492827b3712482c2b3e4866"
 GEGLU_SOURCE_SHA256 = "7a23f78fb6827f0e2fe3157c679fa735727373c81f3555f950650930c0824727"
@@ -297,12 +299,18 @@ def _routing_hook_factory(layers):
                     "set_tokens_per_adapter_slot(model, adapter_token_counts) must run before every "
                     "forward when MoE experts carry multi-LoRA adapters."
                 )
+            config = reference.to_wrap.config
+            recipe = getattr(config, "fp8_recipe", None)
+            alignment = (
+                32 if config.fp8 and getattr(recipe, "value", recipe) == "mxfp8" else 1
+            )
             routing = build_routing(
                 layers,
                 moe_layer.token_dispatcher,
                 tokens_per_expert,
                 reference,
                 hidden_states.device,
+                quantization_alignment=alignment,
             )
             for layer in expert_layers:
                 layer.expert_slot_routing = routing
@@ -347,7 +355,15 @@ class Routing:
         self.active_slots = active_slots
 
 
-def build_routing(layers, dispatcher, tokens_per_expert, reference, device) -> Routing:
+def build_routing(
+    layers,
+    dispatcher,
+    tokens_per_expert,
+    reference,
+    device,
+    *,
+    quantization_alignment=1,
+) -> Routing:
     """Per-(slot, expert) segmentation of one MoE layer's rows without host syncs.
 
     Mirrors ``_build_expert_slot_routing`` in the pinned Megatron-Bridge.
@@ -359,6 +375,16 @@ def build_routing(layers, dispatcher, tokens_per_expert, reference, device) -> R
         per_expert_host = [
             int(count) for count in torch.as_tensor(tokens_per_expert).tolist()
         ]
+    padded_expert_host = (
+        [
+            (count + quantization_alignment - 1)
+            // quantization_alignment
+            * quantization_alignment
+            for count in per_expert_host
+        ]
+        if per_expert_host is not None
+        else None
+    )
     # With no expert parallelism every row comes from this rank's micro-batch.
     local_rows = (
         getattr(dispatcher, "ep_size", 1) == 1
@@ -368,9 +394,9 @@ def build_routing(layers, dispatcher, tokens_per_expert, reference, device) -> R
 
     if active is not None and len(active) == 1 and per_expert_host is not None:
         slot = active[0]
-        num_tokens = sum(per_expert_host)
+        num_tokens = sum(padded_expert_host)
         offsets = [0] * (slot * num_local_experts)
-        for count in per_expert_host:
+        for count in padded_expert_host:
             offsets.append((offsets[-1] if offsets else 0) + count)
         offsets += [num_tokens] * ((n_adapters - slot - 1) * num_local_experts)
         slot_counts = [0] * n_adapters
@@ -412,6 +438,16 @@ def build_routing(layers, dispatcher, tokens_per_expert, reference, device) -> R
         per_expert = _to_device(per_expert_host, torch.long, device)
     else:
         per_expert = tokens_per_expert.to(device=device, dtype=torch.long)
+    if quantization_alignment > 1:
+        slot_ids, per_expert = pad_expert_slot_ids(
+            slot_ids,
+            per_expert,
+            quantization_alignment,
+            padded_size=sum(padded_expert_host)
+            if padded_expert_host is not None
+            else None,
+        )
+        num_tokens = slot_ids.numel()
     expert_ids = torch.repeat_interleave(
         torch.arange(num_local_experts, device=device, dtype=torch.long),
         per_expert,

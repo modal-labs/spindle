@@ -1,9 +1,14 @@
 import os
+from types import SimpleNamespace
 
 import pytest
 import torch
 
-from spindle.backends.miles_runtime.quantization import pad_expert_slot_ids
+from spindle.backends.miles_runtime import host_syncs
+from spindle.backends.miles_runtime.quantization import (
+    pad_expert_slot_ids,
+    validate_mxfp8_lora_model,
+)
 
 
 @pytest.fixture
@@ -29,7 +34,7 @@ def model_parallel(tmp_path):
     not torch.cuda.is_available() or torch.cuda.get_device_capability()[0] != 10,
     reason="requires Blackwell and Transformer Engine",
 )
-def test_mxfp8_frozen_experts_keep_bf16_lora_gradients(model_parallel):
+def test_mxfp8_frozen_experts_keep_bf16_lora_gradients(model_parallel, monkeypatch):
     # Megatron and Transformer Engine are installed only in the GPU image.
     from transformer_engine.common.recipe import MXFP8BlockScaling
     from transformer_engine.pytorch import quantized_model_init
@@ -43,9 +48,12 @@ def test_mxfp8_frozen_experts_keep_bf16_lora_gradients(model_parallel):
     )
     from megatron.core.process_groups_config import ProcessGroupCollection
     from megatron.core.transformer.transformer_config import TransformerConfig
-    from megatron.bridge.peft.multi_lora_layers import (
-        ExpertSlotRouting,
-        MultiLoRAGroupedExpertLinear,
+    from megatron.bridge.peft import multi_lora_layers as layers
+    from megatron.bridge.peft.multi_lora_layers import MultiLoRAGroupedExpertLinear
+
+    host_syncs.install_multi_lora(layers)
+    monkeypatch.setattr(
+        layers, "_co_permute_slot_ids", lambda dispatcher, ids, experts: ids
     )
 
     config = TransformerConfig(
@@ -96,7 +104,7 @@ def test_mxfp8_frozen_experts_keep_bf16_lora_gradients(model_parallel):
     for adapter in layer.adapters:
         torch.nn.init.normal_(adapter.linear_out.weight, std=0.05)
     counts = torch.tensor([3, 0, 17, 8], device="cuda")
-    slots = torch.arange(28, device="cuda", dtype=torch.int32) % 2
+    slots = torch.arange(2, device="cuda", dtype=torch.int32).repeat_interleave(14)
     padded_slots, padded_counts = pad_expert_slot_ids(slots, counts, 32)
     x = torch.randn(28, 128, device="cuda", dtype=torch.bfloat16)
     padded_x = torch.cat(
@@ -109,17 +117,16 @@ def test_mxfp8_frozen_experts_keep_bf16_lora_gradients(model_parallel):
     )
     padded_x.requires_grad_()
     expert_ids = torch.repeat_interleave(torch.arange(4, device="cuda"), padded_counts)
-    keys = padded_slots.long() * 4 + expert_ids
-    order = keys.argsort(stable=True)
-    inverse = order.argsort()
-    group_counts = torch.bincount(keys, minlength=8)
-    layer.expert_slot_routing = ExpertSlotRouting(
-        sort_idx=order,
-        inverse_idx=inverse,
-        group_offsets=group_counts.cumsum(0, dtype=torch.int32),
-        slot_token_counts=group_counts.view(2, 4).sum(1),
-        num_tokens=len(keys),
+    layer.tokens_per_adapter = torch.tensor([14, 14], device="cuda", dtype=torch.int32)
+    layer.tokens_per_adapter_splits = (14, 14)
+    dispatcher = SimpleNamespace(
+        ep_size=2, tp_size=1, hidden_shape_before_permute=x.shape
     )
+    hook = layers._make_slot_routing_hook(
+        SimpleNamespace(token_dispatcher=dispatcher), [layer]
+    )
+    hook(None, (x, counts.cpu()))
+    assert layer.expert_slot_routing.num_tokens == len(padded_x)
     with get_fp8_context(config):
         baseline, _ = base(padded_x, padded_counts.tolist())
         actual, _ = layer(padded_x, padded_counts.tolist())
@@ -154,16 +161,9 @@ def test_mxfp8_frozen_experts_keep_bf16_lora_gradients(model_parallel):
         )
     assert all(p.grad is None for p in base.parameters())
     assert padded_x.grad is not None and torch.isfinite(padded_x.grad).all()
-    from spindle.backends.miles_runtime.quantization import validate_mxfp8_lora_model
-
     summary = validate_mxfp8_lora_model([layer])
     assert summary["frozen_mxfp8_elements"] > 0
     assert summary["trainable_bf16_elements"] > 0
-    print("MXFP8 base parameters:", [type(p).__name__ for p in quantized])
-    print(
-        "Init-state methods:",
-        [name for name in dir(quantized[0]) if "init_val" in name],
-    )
 
 
 @pytest.mark.skipif(

@@ -1,15 +1,19 @@
 import torch
 
 
-def pad_expert_slot_ids(slot_ids, tokens_per_expert, alignment):
+def pad_expert_slot_ids(slot_ids, tokens_per_expert, alignment, *, padded_size=None):
     padded_counts = (
         torch.div(tokens_per_expert + alignment - 1, alignment, rounding_mode="floor")
         * alignment
     )
     padding = padded_counts - tokens_per_expert
-    shifts = torch.repeat_interleave(padding.cumsum(0) - padding, tokens_per_expert)
+    shifts = torch.repeat_interleave(
+        padding.cumsum(0) - padding, tokens_per_expert, output_size=slot_ids.numel()
+    )
     destinations = torch.arange(slot_ids.numel(), device=slot_ids.device) + shifts
-    padded_slots = slot_ids.new_zeros(int(padded_counts.sum()))
+    if padded_size is None:
+        padded_size = int(padded_counts.sum())
+    padded_slots = slot_ids.new_zeros(padded_size)
     padded_slots.scatter_(0, destinations, slot_ids)
     return padded_slots, padded_counts
 
