@@ -191,6 +191,11 @@ async def sample_task(
         stats["reroutes"] = sum(row.get("reroutes", 0) for row in sequence_stats)
         stats.update(
             prompt_tokens=len(prompt),
+            prefill_tokens=len(prompt) * num_samples,
+            cached_prompt_tokens=sum(
+                int((output.get("meta_info") or {}).get("cached_tokens") or 0)
+                for output in outputs
+            ),
             generated_tokens=sum(len(sequence["tokens"]) for sequence in sequences),
             version_served_start=meta.get("weight_version_start"),
             version_served_end=meta.get("weight_version_end"),

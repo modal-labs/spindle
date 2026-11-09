@@ -30,6 +30,7 @@ from spindle.providers.contracts import Parameterization
 from spindle.request_timing import enabled as request_timing_enabled
 from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
+from spindle.usage import billing_usage
 from spindle.version import __version__, source_commit
 
 from .deployments import (
@@ -445,6 +446,16 @@ def create_control_plane_app(
             sdk_version=body.sdk_version,
         )
         return {"type": "create_session", "session_id": session.session_id}
+
+    @app.get("/api/v1/billing/usage/events")
+    async def billing_usage_events(
+        starting_on: str, ending_before: str
+    ) -> dict[str, object]:
+        if control_plane.usage is None:
+            raise RecordUnavailable("billing", "usage", "unconfigured")
+        return await asyncio.to_thread(
+            billing_usage, control_plane.usage, starting_on, ending_before
+        )
 
     @app.post("/api/v1/session_heartbeat")
     async def session_heartbeat(body: SessionHeartbeatBody) -> dict[str, str]:

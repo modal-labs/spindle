@@ -75,6 +75,13 @@ class Observer(Protocol):
     ) -> None: ...
 
 
+class UsageRecorder(Protocol):
+    def trained(self, model_id: str, payload: object) -> None: ...
+    def accepted(self, model_id: str) -> None: ...
+    def busy(self, seconds: float) -> None: ...
+    def idle(self, seconds: float) -> None: ...
+
+
 def _failure(exc: BaseException, what: str) -> str:
     logging.getLogger(__name__).exception("engine %s failed", what)
     return f"{type(exc).__name__}: {exc}"
@@ -139,6 +146,7 @@ class Engine:
         sampler_persistence_concurrency: int = 1,
         max_forward_backward_batch: int | None = None,
         max_forward_backward_models: int | None = None,
+        usage: UsageRecorder | None = None,
     ) -> None:
         if sampler_persistence_concurrency < 1:
             raise ValueError("sampler_persistence_concurrency must be positive")
@@ -150,6 +158,7 @@ class Engine:
             raise ValueError("max_forward_backward_models must be positive")
         self.executor = executor
         self.observer = observer
+        self.usage = usage
         self._persistence_active: dict[str, int] = {}
         self.max_models = max_models
         self.max_buffered = max_buffered
@@ -456,17 +465,23 @@ class Engine:
 
     async def _run_loop(self) -> None:
         busy = False
+        working_since: float | None = None
         while True:
             async with self._lock:
+                waiting_since = time.monotonic()
+                if working_since is not None:
+                    self._meter("busy", waiting_since - working_since)
                 if busy and (self._closing or self._ready_batch() is None):
                     self._observe_state(tuple(self._models), "idle")
                     busy = False
                 while not self._closing and (operations := self._ready_batch()) is None:
                     await self._work.wait()
+                self._meter("idle", time.monotonic() - waiting_since)
                 if self._closing:
                     return
                 self._consume_ready(operations)
             busy = True
+            working_since = time.monotonic()
             operation = operations[0]
             if isinstance(operation, _AcceptOperation):
                 await self._run_accept(operation)
@@ -602,6 +617,8 @@ class Engine:
             started,
             ok=error is None,
         )
+        if error is None:
+            self._meter("accepted", operation.model_id)
         async with self._lock:
             model = self._models.get(operation.model_id)
             if model is not None and model.registration is operation.done:
@@ -748,9 +765,22 @@ class Engine:
             self._sampler_persistence.join(),
         )
 
+    def _meter(self, method: str, *args: object) -> None:
+        if self.usage is None:
+            return
+        try:
+            getattr(self.usage, method)(*args)
+        except Exception:  # noqa: BLE001 - usage must not stop training
+            logging.getLogger(__name__).warning("usage %s failed", method)
+
     def _finish(self, operation: Operation, state: FutureState) -> None:
         if self.observer is not None:
             self.observer.finish(operation, state)
+        if (
+            operation.kind == OperationKind.FORWARD_BACKWARD
+            and state.status == FutureStatus.COMPLETE
+        ):
+            self._meter("trained", operation.model_id, operation.payload)
         model = self._models.get(operation.model_id)
         if model is not None and model.unload is None:
             self._futures[operation.request_id] = state

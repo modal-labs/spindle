@@ -30,6 +30,7 @@ from spindle.providers.contracts import (
     SessionKeyValueStores,
 )
 from spindle.telemetry.metadata import experiment_tags
+from spindle.usage import DEFAULT_METADATA_KEYS, DirectorySink, allowed_metadata
 
 from .keys import (
     model_creation_key,
@@ -214,6 +215,8 @@ class ControlPlane:
         creation_error: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_gpu_wait: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_slots: Callable[[str], int | None] = lambda _: None,
+        usage: DirectorySink | None = None,
+        usage_metadata_keys: tuple[str, ...] = DEFAULT_METADATA_KEYS,
     ) -> None:
         self.kv = kv
         self.engines = engines
@@ -234,6 +237,8 @@ class ControlPlane:
         self.creation_error = creation_error
         self.trainer_gpu_wait = trainer_gpu_wait
         self.trainer_slots = trainer_slots
+        self.usage = usage
+        self.usage_metadata_keys = usage_metadata_keys
         self._queue = SharedSnapshot(
             lambda _: read_queues(self.kv, self.engines),
             lambda: self.clock(),
@@ -269,7 +274,21 @@ class ControlPlane:
                 seen_at=now,
             ).model_dump(mode="json"),
         )
+        await self._record_usage(
+            "put_session",
+            session.session_id,
+            allowed_metadata(user_metadata, self.usage_metadata_keys),
+            now,
+        )
         return session
+
+    async def _record_usage(self, method: str, *args: object) -> None:
+        if self.usage is None:
+            return
+        try:
+            await asyncio.to_thread(getattr(self.usage, method), *args)
+        except Exception:  # noqa: BLE001 - usage must not block training
+            logging.getLogger(__name__).warning("usage %s failed", method)
 
     async def heartbeat(self, session_id: str) -> SessionLastSeenRecord:
         return await self._touch_session(session_id)
@@ -342,6 +361,7 @@ class ControlPlane:
         )
         model = ModelRecord.model_validate(model_insert.value)
         if model_insert.created:
+            await self._record_usage("put_model", model.model_id, session_id)
             await asyncio.gather(
                 self.kv.put(
                     trainer_demand_key(model.model_id),

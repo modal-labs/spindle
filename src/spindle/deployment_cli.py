@@ -22,6 +22,7 @@ from rich.console import Console
 
 from spindle import deploy_wizard
 from spindle.configuration import BaseConfig
+from spindle.usage import DirectorySink, Rates, attribute_cost, usage_window
 from spindle.deployments import (
     DeploymentConfig,
     config_path,
@@ -509,6 +510,36 @@ def parser():
     retry.add_argument("--frontend", required=True)
     retry.add_argument("--env")
     retry.add_argument("definition_id")
+    usage = commands.add_parser(
+        "usage",
+        help="Split Modal cost for a window across runs, users or teams by token usage",
+    )
+    usage.add_argument(
+        "--usage-dir",
+        type=Path,
+        required=True,
+        help="Local copy of the usage Volume: modal volume get FRONTEND-usage / DIR",
+    )
+    usage.add_argument(
+        "--since", required=True, help="Window start, e.g. 2026-11-01T00:00:00Z"
+    )
+    usage.add_argument(
+        "--until", required=True, help="Window end, e.g. 2026-11-08T00:00:00Z"
+    )
+    usage.add_argument(
+        "--costs",
+        type=Path,
+        required=True,
+        help="JSON object of Modal app name to USD for the window, from your billing report",
+    )
+    usage.add_argument(
+        "--rates",
+        type=Path,
+        required=True,
+        help="JSON object with train, prefill, cached_prefill and sample USD per 1M tokens",
+    )
+    usage.add_argument("--group-by", default="run_id")
+    usage.add_argument("--format", choices=("table", "csv"), default="table")
     skills = commands.add_parser(
         "skills", help="Manage the bundled agent skills"
     ).add_subparsers(dest="action", required=True)
@@ -526,6 +557,30 @@ def parser():
         help="Replace existing skills and Claude links",
     )
     return result
+
+
+def print_usage_costs(args) -> None:
+    sink = DirectorySink(args.usage_dir)
+    start, end = usage_window(args.since, args.until)
+    costs = attribute_cost(
+        sink.read(start.timestamp(), end.timestamp()),
+        json.loads(args.costs.read_text()),
+        Rates(**json.loads(args.rates.read_text())),
+        sessions=sink.sessions(),
+        models=sink.models(),
+        group_by=args.group_by,
+    )
+    rows = sorted(costs.items(), key=lambda item: -item[1])
+    if args.format == "csv":
+        print(f"{args.group_by},usd")
+        for name, usd in rows:
+            print(f"{name},{usd:.2f}")
+        return
+    width = max([len(args.group_by), *(len(name) for name, _ in rows)])
+    print(f"{args.group_by:<{width}}  {'USD':>10}")
+    for name, usd in rows:
+        print(f"{name:<{width}}  {usd:>10.2f}")
+    print(f"{'total':<{width}}  {sum(costs.values()):>10.2f}")
 
 
 def install_skills(project_dir: Path | None, force: bool) -> None:
@@ -579,6 +634,8 @@ def main(argv=None):
                     else None
                 ),
             )
+        elif args.command == "usage":
+            print_usage_costs(args)
         elif args.command == "config":
             if args.action == "init":
                 module = config_path(args.preset).stem
