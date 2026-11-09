@@ -20,7 +20,7 @@ from spindle.telemetry.trainer import workload
 
 log = logging.getLogger(__name__)
 
-TOKEN_EVENTS = ("training", "sampling_prefill", "sampling_sample")
+TOKEN_EVENTS = ("training", "forward", "sampling_prefill", "sampling_sample")
 TIME_EVENTS = ("busy", "idle", "cold_start")
 EVENT_TYPES = TOKEN_EVENTS + TIME_EVENTS
 DEFAULT_LABEL_KEYS = ("run_id", "attempt_id")
@@ -327,6 +327,11 @@ class TrainerUsage:
         if tokens:
             self._add("training", model_id=model_id, tokens=tokens)
 
+    def forwarded(self, model_id: str, payload: object) -> None:
+        tokens = workload(payload).get("spindle.input_tokens")
+        if tokens:
+            self._add("forward", model_id=model_id, tokens=tokens)
+
     def accepted(self, model_id: str) -> None:
         """Charge the container's start-up to the first model it accepted."""
         if self._cold_start_s:
@@ -389,7 +394,9 @@ def billing_usage(
             continue
         session_id = row.session_id or session_of.get(row.model_id or "")
         hour = math.floor(row.timestamp / 3600) * 3600
-        buckets[(hour, row.base_model, session_id, row.event_type, row.cached)] += (
+        # Tinker has no forward event, so forward-only tokens count as training.
+        event_type = "training" if row.event_type == "forward" else row.event_type
+        buckets[(hour, row.base_model, session_id, event_type, row.cached)] += (
             row.token_count
         )
     sessions = sink.sessions()
@@ -434,10 +441,13 @@ class Rates:
     prefill: float
     cached_prefill: float
     sample: float
+    forward: float | None = None
 
     def price(self, row: UsageRow) -> float:
         rate = {
             "training": self.train,
+            # Forward-only passes default to the prefill rate.
+            "forward": self.prefill if self.forward is None else self.forward,
             "sampling_prefill": self.cached_prefill if row.cached else self.prefill,
             "sampling_sample": self.sample,
         }[row.event_type]

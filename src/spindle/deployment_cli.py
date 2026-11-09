@@ -536,7 +536,7 @@ def parser():
         "--rates",
         type=Path,
         required=True,
-        help="JSON object with train, prefill, cached_prefill and sample USD per 1M tokens",
+        help="JSON object with train, prefill, cached_prefill, sample and optional forward USD per 1M tokens",
     )
     usage.add_argument(
         "--group-by", default="run_id", help="user, or any label key such as team_id"

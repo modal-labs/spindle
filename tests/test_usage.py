@@ -202,6 +202,14 @@ def test_meter_writes_closed_minutes_once_even_when_a_write_is_retried(
 def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
     sink = DirectorySink(tmp_path)
     rows, _ = shared_pool_rows()
+    rows.append(
+        row(
+            "forward",
+            "dd-prod-trainer-qwen3-8b",
+            model_id="model-a",
+            token_count=5_000_000,
+        )
+    )
     sink.write(rows)
     sink.put_model("model-a", "session-a")
     sink.put_model("model-b", "session-b")
@@ -223,7 +231,8 @@ def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
         ): (event.event_info.token_count)
         for event in usage.data
     }
-    assert totals[("session-a", "training", None)] == 25_000_000
+    # Forward-only tokens are reported as training.
+    assert totals[("session-a", "training", None)] == 30_000_000
     assert totals[("session-b", "sampling_prefill", True)] == 50_000_000
     assert usage.sessions["session-a"].user_metadata == SESSIONS["session-a"].labels
     assert {event.session_id: event.user_id for event in usage.data} == {
@@ -257,12 +266,17 @@ class FailingExecutor(EchoExecutor):
 
 
 @pytest.mark.parametrize(
-    ("executor", "trained"), [(EchoExecutor, [3]), (FailingExecutor, [])]
+    ("executor", "operation", "trained", "forwarded"),
+    [
+        (EchoExecutor, "forward_backward", [3], []),
+        (EchoExecutor, "forward", [], [1]),
+        (FailingExecutor, "forward_backward", [], []),
+    ],
 )
-def test_engine_meters_tokens_of_completed_forward_backward_only(
-    tmp_path, executor, trained
+def test_engine_meters_tokens_of_completed_training_commands_only(
+    tmp_path, executor, operation, trained, forwarded
 ) -> None:
-    from tests.engine.test_server import forward_backward
+    from tests.engine.test_server import forward, forward_backward
 
     sink = DirectorySink(tmp_path)
     meter = UsageMeter(sink, deployment="dd-prod", container_id="c1")
@@ -273,7 +287,10 @@ def test_engine_meters_tokens_of_completed_forward_backward_only(
         )
         server = Engine(executor(), usage=usage)
         await server.accept_model("model-a", {})
-        await forward_backward(server, 1, data=[1, 2, 3])
+        if operation == "forward":
+            await forward(server, 1)
+        else:
+            await forward_backward(server, 1, data=[1, 2, 3])
         state = await server.retrieve_future("model-a:1", timeout=1.0)
         await server.close()
         return state.status
@@ -283,5 +300,6 @@ def test_engine_meters_tokens_of_completed_forward_backward_only(
 
     rows = sink.read(0, 2**32)
     assert [r.token_count for r in rows if r.event_type == "training"] == trained
+    assert [r.token_count for r in rows if r.event_type == "forward"] == forwarded
     assert [r.model_id for r in rows if r.event_type == "cold_start"] == ["model-a"]
     assert {r.event_type for r in rows} >= {"busy", "idle"}
