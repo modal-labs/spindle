@@ -60,6 +60,11 @@ quantized frozen base and BF16 adapters, so its results are a separate compariso
 
 ## MoE on Blackwell
 
+In the measured batch-32 workload, MXFP8 reduced sampler weight memory by 46%
+but increased complete update time from 166.24 to 191.93 seconds. Publication
+costs outweighed faster sampling. Both trainers used BF16. See the
+[full timing table and raw runs](../../docs/quantized-sampler-validation.md#b300-results).
+
 The [matched Qwen3.5-35B-A3B configurations](../../docs/assets/quantized-sampler/b300-comparison-configs.json)
 use four B300 trainer GPUs and one B300 sampler GPU per run. Both trainers use
 BF16. The MXFP8 sampler leaves the small `in_proj_ba` gate in BF16 because its

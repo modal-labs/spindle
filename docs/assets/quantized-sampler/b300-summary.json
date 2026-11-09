@@ -1,0 +1,79 @@
+{
+  "warmup_steps_excluded": 2,
+  "measured_steps_per_mode": 8,
+  "seconds": {
+    "rollout_s": {
+      "bf16": 4.0745369559999745,
+      "mxfp8": 3.0034054839998134,
+      "mxfp8_over_bf16": 0.7371157793960214
+    },
+    "forward_backward_s": {
+      "bf16": 33.49667972049997,
+      "mxfp8": 33.53234212849998,
+      "mxfp8_over_bf16": 1.0010646550134992
+    },
+    "optimizer_s": {
+      "bf16": 0.9083419450003021,
+      "mxfp8": 1.1463200949999646,
+      "mxfp8_over_bf16": 1.2619918097028795
+    },
+    "publication_s": {
+      "bf16": 38.95486437800014,
+      "mxfp8": 38.41183249650021,
+      "mxfp8_over_bf16": 0.9860599724791596
+    },
+    "publication_to_serving_s": {
+      "bf16": 125.51304722750001,
+      "mxfp8": 150.77647093050007,
+      "mxfp8_over_bf16": 1.2012812553041483
+    },
+    "total_s": {
+      "bf16": 166.24391502799995,
+      "mxfp8": 191.93209812949988,
+      "mxfp8_over_bf16": 1.154521042753194
+    }
+  },
+  "quality": {
+    "bf16": {
+      "training_prompt_completion_accuracy": 0.978125,
+      "first_two_accuracy": 0.96875,
+      "last_two_accuracy": 0.984375
+    },
+    "mxfp8": {
+      "training_prompt_completion_accuracy": 0.953125,
+      "first_two_accuracy": 0.984375,
+      "last_two_accuracy": 0.90625
+    }
+  },
+  "tokens": {
+    "bf16": {
+      "generated_tokens": {
+        "median": 3216.0,
+        "min": 3009,
+        "max": 3308
+      },
+      "model_input_tokens": {
+        "median": 4688.0,
+        "min": 4481,
+        "max": 4780
+      }
+    },
+    "mxfp8": {
+      "generated_tokens": {
+        "median": 3502.5,
+        "min": 3320,
+        "max": 3625
+      },
+      "model_input_tokens": {
+        "median": 4974.5,
+        "min": 4792,
+        "max": 5097
+      }
+    }
+  },
+  "allocated_gpu_hours_per_median_update": {
+    "bf16": 0.2308943264277777,
+    "mxfp8": 0.2665723585131943,
+    "assumption": "Four trainer GPUs and one sampler GPU remain allocated during each measured warm update. Excludes startup and debugging."
+  }
+}

@@ -21,7 +21,8 @@
     "gpu": "NVIDIA B300 SXM6 AC",
     "sglang_overlay_revision": "2a3714aa0904566431d5edad2e94ea51a8b9f49e",
     "fp8_py_sha256": "8d988d4d91f1b0b8fc0f7ef9353e732fb60297bfad5efcfdae70e4e7014cdf61",
-    "unquant_py_sha256": "1000a2c7283b2f34f3bccbda63769c2d1c4cb00e3a01c15c18fc9867d1028403"
+    "unquant_py_sha256": "1000a2c7283b2f34f3bccbda63769c2d1c4cb00e3a01c15c18fc9867d1028403",
+    "quantization": null
   },
   "mxfp8": {
     "mode": "mxfp8",
