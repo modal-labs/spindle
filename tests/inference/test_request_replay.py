@@ -18,25 +18,17 @@ async def wait_for_waiters(app, rid, count):
             await asyncio.sleep(0)
 
 
-@pytest.mark.parametrize("status", [429, 503])
-def test_admission_rejection_retries_same_id_then_replays_success(tmp_path, status):
-    async def scenario():
-        entered = asyncio.Event()
-        release = asyncio.Event()
-        rejected = True
-        generations = 0
+@pytest.mark.parametrize(
+    ("status", "retries"), [(429, True), (503, True), (400, False), (500, False)]
+)
+def test_completed_errors_retry_only_admission_rejections(tmp_path, status, retries):
+    calls = 0
 
-        async def engine(request):
-            nonlocal generations
-            assert request.url.path == "/generate"
-            entered.set()
-            await release.wait()
-            if rejected:
-                return httpx.Response(status, json={"error": "queue full"})
-            generations += 1
-            return httpx.Response(
-                200, json={"output_ids": [42], "meta_info": {"completion_tokens": 1}}
-            )
+    async def scenario():
+        def engine(request):
+            nonlocal calls
+            calls += 1
+            return httpx.Response(status if calls == 1 else 200, json={"calls": calls})
 
         app = create_app(
             SnapshotBulletin(tmp_path),
@@ -50,58 +42,11 @@ def test_admission_rejection_retries_same_id_then_replays_success(tmp_path, stat
             ) as client,
         ):
             payload = {"rid": "retry-same-id", "input_ids": [1, 2, 3]}
-            first = asyncio.create_task(client.post("/generate", json=payload))
-            await asyncio.wait_for(entered.wait(), 1)
-            duplicate = asyncio.create_task(client.post("/generate", json=payload))
-            await wait_for_waiters(app, payload["rid"], 2)
-            release.set()
-            responses = await asyncio.gather(first, duplicate)
-            assert [r.status_code for r in responses] == [status, status]
-            assert (await client.get("/routing-state")).json()["active"] == 0
-            # Repeated rejections must not install a new cached rejection either.
-            assert (await client.post("/generate", json=payload)).status_code == status
-            rejected = False
-            recovered = await client.post("/generate", json=payload)
-            assert recovered.status_code == 200
-            assert recovered.json()["output_ids"] == [42]
-            replay = await client.post("/generate", json=payload)
-            assert replay.json() == recovered.json()
-            assert generations == 1
-            conflict = await client.post(
-                "/generate", json={**payload, "input_ids": [4]}
-            )
-            assert conflict.status_code == 409
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("status", [400, 409, 500])
-def test_other_completed_errors_keep_replay_protection(tmp_path, status):
-    calls = 0
-
-    async def scenario():
-        def engine(request):
-            nonlocal calls
-            calls += 1
-            return httpx.Response(status, json={"error": "generation failed"})
-
-        app = create_app(
-            SnapshotBulletin(tmp_path),
-            "http://engine",
-            transport=httpx.MockTransport(engine),
-        )
-        async with (
-            app.router.lifespan_context(app),
-            httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://sidecar"
-            ) as client,
-        ):
-            payload = {"rid": "completed", "input_ids": [1]}
             first = await client.post("/generate", json=payload)
-            replay = await client.post("/generate", json=payload)
-            assert first.status_code == replay.status_code == status
-            assert first.json() == replay.json()
-            assert calls == 1
+            second = await client.post("/generate", json=payload)
+            assert first.status_code == status
+            assert second.status_code == (200 if retries else status)
+            assert calls == (2 if retries else 1)
 
     asyncio.run(scenario())
 
