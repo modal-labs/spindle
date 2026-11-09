@@ -141,7 +141,7 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
 
 
 def validate_routed_experts(
-    slot_rows, *, num_layers: int, num_experts: int | None, topk: int
+    slot_rows, *, num_layers: int, num_experts: int | None, topk: int, moe_layer_freq=1
 ) -> None:
     """Check model-specific route constraints before dispatching to any GPU rank.
 
@@ -158,7 +158,23 @@ def validate_routed_experts(
             raise ValueError(
                 f"routed_experts must have {num_layers} layers and {topk} experts per token"
             )
+        if moe_layer_freq is None:
+            moe_layer_freq = 1
+        if isinstance(moe_layer_freq, int):
+            if moe_layer_freq < 1:
+                raise ValueError("moe_layer_freq must be positive")
+            active_layers = np.arange(num_layers) % moe_layer_freq == 0
+        else:
+            active_layers = np.asarray(moe_layer_freq, dtype=bool)
+            if active_layers.shape != (num_layers,):
+                raise ValueError("moe_layer_freq must have num_layers entries")
+        if not active_layers.any():
+            raise ValueError("routed_experts requires an MoE model")
+        # SGLang leaves dense-layer slots zero-filled. They are not routes, and
+        # Miles selects only MoE streams using this same model layer layout.
+        # Validate one datum at a time to bound temporary memory on long batches.
         values = np.asarray(routes["values"]).reshape(routes["shape"])
+        values = values[:, active_layers, :]
         if np.any(values >= num_experts):
             raise ValueError(
                 f"routed_experts IDs must be below the model's expert count ({num_experts})"
