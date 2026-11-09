@@ -3,6 +3,8 @@ import torch
 
 from spindle.backends.miles_config import MilesBackendConfig
 from spindle.backends.miles_runtime.quantization import pad_expert_slot_ids
+from spindle.backends.deployment import resolve_backend_settings
+from spindle.configs.qwen35_35b_a3b_mxfp8_lora_8k import config as mxfp8_config
 
 
 @pytest.mark.parametrize("quantization", ["fp8", "nvfp4", "bf16", ""])
@@ -60,12 +62,9 @@ def test_expert_padding_preserves_adapter_outputs_and_gradients(counts):
 
 
 def test_mxfp8_recipe_uses_lora_and_keeps_adapter_publications_separate():
-    from spindle.backends.deployment import resolve_backend_settings
-    from spindle.configs.qwen35_35b_a3b_mxfp8_lora_8k import config
-
-    trainer, sampler = resolve_backend_settings(config, "/assets/model")
-    assert config.parameterization == "lora"
-    assert config.backend == "miles"
+    trainer, sampler = resolve_backend_settings(mxfp8_config, "/assets/model")
+    assert mxfp8_config.parameterization == "lora"
+    assert mxfp8_config.backend == "miles"
     assert "megatron" not in trainer
     assert trainer["miles"]["base_quantization"] == "mxfp8"
     assert trainer["miles"]["max_lora_rank"] == 16
