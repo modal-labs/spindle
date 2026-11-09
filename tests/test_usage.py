@@ -11,9 +11,10 @@ from spindle.usage import (
     TrainerUsage,
     UsageMeter,
     UsageRow,
-    allowed_metadata,
+    SessionUsage,
     attribute_cost,
     billing_usage,
+    labels_from,
 )
 from tests.support import EchoExecutor
 
@@ -21,8 +22,8 @@ from tests.support import EchoExecutor
 RATES = Rates(train=0.40, prefill=0.20, cached_prefill=0.04, sample=0.50)
 HOUR = 1_793_973_600.0  # 2026-11-06T14:00:00Z
 SESSIONS = {
-    "session-a": {"run_id": "A", "team": "ranking"},
-    "session-b": {"run_id": "B", "team": "ads"},
+    "session-a": SessionUsage("alice", {"run_id": "A", "team_id": "t-ranking"}),
+    "session-b": SessionUsage("bob", {"run_id": "B", "team_id": "t-ads"}),
 }
 MODELS = {"model-a": "session-a", "model-b": "session-b"}
 
@@ -78,6 +79,10 @@ def shared_pool_rows(*, idle_s=0.0):
 
 
 @pytest.mark.parametrize(
+    ("group_by", "a", "b"),
+    [("run_id", "A", "B"), ("user", "alice", "bob"), ("team_id", "t-ranking", "t-ads")],
+)
+@pytest.mark.parametrize(
     ("idle_s", "expected"),
     [
         # Trainer $10 splits 1:2 and sampler $4 splits $5:$15 of token price.
@@ -87,11 +92,14 @@ def shared_pool_rows(*, idle_s=0.0):
     ],
 )
 def test_shared_pool_cost_splits_by_token_price_and_sums_to_the_bill(
-    idle_s, expected
+    group_by, a, b, idle_s, expected
 ) -> None:
     rows, app_costs = shared_pool_rows(idle_s=idle_s)
+    expected = {{"A": a, "B": b}.get(name, name): usd for name, usd in expected.items()}
 
-    costs = attribute_cost(rows, app_costs, RATES, sessions=SESSIONS, models=MODELS)
+    costs = attribute_cost(
+        rows, app_costs, RATES, sessions=SESSIONS, models=MODELS, group_by=group_by
+    )
 
     assert costs.keys() == expected.keys()
     for group, usd in expected.items():
@@ -101,7 +109,7 @@ def test_shared_pool_cost_splits_by_token_price_and_sums_to_the_bill(
 
 def test_same_work_costs_the_same_across_the_window() -> None:
     trainer = "trainer"
-    sessions = {f"s{name}": {"run_id": name} for name in "ABC"}
+    sessions = {f"s{name}": SessionUsage(labels={"run_id": name}) for name in "ABC"}
     rows = [
         row("training", trainer, session_id="sA", token_count=1_000_000),
         row("training", trainer, session_id="sB", token_count=1_000_000),
@@ -197,10 +205,11 @@ def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
     sink.write(rows)
     sink.put_model("model-a", "session-a")
     sink.put_model("model-b", "session-b")
-    for session_id, metadata in SESSIONS.items():
-        sink.put_session(
-            session_id, allowed_metadata({**metadata, "api_token": "x"}), HOUR
+    for session_id, session in SESSIONS.items():
+        labels = labels_from(
+            {**session.labels, "api_token": "x"}, ("run_id", "team_id")
         )
+        sink.put_session(session_id, SessionUsage(session.user_id, labels), HOUR)
 
     usage = types.BillingUsageResponse.model_validate(
         billing_usage(sink, "2026-11-06T14:00:00Z", "2026-11-06T15:00:00Z")
@@ -216,7 +225,11 @@ def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
     }
     assert totals[("session-a", "training", None)] == 25_000_000
     assert totals[("session-b", "sampling_prefill", True)] == 50_000_000
-    assert usage.sessions["session-a"].user_metadata == SESSIONS["session-a"]
+    assert usage.sessions["session-a"].user_metadata == SESSIONS["session-a"].labels
+    assert {event.session_id: event.user_id for event in usage.data} == {
+        "session-a": "alice",
+        "session-b": "bob",
+    }
     assert [event.event_info.token_count for event in usage.data][:2] == [
         50_000_000,
         50_000_000,

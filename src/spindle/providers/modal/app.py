@@ -25,7 +25,7 @@ from spindle.providers.contracts import (
 )
 from spindle.startup_timing import StartupTimeline
 from spindle.telemetry.otlp import sample_trace
-from spindle.usage import metadata_keys_from_env, meter_sample
+from spindle.usage import label_keys_from_env, meter_sample
 from spindle.version import COMMIT_ENV, deployment_tag, source_commit
 
 from .app_tags import app_tags
@@ -782,7 +782,7 @@ def _plane():
         trainer_slots=trainer_slots,
         trainer_gpu_wait=gpu_wait(_trainer_function, _trainer_gpus),
         usage=usage_sink(APP_NAME),
-        usage_metadata_keys=metadata_keys_from_env(),
+        usage_label_keys=label_keys_from_env(),
     )
 
 
@@ -805,6 +805,7 @@ def server():
         _plane(),
         DEPLOYMENTS,
         api_key=os.environ["TINKER_API_KEY"],
+        user_keys=json.loads(os.environ.get("SPINDLE_USER_API_KEYS", "{}")),
         checkpoint_volume=CHECKPOINT_VOLUME_NAME,
         apps_status=_apps_status,
         deploy_apps=_start_app_deploy,

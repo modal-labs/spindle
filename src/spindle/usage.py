@@ -12,7 +12,7 @@ import time
 import uuid
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 TOKEN_EVENTS = ("training", "sampling_prefill", "sampling_sample")
 TIME_EVENTS = ("busy", "idle", "cold_start")
 EVENT_TYPES = TOKEN_EVENTS + TIME_EVENTS
-DEFAULT_METADATA_KEYS = ("run_id", "attempt_id", "user", "team")
+DEFAULT_LABEL_KEYS = ("run_id", "attempt_id")
 WINDOW_S = 60
 MAX_QUERY_WINDOW = timedelta(days=14)
 _ROW_NAMESPACE = uuid.UUID("5d0a7c52-6f1e-4b0f-9a57-3f1d6c0b8e21")
@@ -49,9 +49,25 @@ class UsageRow:
     org_id: str = ""
 
 
-def allowed_metadata(
+@dataclass(frozen=True)
+class SessionUsage:
+    """Who a session's usage is billed to.
+
+    `user_id` comes from the API key the session was created with, never from
+    the client. `labels` are the allowlisted `user_metadata` values, stored as
+    given; use IDs such as `team_id` and map them to names on your side.
+    """
+
+    user_id: str | None = None
+    labels: Mapping[str, str] = field(default_factory=dict)
+
+    def group(self, key: str) -> str | None:
+        return self.user_id if key == "user" else self.labels.get(key)
+
+
+def labels_from(
     user_metadata: Mapping[str, object] | None,
-    keys: Iterable[str] = DEFAULT_METADATA_KEYS,
+    keys: Iterable[str] = DEFAULT_LABEL_KEYS,
 ) -> dict[str, str]:
     if not user_metadata:
         return {}
@@ -62,10 +78,10 @@ def allowed_metadata(
     }
 
 
-def metadata_keys_from_env() -> tuple[str, ...]:
-    value = os.environ.get("SPINDLE_USAGE_METADATA_KEYS")
+def label_keys_from_env() -> tuple[str, ...]:
+    value = os.environ.get("SPINDLE_USAGE_LABEL_KEYS")
     if value is None:
-        return DEFAULT_METADATA_KEYS
+        return DEFAULT_LABEL_KEYS
     return tuple(key.strip() for key in value.split(",") if key.strip())
 
 
@@ -101,12 +117,16 @@ class DirectorySink:
         self._committed()
 
     def put_session(
-        self, session_id: str, user_metadata: Mapping[str, str], created_at: float
+        self, session_id: str, session: SessionUsage, created_at: float
     ) -> None:
         self._write_file(
             self.root / "sessions" / f"{session_id}.json",
             json.dumps(
-                {"user_metadata": dict(user_metadata), "created_at": created_at}
+                {
+                    "user_id": session.user_id,
+                    "labels": dict(session.labels),
+                    "created_at": created_at,
+                }
             ),
         )
         self._committed()
@@ -133,11 +153,12 @@ class DirectorySink:
             hour += 3600
         return list(rows.values())
 
-    def sessions(self) -> dict[str, dict[str, str]]:
-        return {
-            path.stem: json.loads(path.read_text())["user_metadata"]
-            for path in _json_files(self.root / "sessions")
-        }
+    def sessions(self) -> dict[str, SessionUsage]:
+        sessions = {}
+        for path in _json_files(self.root / "sessions"):
+            record = json.loads(path.read_text())
+            sessions[path.stem] = SessionUsage(record["user_id"], record["labels"])
+        return sessions
 
     def models(self) -> dict[str, str]:
         return {
@@ -371,6 +392,7 @@ def billing_usage(
         buckets[(hour, row.base_model, session_id, row.event_type, row.cached)] += (
             row.token_count
         )
+    sessions = sink.sessions()
     data = []
     for (hour, base_model, session_id, event_type, cached), tokens in sorted(
         buckets.items(), key=lambda item: (item[0][0], -item[1])
@@ -378,20 +400,25 @@ def billing_usage(
         info: dict[str, object] = {"type": event_type, "token_count": tokens}
         if event_type == "sampling_prefill":
             info["cached"] = cached
+        user_id = sessions.get(session_id, SessionUsage()).user_id
         data.append(
             {
                 "bucket_start": _iso(hour),
                 "bucket_end": _iso(hour + 3600),
                 "base_model": base_model,
+                "user_id": user_id,
+                "user_name": user_id,
                 "session_id": session_id,
                 "event_info": info,
             }
         )
-    metadata = sink.sessions()
     return {
         "data": data,
         "sessions": {
-            session_id: {"user_metadata": metadata.get(session_id) or None}
+            session_id: {
+                "user_metadata": dict(sessions.get(session_id, SessionUsage()).labels)
+                or None
+            }
             for session_id in dict.fromkeys(
                 event["session_id"] for event in data if event["session_id"]
             )
@@ -422,11 +449,13 @@ def attribute_cost(
     app_costs: Mapping[str, float],
     rates: Rates,
     *,
-    sessions: Mapping[str, Mapping[str, str]],
+    sessions: Mapping[str, SessionUsage],
     models: Mapping[str, str],
     group_by: str = "run_id",
 ) -> dict[str, float]:
     """Split each app's Modal cost for the window across groups by token price.
+
+    `group_by` is `user` or any label key.
 
     Idle and unowned cold start time are reported as their own groups, and an
     app with cost but no usage rows is `unattributed`, so groups sum to the bill.
@@ -436,9 +465,8 @@ def attribute_cost(
         by_app[row.app_name].append(row)
 
     def group(session_id: str | None) -> str:
-        if session_id is None:
-            return "unknown"
-        return (sessions.get(session_id) or {}).get(group_by, "unknown")
+        session = sessions.get(session_id or "", SessionUsage())
+        return session.group(group_by) or "unknown"
 
     costs: dict[str, float] = defaultdict(float)
     for app_name, cost in app_costs.items():

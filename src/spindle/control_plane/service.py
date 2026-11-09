@@ -30,7 +30,7 @@ from spindle.providers.contracts import (
     SessionKeyValueStores,
 )
 from spindle.telemetry.metadata import experiment_tags
-from spindle.usage import DEFAULT_METADATA_KEYS, DirectorySink, allowed_metadata
+from spindle.usage import DEFAULT_LABEL_KEYS, DirectorySink, SessionUsage, labels_from
 
 from .keys import (
     model_creation_key,
@@ -216,7 +216,7 @@ class ControlPlane:
         trainer_gpu_wait: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_slots: Callable[[str], int | None] = lambda _: None,
         usage: DirectorySink | None = None,
-        usage_metadata_keys: tuple[str, ...] = DEFAULT_METADATA_KEYS,
+        usage_label_keys: tuple[str, ...] = DEFAULT_LABEL_KEYS,
     ) -> None:
         self.kv = kv
         self.engines = engines
@@ -238,7 +238,7 @@ class ControlPlane:
         self.trainer_gpu_wait = trainer_gpu_wait
         self.trainer_slots = trainer_slots
         self.usage = usage
-        self.usage_metadata_keys = usage_metadata_keys
+        self.usage_label_keys = usage_label_keys
         self._queue = SharedSnapshot(
             lambda _: read_queues(self.kv, self.engines),
             lambda: self.clock(),
@@ -254,6 +254,7 @@ class ControlPlane:
         tags: tuple[str, ...] = (),
         user_metadata: dict[str, str] | None = None,
         sdk_version: str | None = None,
+        user_id: str | None = None,
     ) -> SessionRecord:
         now = self.clock()
         session = SessionRecord(
@@ -277,7 +278,7 @@ class ControlPlane:
         await self._record_usage(
             "put_session",
             session.session_id,
-            allowed_metadata(user_metadata, self.usage_metadata_keys),
+            SessionUsage(user_id, labels_from(user_metadata, self.usage_label_keys)),
             now,
         )
         return session

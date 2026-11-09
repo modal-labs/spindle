@@ -538,7 +538,9 @@ def parser():
         required=True,
         help="JSON object with train, prefill, cached_prefill and sample USD per 1M tokens",
     )
-    usage.add_argument("--group-by", default="run_id")
+    usage.add_argument(
+        "--group-by", default="run_id", help="user, or any label key such as team_id"
+    )
     usage.add_argument("--format", choices=("table", "csv"), default="table")
     skills = commands.add_parser(
         "skills", help="Manage the bundled agent skills"

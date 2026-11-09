@@ -216,6 +216,7 @@ def create_control_plane_app(
     apps_status: Callable[[Routable], Awaitable[dict[str, str]]] | None = None,
     deploy_apps: Callable[[Routable], Awaitable[None]] | None = None,
     stop_apps: Callable[[Routable], Awaitable[None]] | None = None,
+    user_keys: Mapping[str, str] | None = None,
 ) -> FastAPI:
     routes = (
         definitions
@@ -226,9 +227,16 @@ def create_control_plane_app(
     async def supports_model(model_name: str) -> bool:
         return await routes.select(model_name) is not None
 
+    user_keys = dict(user_keys or {})
+
+    def authorized(request: Request) -> bool:
+        key = request.headers.get("x-api-key")
+        return (api_key is None and not user_keys) or key == api_key or key in user_keys
+
     async def authorize(request: Request) -> None:
-        if api_key is not None and request.headers.get("x-api-key") != api_key:
+        if not authorized(request):
             raise HTTPException(status_code=401, detail="unauthorized")
+        request.state.user_id = user_keys.get(request.headers.get("x-api-key", ""))
 
     app = FastAPI(dependencies=[Depends(authorize)])
 
@@ -236,7 +244,7 @@ def create_control_plane_app(
 
     async def skip_rejected_operation(request: Request, exc: Exception) -> None:
         path = request.url.path
-        if api_key is not None and request.headers.get("x-api-key") != api_key:
+        if not authorized(request):
             return
         if path == "/api/v1/forward_backward":
             _, body = await asyncio.to_thread(
@@ -439,11 +447,14 @@ def create_control_plane_app(
         return {"status": "accepted"}
 
     @app.post("/api/v1/create_session")
-    async def create_session(body: CreateSessionBody) -> dict[str, object]:
+    async def create_session(
+        body: CreateSessionBody, request: Request
+    ) -> dict[str, object]:
         session = await control_plane.create_session(
             tags=body.tags,
             user_metadata=body.user_metadata,
             sdk_version=body.sdk_version,
+            user_id=request.state.user_id,
         )
         return {"type": "create_session", "session_id": session.session_id}
 
