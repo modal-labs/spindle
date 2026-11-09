@@ -118,7 +118,7 @@ class Config(BaseConfig):
         "max_loras_per_batch": 4,
         "chunked_prefill_size": 8192,
         "disable_prefill_cuda_graph": True,
-        "language_only": True,
+        "enable_multimodal": False,
         "enable_return_routed_experts": False,
         "disable_radix_cache": False,
         "lora_backend": "csgmv",
