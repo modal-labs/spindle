@@ -59,6 +59,6 @@ def test_empty_sampling_support_and_list_backed_routes():
         },
         np.array([1]),
     )
-    assert row["sampling_mask_ids"] == []
-    assert row["sampling_mask_offsets"] == [0, 0]
+    assert row["sampling_mask_ids"].tolist() == []
+    assert row["sampling_mask_offsets"].tolist() == [0, 0]
     assert row["routed_experts"]["values"].tolist() == [0, 1]

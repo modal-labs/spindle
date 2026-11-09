@@ -6,8 +6,8 @@ from .image_dependencies import (
 )
 from .rollout_image import runtime_image_for
 
-# SGLang PR #90 contains GLM dimensions, expert-local reads and async loading.
-# Pin the merged release branch together with the matching runtime image.
+# Merged modal-projects/sglang#90 on spindle-sglang-v0.5.23 contains GLM
+# dimensions, expert-local reads and async loading. Match its runtime image.
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_BRANCH = "spindle-sglang-v0.5.23"
 SGLANG_REVISION = "b3dc676e8c64e3f007073e8ba4fd8bd6093ca2e2"
