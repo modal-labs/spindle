@@ -40,7 +40,9 @@ def _check_release(miles_commit: str) -> None:
     lock = json.loads(Path(MILES_PATH, "release-lock.json").read_text())
     dockerfile = Path(MILES_PATH, "docker", "Dockerfile").read_text()
     bridge = re.search(r"Megatron-Bridge[.]git@([0-9a-f]{40})", dockerfile)[1]
-    installed = json.loads(distribution("megatron-bridge").read_text("direct_url.json"))
+    direct_url = distribution("megatron-bridge").read_text("direct_url.json")
+    assert direct_url is not None
+    installed = json.loads(direct_url)
     assert _head(MILES_PATH) == miles_commit, (
         "Miles base image differs from the release commit"
     )

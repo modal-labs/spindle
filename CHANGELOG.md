@@ -14,6 +14,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
+- Local sampling task runners can return an asyncio future as well as a coroutine.
+- Retrieving a null or list result returns JSON when the client requests protobuf.
 - Frontend containers reread the recipe list as soon as it changes, so a config just added or removed through another container is seen at once by name, by model ID, and in `GET /api/v1/spindle/deployments` and `get_server_capabilities`.
 - `spindle stop` no longer aborts on apps that `spindle remove` is already stopping, and removing a config while its apps are still deploying no longer leaves those apps running.
 - Sampling requests rejected with HTTP 429 or 503 can retry with the same request ID as soon as capacity is available, instead of replaying the rejection for 30 seconds.

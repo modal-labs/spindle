@@ -67,7 +67,6 @@ allowed-unresolved-imports = [
 # Rules with existing violations; turn each back on once it's fixed.
 call-non-callable = "ignore"
 incompatible-attribute-override = "ignore"
-invalid-argument-type = "ignore"
 invalid-assignment = "ignore"
 invalid-return-type = "ignore"
 invalid-type-form = "ignore"

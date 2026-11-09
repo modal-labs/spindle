@@ -257,6 +257,7 @@ class HttpBackendClient:
             content_type=TRAINING_BATCH_CONTENT_TYPE,
             accept=FORWARD_RESULTS_CONTENT_TYPE,
         )
+        assert isinstance(result, (list, tuple))
         return tuple(result)
 
     async def capture_snapshot(

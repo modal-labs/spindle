@@ -543,7 +543,7 @@ def install_skills(project_dir: Path | None, force: bool) -> None:
         )
         if project_dir is None:
             raise ValueError("Run inside a Git repository or pass --project-dir.")
-    skills_dir = Path(resources.files("spindle") / "skills")
+    skills_dir = Path(str(resources.files("spindle") / "skills"))
     for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
         source = skill_md.parent
         destination = project_dir / ".agents" / "skills" / source.name

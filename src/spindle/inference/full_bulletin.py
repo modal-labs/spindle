@@ -52,7 +52,7 @@ class FFTSnapshotBulletin:
                     raise
                 await asyncio.sleep(0.25)
 
-    def read_latest(self, run_id: str) -> VersionRef | None:
+    def read_latest(self, run_id: str | None) -> VersionRef | None:
         path = self._run_dir(run_id) / _POINTER
         if not path.exists():
             return None
@@ -149,14 +149,15 @@ class FFTSnapshotBulletin:
         }
         names = set(files)
         try:
+            version = (index.get("metadata") or {})["version"]
             valid = (
                 manifest.get("ref") == ref.identity
-                and int((index.get("metadata") or {}).get("version")) == ref.version
+                and int(version) == ref.version
                 and expected.issubset(names)
                 and all(_safe_relative_path(name) for name in names)
                 and all(_file_manifest(target / name) == files[name] for name in names)
             )
-        except (FileNotFoundError, TypeError, ValueError) as exc:
+        except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
             raise FFTSnapshotNotFound(ref.identity) from exc
         if not valid:
             raise FFTSnapshotNotFound(ref.identity)

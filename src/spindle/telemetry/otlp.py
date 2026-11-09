@@ -14,7 +14,7 @@ from opentelemetry.context import Context
 from opentelemetry.trace import SpanKind, StatusCode, set_span_in_context
 
 logger = logging.getLogger(__name__)
-_sample = ContextVar("spindle_otlp_sample", default=None)
+_sample: ContextVar[dict | None] = ContextVar("spindle_otlp_sample", default=None)
 
 
 @functools.cache

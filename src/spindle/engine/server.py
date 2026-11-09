@@ -7,7 +7,7 @@ import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, cast
 
 from tinker.types.forward_backward_input import ForwardBackwardInput
 
@@ -193,6 +193,7 @@ class Engine:
                 return False
             else:
                 registration = model.registration
+        assert registration is not None
         return await asyncio.shield(registration)
 
     async def model_ids(self) -> tuple[str, ...]:
@@ -339,6 +340,7 @@ class Engine:
                         self._work.notify_all()
                         self._completed.notify_all()
             if ready is None:
+                assert done is not None
                 await asyncio.shield(done)
                 return
             await ready.wait()
@@ -465,6 +467,7 @@ class Engine:
                     await self._work.wait()
                 if self._closing:
                     return
+                assert operations is not None
                 self._consume_ready(operations)
             busy = True
             operation = operations[0]
@@ -485,6 +488,8 @@ class Engine:
             if operation.kind in PERSISTED_OPERATIONS:
                 await self._capture_for_persistence(operation)
                 continue
+            # _consume_ready rejects lifecycle items in model-operation batches.
+            operations = cast(tuple[Operation, ...], operations)
             models = tuple(dict.fromkeys(item.model_id for item in operations))
             self._observe_state(models, f"executing:{operation.kind.value}")
             if operation.kind == OperationKind.LOAD_WEIGHTS:

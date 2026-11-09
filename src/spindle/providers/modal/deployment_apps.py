@@ -348,17 +348,19 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                     recipe.inference_startup_timeout_s,
                 )
                 startup.mark("sglang_healthy")
-                kwargs = dict(
-                    port=8000,
-                    sglang_port=8001,
-                    bulletin_root="/bulletin",
-                    bulletin_volume=platform["storage"]["bulletin"],
-                )
                 self.sidecar = (
-                    start_lora_sidecar(**kwargs)
+                    start_lora_sidecar(
+                        port=8000,
+                        sglang_port=8001,
+                        bulletin_root="/bulletin",
+                        bulletin_volume=platform["storage"]["bulletin"],
+                    )
                     if lora
                     else start_fft_sidecar(
-                        **kwargs,
+                        port=8000,
+                        sglang_port=8001,
+                        bulletin_root="/bulletin",
+                        bulletin_volume=platform["storage"]["bulletin"],
                         run_id=pool.model_id,
                         pinned_version=None if pool.latest else pool.version,
                     )

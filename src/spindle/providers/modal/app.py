@@ -486,7 +486,7 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
                 )
             router = _routers[spec.app_name]
 
-        async def keep_pool_ready() -> None:
+        async def keep_pool_ready(spec: LoraPoolSpec = spec) -> None:
             # Retries can outlive the cached readiness check. The pool's URL
             # is stable across redeployment of the same definition/revision.
             await _ready_lora_pool(spec)
@@ -574,6 +574,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     call_id = modal.current_function_call_id()
+    assert call_id is not None
 
     async def run(definition_id: str, token: str) -> None:
         parameterization = await parameterization_for(definition_id)
@@ -946,6 +947,8 @@ async def _cleanup_fft_pools() -> tuple[str, ...]:
     registry = fft_pool_kv()
     for key, value in await registry.list_items("fft_pool:"):
         try:
+            if not isinstance(value, dict):
+                raise ValueError("FFT pool record must be an object")
             spec = FFTPoolSpec.from_dict(value)
             if spec.latest:
                 if spec.app_name in active_latest:
@@ -989,6 +992,8 @@ async def _cleanup_lora_pools() -> tuple[str, ...]:
     stopped = []
     for key, value in await registry.list_items("lora_pool:"):
         try:
+            if not isinstance(value, dict):
+                raise ValueError("LoRA pool record must be an object")
             spec = LoraPoolSpec.from_dict(value)
             if spec.app_name in active:
                 continue

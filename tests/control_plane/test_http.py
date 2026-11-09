@@ -723,10 +723,11 @@ def test_result_timing_counts_actual_response_bytes(monkeypatch):
 
 
 @pytest.mark.parametrize("accept_protobuf", [False, True])
-@pytest.mark.parametrize("forward_result", [False, True])
+@pytest.mark.parametrize("result_kind", ["forward", "checkpoint", "null", "list"])
 def test_result_negotiation_constructs_one_response_before_timing(
-    monkeypatch, accept_protobuf, forward_result
+    monkeypatch, accept_protobuf, result_kind
 ):
+    forward_result = result_kind == "forward"
     result = (
         {
             "loss_fn_output_type": "ArrayRecord",
@@ -736,7 +737,11 @@ def test_result_negotiation_constructs_one_response_before_timing(
             "metrics": {"loss:sum": 0.625},
         }
         if forward_result
-        else {"path": "tinker://model/weights/数学"}
+        else {
+            "checkpoint": {"path": "tinker://model/weights/数学"},
+            "null": None,
+            "list": [1, 2],
+        }[result_kind]
     )
     rendered = []
     marks = []

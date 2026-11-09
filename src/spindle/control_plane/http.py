@@ -745,7 +745,7 @@ def create_control_plane_app(
                     response = Response(result.body, media_type=PROTOBUF_MEDIA_TYPE)
                 else:
                     result = await asyncio.to_thread(result.to_json)
-            elif accepts_protobuf:
+            elif accepts_protobuf and isinstance(result, dict):
                 encoded = encode_result(result)
                 if encoded is not None:
                     response = Response(encoded, media_type=PROTOBUF_MEDIA_TYPE)

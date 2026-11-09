@@ -29,8 +29,12 @@ from spindle.telemetry.otlp import _attributes, provider
 from . import backend
 from .metadata import common_tags, experiment_tags
 
-incoming = ContextVar("spindle_command_context", default=None)
-accepted_root = ContextVar("spindle_accepted_root", default=None)
+incoming: ContextVar[tuple[Context, float] | None] = ContextVar(
+    "spindle_command_context", default=None
+)
+accepted_root: ContextVar[Context | None] = ContextVar(
+    "spindle_accepted_root", default=None
+)
 log = logging.getLogger(__name__)
 OPERATIONS = (
     "idle",

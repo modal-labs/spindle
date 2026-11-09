@@ -318,7 +318,9 @@ def choose(console: Console, frontend: str, environment: str | None) -> list[Pre
                 questionary.Choice(f"{format_context(tokens)} tokens", value=tokens)
                 for tokens in CONTEXT_CHOICES
             ],
-            default=DEFAULT_CONTEXT,
+            default=questionary.Choice(
+                f"{format_context(DEFAULT_CONTEXT)} tokens", value=DEFAULT_CONTEXT
+            ),
             instruction="(not sure? 32K covers most RL and SFT runs)",
         )
     )

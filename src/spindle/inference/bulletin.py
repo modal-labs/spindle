@@ -54,7 +54,7 @@ class SnapshotBulletin:
                     raise
                 await asyncio.sleep(0.25)
 
-    def read_latest(self, run_id: str) -> VersionRef | None:
+    def read_latest(self, run_id: str | None) -> VersionRef | None:
         path = self._run_dir(run_id) / _POINTER
         if not path.exists():
             return None

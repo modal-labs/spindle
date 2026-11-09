@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
+from typing import cast
 
 from spindle.encoding import fingerprint
 from spindle.engine.api import EngineApi, FutureStatus
@@ -374,7 +375,9 @@ class ControlPlane:
         entries = [
             dict(entry) for entry in await self.list_checkpoints(training_run_id)
         ]
-        entries.sort(key=lambda entry: float(entry["time"]), reverse=True)
+        entries.sort(
+            key=lambda entry: float(cast(float | str, entry["time"])), reverse=True
+        )
         return entries
 
     async def checkpoint(
@@ -393,7 +396,9 @@ class ControlPlane:
         return {
             "checkpoint_id": f"weights/{name}",
             "checkpoint_type": "training",
-            "time": datetime.fromtimestamp(float(entry["time"]), UTC).isoformat(),
+            "time": datetime.fromtimestamp(
+                float(cast(float | str, entry["time"])), UTC
+            ).isoformat(),
             "tinker_path": checkpoint_tinker_path(model_id, name),
             "size_bytes": entry.get("size_bytes"),
         }
@@ -502,6 +507,7 @@ class ControlPlane:
         path = self.resolve_checkpoint_path(path)
         saved_base_model = metadata["base_model"]
         definition_id = metadata["engine_definition_id"]
+        assert isinstance(definition_id, str)
         parameterization = metadata["parameterization"]
         lora_config = metadata["lora_config"]
         if base_model is not None and base_model != saved_base_model:
@@ -1397,6 +1403,7 @@ class ControlPlane:
         key = trainer_slot_wait_key(model.model_id)
         now = self.clock()
         record = await self.kv.get(key)
+        assert record is None or isinstance(record, dict)
         if record is None:
             if not start:
                 return 0.0

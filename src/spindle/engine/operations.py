@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 from tinker import AdamParams, LoraConfig
@@ -11,7 +11,9 @@ from tinker.types._pydantic_types.forward_backward_input import (
     ForwardBackwardInput as TinkerForwardBackwardInputModel,
 )
 from tinker.types._pydantic_types.tensor_data import TensorData as TensorDataModel
+from tinker.types.datum import Datum
 from tinker.types.forward_backward_input import ForwardBackwardInput
+from tinker.types.loss_fn_type import LossFnType
 
 from spindle.backends.contract import LossFn, ModelSpec
 
@@ -95,8 +97,9 @@ def parse_operation_payload(
             }
         )
         return ForwardBackwardInput(
-            data=list(parsed.data),
-            loss_fn=parsed.loss_fn,
+            # Tinker annotations exclude validated wire data and Spindle loss extensions.
+            data=cast(list[Datum], list(parsed.data)),
+            loss_fn=cast(LossFnType, parsed.loss_fn),
             loss_fn_config=parsed.loss_fn_config,
         )
     if kind == OperationKind.OPTIM_STEP:
@@ -113,10 +116,12 @@ def parse_operation_payload(
         restore_optimizer = bool(
             raw.get("restore_optimizer", raw.get("optimizer", False))
         )
-        return LoadCheckpointPayload(
-            uri=raw.get("path") or raw.get("uri"),
-            restore_optimizer=restore_optimizer,
-            extensions=_extensions(raw, known),
+        return LoadCheckpointPayload.model_validate(
+            {
+                "uri": raw.get("path") or raw.get("uri"),
+                "restore_optimizer": restore_optimizer,
+                "extensions": _extensions(raw, known),
+            }
         )
     if kind == OperationKind.SAVE_WEIGHTS:
         known = {
@@ -154,9 +159,11 @@ def parse_operation_payload(
         )
     if kind == OperationKind.SAVE_WEIGHTS_FOR_SAMPLER:
         known = {"publish_version", "extensions"}
-        return SaveWeightsForSamplerPayload(
-            publish_version=raw.get("publish_version"),
-            extensions=_extensions(raw, known),
+        return SaveWeightsForSamplerPayload.model_validate(
+            {
+                "publish_version": raw.get("publish_version"),
+                "extensions": _extensions(raw, known),
+            }
         )
     raise ValueError(f"unsupported operation: {kind.value}")
 
