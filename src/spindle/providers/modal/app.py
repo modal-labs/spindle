@@ -75,7 +75,7 @@ from .lora_pool import (
     stop_pool as stop_lora_pool,
 )
 from .sampling import ModalSamplingTaskPlatform
-from .usage import USAGE_ROOT, sample_meter, usage_sink, usage_volume
+from .usage import USAGE_ROOT, sample_meter, usage_store, usage_volume
 from .router_image import with_router
 from .trainer_reconciler import (
     TRANSIENT_POLL_ERRORS,
@@ -781,7 +781,7 @@ def _plane():
         trainer_autoscaling=lambda _: True,
         trainer_slots=trainer_slots,
         trainer_gpu_wait=gpu_wait(_trainer_function, _trainer_gpus),
-        usage=usage_sink(APP_NAME),
+        usage=usage_store(APP_NAME),
         usage_label_keys=label_keys_from_env(),
     )
 
@@ -810,7 +810,7 @@ def server():
         apps_status=_apps_status,
         deploy_apps=_start_app_deploy,
         stop_apps=_stop_apps,
-        usage_reader=usage_sink(APP_NAME),
+        usage_reader=usage_store(APP_NAME),
     )
 
 

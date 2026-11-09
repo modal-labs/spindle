@@ -391,15 +391,13 @@ class TrainerUsage:
         self.base_model = base_model
         self._cold_start_s = max(0.0, clock() - started_at)
 
-    def trained(self, model_id: str, payload: object) -> None:
+    def trained(
+        self, model_id: str, payload: object, forward_only: bool = False
+    ) -> None:
         tokens = workload(payload).get("spindle.input_tokens")
         if tokens:
-            self._add(training_model_id=model_id, train_tokens=tokens)
-
-    def forwarded(self, model_id: str, payload: object) -> None:
-        tokens = workload(payload).get("spindle.input_tokens")
-        if tokens:
-            self._add(training_model_id=model_id, forward_tokens=tokens)
+            column = "forward_tokens" if forward_only else "train_tokens"
+            self._add(training_model_id=model_id, **{column: tokens})
 
     def accepted(self, model_id: str) -> None:
         """Charge the container's start-up to the first model it accepted."""
