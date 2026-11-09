@@ -14,6 +14,13 @@ of measurements:
 
 Spindle sends these measurements via OTLP (export off by default), from which Datadog or another compatible service can be used to receive and display these traces.
 
+## Client progress
+
+`spindle.ServiceClient` logs server-provided startup and capacity messages through
+`spindle.service_client`. It reports stage changes immediately and repeats waiting
+messages every 60 seconds. Set `progress_interval=30` to change that interval, or
+`progress=False` to retain Tinker's logging behavior.
+
 ## Setup
 
 ### Modal to Datadog
