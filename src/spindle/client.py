@@ -9,7 +9,7 @@ from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 from tinker.lib.queue_state_logger import QueueStateLogger
 
 try:
-    from tinker.lib.public_interfaces.training_client import fetch_training_info
+    from tinker.lib.public_interfaces.training_client import fetch_training_info  # ty: ignore[import-not-found]
 except ImportError:  # tinker < 0.38, whose TrainingClient takes no `info`
     fetch_training_info = None
 
