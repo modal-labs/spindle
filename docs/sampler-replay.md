@@ -126,3 +126,10 @@ updated logits. Replay does not guarantee bitwise parity between SGLang and
 Megatron kernels. For multi-turn trajectories or truncated sequences, callers
 must realign replay tensors to their actual training inputs; the convenience
 helper does not stitch turns.
+
+## GPU validation
+
+The [real RL validation](../examples/score-centering/validation/README.md) records
+30 successful GPU updates across Megatron full-parameter training, Miles v0.1.1
+LoRA, and Miles v0.1.2 LoRA with context parallelism. It includes the recipes,
+runner, per-update results, tested commit, and coverage limits.

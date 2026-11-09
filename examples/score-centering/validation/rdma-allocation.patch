@@ -1,0 +1,22 @@
+diff --git a/src/spindle/providers/modal/deployment_apps.py b/src/spindle/providers/modal/deployment_apps.py
+index d44d53f..a5294e8 100644
+--- a/src/spindle/providers/modal/deployment_apps.py
++++ b/src/spindle/providers/modal/deployment_apps.py
+@@ -168,7 +168,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
+         log_scheduled_gpus("trainer")
+         run_trainer(saved, instance_id, platform)
+
+-    if recipe.trainer_nodes > 1:
++    if recipe.trainer_nodes >= 1:
+         trainer = modal.clustered(size=recipe.trainer_nodes, rdma=True)(trainer)
+     trainer = app.function(
+         name="trainer",
+@@ -190,7 +190,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
+         volumes=volumes_for(platform),
+         secrets=secrets_for(platform, training=True),
+         env=env,
+-        experimental_options={"efa_enabled": True} if recipe.trainer_nodes > 1 else {},
++        experimental_options={"efa_enabled": True} if recipe.trainer_nodes >= 1 else {},
+     )(trainer)
+
+     return app, trainer
