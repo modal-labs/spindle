@@ -3,22 +3,23 @@
 from __future__ import annotations
 
 from functools import wraps
-from math import isfinite, prod
+from math import prod
 
 import numpy as np
 
-from spindle.backends.score_centering import REPLAY_LOSSES
+from spindle.backends.score_centering import has_duplicate_tokens
 from spindle.replay import REPLAY_FIELDS
 
 _replay_builder = None
-_replay_execute = None
 _sharded_package = None
 
 
 def install_distribution_sharding(conversion):
     """Keep support logprobs aligned when Miles partitions a rollout batch."""
     global _sharded_package
-    original = conversion._package_shards
+    original = getattr(conversion, "_package_shards", None)
+    if not callable(original):
+        raise RuntimeError("Miles exact-support replay requires _package_shards")
     if original is _sharded_package:
         return
 
@@ -42,19 +43,21 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
     n = len(targets)
     for name in (REPLAY_FIELDS - {"sampling_mask_logprobs"}) & inputs.keys():
         tensor = inputs[name]
-        values = list(tensor.data)
         shape = list(tensor.shape or ())
-        if (
-            tensor.dtype != "int64"
-            or tensor.sparse_crow_indices is not None
-            or any(type(v) is not int for v in values)
-            or prod(shape) != len(values)
-        ):
+        # TensorData.data materializes a fresh Python list on every access.
+        if tensor.dtype != "int64" or tensor.sparse_crow_indices is not None:
             raise ValueError(
                 f"{name} must be a dense int64 tensor with a matching shape"
             )
-        if any(
-            v < (-1 if name == "routed_experts" else 0) or v > 2**31 - 1 for v in values
+        values = np.asarray(tensor.to_numpy()).reshape(-1)
+        integral = not values.size or values.dtype.kind in "iu"
+        if not integral or prod(shape) != values.size:
+            raise ValueError(
+                f"{name} must be a dense int64 tensor with a matching shape"
+            )
+        if values.size and (
+            values.min() < (-1 if name == "routed_experts" else 0)
+            or values.max() > 2**31 - 1
         ):
             raise ValueError(f"{name} values are outside the supported int32 range")
         if name == "routed_experts":
@@ -62,11 +65,14 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
                 raise ValueError(
                     "routed_experts must have shape [input_tokens, layers, experts_per_token]"
                 )
-            row[name] = {"values": values, "shape": shape}
+            # Range checks precede narrowing; admission owns the resulting array.
+            row[name] = {"values": values.astype(np.int32), "shape": shape}
         else:
             if shape != [len(values)]:
                 raise ValueError(f"{name} must be one-dimensional")
-            row[name] = values
+            row[name] = values.astype(
+                np.int32 if name == "sampling_mask_ids" else np.int64
+            )
     ids, offsets = row.get("sampling_mask_ids"), row.get("sampling_mask_offsets")
     if (ids is None) != (offsets is None):
         raise ValueError(
@@ -77,37 +83,60 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
             len(offsets) != n + 1
             or offsets[0] != 0
             or offsets[-1] != len(ids)
-            or any(b < a for a, b in zip(offsets, offsets[1:]))
+            or np.any(offsets[1:] < offsets[:-1])
         ):
             raise ValueError(
                 "sampling mask offsets must have input_tokens + 1 entries, start at zero, and end at the id count"
             )
-        for token, a, b in zip(targets, offsets, offsets[1:], strict=False):
-            candidates = np.atleast_1d(token).tolist()
-            if a != b and (
-                any(candidate not in ids[a:b] for candidate in candidates)
-                or len(set(ids[a:b])) != b - a
-            ):
+        for i in np.flatnonzero(offsets[1:] > offsets[:-1]):
+            support = ids[offsets[i] : offsets[i + 1]]
+            if support.size == 1:
+                contains = (
+                    targets[i] == support[0]
+                    if targets.ndim == 1
+                    else np.all(targets[i] == support[0])
+                )
+                duplicate = False
+            elif support.size <= 8:
+                allowed = set(support.tolist())
+                contains = (
+                    targets[i] in allowed
+                    if targets.ndim == 1
+                    else all(target in allowed for target in targets[i])
+                )
+                duplicate = len(allowed) != support.size
+            else:
+                candidates = np.atleast_1d(targets[i])
+                contains = (
+                    np.any(support == candidates[0])
+                    if candidates.size == 1
+                    else np.isin(candidates, support).all()
+                )
+                duplicate = has_duplicate_tokens(support)
+            if not contains or duplicate:
                 raise ValueError(
                     "each sampling support must contain its target and have no duplicate ids"
                 )
     probabilities = inputs.get("sampling_mask_logprobs")
     if probabilities is not None:
-        values = list(probabilities.data)
-        shape = list(probabilities.shape or ())
         if (
             probabilities.dtype != "float32"
             or probabilities.sparse_crow_indices is not None
-            or shape != [len(values)]
-            or any(
-                type(value) not in (int, float) or not isfinite(value) or value > 0
-                for value in values
-            )
         ):
             raise ValueError(
                 "sampling_mask_logprobs must be a dense one-dimensional float32 tensor"
             )
-        row["sampling_mask_logprobs"] = np.asarray(values, dtype=np.float32)
+        values = np.asarray(probabilities.to_numpy()).reshape(-1)
+        shape = list(probabilities.shape or ())
+        if (
+            shape != [len(values)]
+            or not np.isfinite(values).all()
+            or np.any(values > 0)
+        ):
+            raise ValueError(
+                "sampling_mask_logprobs must be a dense one-dimensional float32 tensor"
+            )
+        row["sampling_mask_logprobs"] = values.astype(np.float32)
     return row
 
 
@@ -129,23 +158,23 @@ def validate_routed_experts(
             raise ValueError(
                 f"routed_experts must have {num_layers} layers and {topk} experts per token"
             )
-        values = routes["values"]
-        if any(expert >= num_experts for expert in values):
+        values = np.asarray(routes["values"]).reshape(routes["shape"])
+        if np.any(values >= num_experts):
             raise ValueError(
                 f"routed_experts IDs must be below the model's expert count ({num_experts})"
             )
-        for offset in range(0, len(values), topk):
-            experts = values[offset : offset + topk]
-            if all(expert == -1 for expert in experts):
-                continue
-            if -1 in experts:
-                raise ValueError(
-                    "routed_experts padding must fill the entire top-k row with -1"
-                )
-            if len(set(experts)) != topk:
-                raise ValueError(
-                    "routed_experts IDs must be distinct within each top-k row"
-                )
+        padding = values == -1
+        fully_padded = padding.all(axis=-1)
+        if np.any(padding.any(axis=-1) & ~fully_padded):
+            raise ValueError(
+                "routed_experts padding must fill the entire top-k row with -1"
+            )
+        sorted_values = np.sort(values, axis=-1)
+        duplicates = (sorted_values[..., 1:] == sorted_values[..., :-1]).any(axis=-1)
+        if np.any(duplicates & ~fully_padded):
+            raise ValueError(
+                "routed_experts IDs must be distinct within each top-k row"
+            )
 
 
 def add_replay_to_train_data(train_data: dict, datums: list[dict]) -> None:
@@ -164,7 +193,9 @@ def add_replay_to_train_data(train_data: dict, datums: list[dict]) -> None:
         ]
         train_data["rollout_sampling_mask_offsets"] = [
             np.asarray(
-                d.get("sampling_mask_offsets", [0] * (d["target_len"] + 1)),
+                d["sampling_mask_offsets"]
+                if "sampling_mask_offsets" in d
+                else np.zeros(d["target_len"] + 1, dtype=np.int64),
                 dtype=np.int64,
             )
             for d in datums
@@ -177,7 +208,7 @@ def add_replay_to_train_data(train_data: dict, datums: list[dict]) -> None:
 
 
 def install_bridge_replay(runtime) -> None:
-    global _replay_builder, _replay_execute
+    global _replay_builder
     original = runtime._build_train_data
     if original is _replay_builder:
         return
@@ -196,35 +227,3 @@ def install_bridge_replay(runtime) -> None:
         and "rollout_sampling_mask_logprobs" not in spec
     ):
         spec["rollout_sampling_mask_logprobs"] = spec["rollout_sampling_mask_ids"]
-    backend = vars(runtime).get("MilesBackend")
-    if backend is None:
-        return
-    original_execute = backend._execute_batch
-
-    @wraps(original_execute)
-    async def execute(self, method, batch_id, slot_datums, loss_fn, loss_fn_config):
-        if loss_fn not in REPLAY_LOSSES:
-            return await original_execute(
-                self, method, batch_id, slot_datums, loss_fn, loss_fn_config
-            )
-        train_data = runtime._build_train_data(
-            runtime._pad_to_dp_multiple(slot_datums, self.dp_size)
-        )
-        train_data.update(loss_fn=loss_fn, loss_fn_config=loss_fn_config)
-        results = await self._call_trainer(method, batch_id, train_data)
-        by_index = {}
-        for result in results:
-            if "error" in result:
-                return result
-            for row in result["per_datum"]:
-                index = int(row["sample_index"])
-                if index not in by_index:
-                    by_index[index] = {
-                        "loss": float(row["loss"]),
-                        "logprobs": row["logprobs"].tolist(),
-                        "metrics": row["metrics"],
-                    }
-        return [by_index[index] for index in range(len(slot_datums))]
-
-    _replay_execute = execute
-    backend._execute_batch = execute

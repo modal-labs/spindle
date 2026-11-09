@@ -1,0 +1,139 @@
+{
+  "bf16": {
+    "model": "Qwen/Qwen3.5-35B-A3B",
+    "weights_revision": "59d61f3ce65a6d9863b86d2e96597125219dc754",
+    "parameterization": "full",
+    "backend": "megatron",
+    "max_context_length": 8192,
+    "trainer_gpu": "B300",
+    "trainer_gpus_per_node": 4,
+    "trainer_nodes": 1,
+    "trainer_cpu": 8,
+    "trainer_memory_mib": 131072,
+    "trainer_env": {
+      "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+      "TORCHINDUCTOR_COMPILE_THREADS": "1",
+      "CUDA_DEVICE_MAX_CONNECTIONS": "1"
+    },
+    "sampler_persistence_concurrency": 1,
+    "inference_gpu": "B300",
+    "inference_gpus_per_node": 1,
+    "inference_cpu": 8,
+    "inference_memory_mib": 262144,
+    "inference_env": {},
+    "inference_max_replicas": 1,
+    "inference_target_concurrency": 16,
+    "inference_scaledown_window_s": 300,
+    "inference_startup_timeout_s": 1200,
+    "megatron_cfg": {
+      "tensor_model_parallel_size": 2,
+      "pipeline_model_parallel_size": 1,
+      "context_parallel_size": 1,
+      "expert_model_parallel_size": 4,
+      "expert_tensor_parallel_size": 1,
+      "sequence_parallel": true,
+      "micro_batch_size": 1,
+      "max_tokens_per_microbatch": 8192,
+      "bf16": true,
+      "fp16": false,
+      "gpu_memory_fraction": 0.9,
+      "use_distributed_optimizer": true,
+      "provider_overrides": {
+        "mtp_num_layers": 0,
+        "recompute_granularity": "selective",
+        "moe_layer_recompute": true,
+        "moe_token_dispatcher_type": "alltoall",
+        "moe_router_fusion": true,
+        "moe_permute_fusion": true,
+        "moe_grouped_gemm": true,
+        "moe_shared_expert_overlap": false,
+        "moe_aux_loss_coeff": 0.0
+      },
+      "optimizer": {
+        "optimizer": "adam",
+        "lr": 0.0001,
+        "min_lr": 0.0001
+      }
+    },
+    "sglang_cfg": {
+      "tp_size": 1,
+      "ep_size": 1,
+      "mem_fraction_static": 0.7,
+      "max_running_requests": 32,
+      "max_queued_requests": 4,
+      "weight_update_max_compile_group_gb": 8,
+      "dp_size": 1,
+      "enable_dp_attention": false
+    }
+  },
+  "mxfp8": {
+    "model": "Qwen/Qwen3.5-35B-A3B",
+    "weights_revision": "59d61f3ce65a6d9863b86d2e96597125219dc754",
+    "parameterization": "full",
+    "backend": "megatron",
+    "max_context_length": 8192,
+    "trainer_gpu": "B300",
+    "trainer_gpus_per_node": 4,
+    "trainer_nodes": 1,
+    "trainer_cpu": 8,
+    "trainer_memory_mib": 131072,
+    "trainer_env": {
+      "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+      "TORCHINDUCTOR_COMPILE_THREADS": "1",
+      "CUDA_DEVICE_MAX_CONNECTIONS": "1"
+    },
+    "sampler_persistence_concurrency": 1,
+    "inference_gpu": "B300",
+    "inference_gpus_per_node": 1,
+    "inference_cpu": 8,
+    "inference_memory_mib": 262144,
+    "inference_env": {
+      "SGLANG_FP8_IGNORED_LAYERS": "in_proj_ba"
+    },
+    "inference_max_replicas": 1,
+    "inference_target_concurrency": 16,
+    "inference_scaledown_window_s": 300,
+    "inference_startup_timeout_s": 1200,
+    "megatron_cfg": {
+      "tensor_model_parallel_size": 2,
+      "pipeline_model_parallel_size": 1,
+      "context_parallel_size": 1,
+      "expert_model_parallel_size": 4,
+      "expert_tensor_parallel_size": 1,
+      "sequence_parallel": true,
+      "micro_batch_size": 1,
+      "max_tokens_per_microbatch": 8192,
+      "bf16": true,
+      "fp16": false,
+      "gpu_memory_fraction": 0.9,
+      "use_distributed_optimizer": true,
+      "provider_overrides": {
+        "mtp_num_layers": 0,
+        "recompute_granularity": "selective",
+        "moe_layer_recompute": true,
+        "moe_token_dispatcher_type": "alltoall",
+        "moe_router_fusion": true,
+        "moe_permute_fusion": true,
+        "moe_grouped_gemm": true,
+        "moe_shared_expert_overlap": false,
+        "moe_aux_loss_coeff": 0.0
+      },
+      "optimizer": {
+        "optimizer": "adam",
+        "lr": 0.0001,
+        "min_lr": 0.0001
+      }
+    },
+    "sglang_cfg": {
+      "tp_size": 1,
+      "ep_size": 1,
+      "mem_fraction_static": 0.7,
+      "max_running_requests": 32,
+      "max_queued_requests": 4,
+      "weight_update_max_compile_group_gb": 8,
+      "dp_size": 1,
+      "enable_dp_attention": false,
+      "quantization": "mxfp8"
+    }
+  }
+}

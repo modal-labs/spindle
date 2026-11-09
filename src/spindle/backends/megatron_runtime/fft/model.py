@@ -3,6 +3,7 @@ from __future__ import annotations
 from megatron.core.optimizer import get_megatron_optimizer
 
 from ..common.config import EngineModelConfig
+from ..common.fused_adam import bound_fused_adam_tensor_lists
 from ..common.modeling import (
     distributed_model,
     model_provider,
@@ -50,7 +51,7 @@ def apply_fp32_lm_head(module) -> None:
 
 
 def create_fft_optimizer(config: EngineModelConfig, model):
-    return get_megatron_optimizer(
+    optimizer = get_megatron_optimizer(
         config=optimizer_config(
             config,
             parameter_dtype(config),
@@ -58,3 +59,5 @@ def create_fft_optimizer(config: EngineModelConfig, model):
         ),
         model_chunks=model,
     )
+    bound_fused_adam_tensor_lists(optimizer)
+    return optimizer

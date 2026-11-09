@@ -9,8 +9,8 @@ from .image_dependencies import (
 
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.21"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
-SGLANG_BRANCH = "spindle-sglang-v0.5.21"
-SGLANG_REVISION = "a3e0e1725406b9330bd062520d4f99d0aa73ee4f"
+SGLANG_BRANCH = "mxfp8-online-reload"
+SGLANG_REVISION = "2a3714aa0904566431d5edad2e94ea51a8b9f49e"
 
 image = (
     modal.Image.from_registry(SGLANG_IMAGE)

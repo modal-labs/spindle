@@ -1,0 +1,52 @@
+{
+  "source": "SGLang /get_server_info internal_states[0].memory_usage on active sampler containers",
+  "units": "GiB; token capacities are counts",
+  "bf16": {
+    "mode": "bf16",
+    "memory_usage_gib": {
+      "weight": 65.492,
+      "kvcache": 63.807,
+      "startup_available": 76.198,
+      "token_capacity": 3345318,
+      "token_capacity_swa": null,
+      "graph": {
+        "prefill": 3.566,
+        "decode": 0.072,
+        "target_verify": 0.0,
+        "draft_prefill": 0.0,
+        "draft_decode": 0.0,
+        "draft_extend": 0.0
+      }
+    },
+    "gpu": "NVIDIA B300 SXM6 AC",
+    "sglang_overlay_revision": "2a3714aa0904566431d5edad2e94ea51a8b9f49e",
+    "fp8_py_sha256": "8d988d4d91f1b0b8fc0f7ef9353e732fb60297bfad5efcfdae70e4e7014cdf61",
+    "unquant_py_sha256": "1000a2c7283b2f34f3bccbda63769c2d1c4cb00e3a01c15c18fc9867d1028403"
+  },
+  "mxfp8": {
+    "mode": "mxfp8",
+    "memory_usage_gib": {
+      "weight": 35.357,
+      "kvcache": 79.67,
+      "startup_available": 75.96,
+      "token_capacity": 4176976,
+      "token_capacity_swa": null,
+      "graph": {
+        "prefill": 3.746,
+        "decode": 0.053,
+        "target_verify": 0.0,
+        "draft_prefill": 0.0,
+        "draft_decode": 0.0,
+        "draft_extend": 0.0
+      }
+    },
+    "quantization": "mxfp8",
+    "version": "6",
+    "gpu": "NVIDIA B300 SXM6 AC",
+    "upstream_image_git_revision": "e00930c5489053f26d86b179cee0d087f846acbb",
+    "sglang_overlay_revision": "a1667d68a4017026ed7f8ce1c19261862aecee19",
+    "fp8_py_sha256": "8d988d4d91f1b0b8fc0f7ef9353e732fb60297bfad5efcfdae70e4e7014cdf61",
+    "unquant_py_sha256": "6d1ee765f4ee2b2a12dc6eddfe629fc1f5d7ccba29984e309a0f6269f0efa14a"
+  },
+  "limitations": "Weight allocation is not total or peak GPU memory. Both use mem_fraction_static=0.7; MXFP8 uses a larger KV cache."
+}

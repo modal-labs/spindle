@@ -1,0 +1,14 @@
+{
+  "gpu": "NVIDIA B200",
+  "sglang_base": "a3e0e1725406b9330bd062520d4f99d0aa73ee4f",
+  "sglang_tested_local_commit": "2ad67fd83f001a95350bbf5fa447af8c930dc391",
+  "published_fix": "https://github.com/modal-projects/sglang/pull/91",
+  "pytest_result": {"passed": 4, "seconds": 46.16},
+  "coverage": [
+    "Existing block-FP8 staging device selection",
+    "Online MXFP8 dense weights: two reloads equal fresh quantization",
+    "Online MXFP8 MoE expert weights: two reloads equal fresh quantization"
+  ],
+  "comparison": "Exact equality of every named weight and scale parameter",
+  "limitations": "Layer-level checks; no full-model training, timing comparison, or convergence claim"
+}

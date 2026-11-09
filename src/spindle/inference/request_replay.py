@@ -2,12 +2,15 @@
 
 import asyncio
 import hashlib
+import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
 from fastapi.responses import JSONResponse
 
+
+logger = logging.getLogger(__name__)
 
 DISCONNECT_POLL_INTERVAL_SECONDS = 0.25
 
@@ -66,6 +69,14 @@ class RequestReplay:
             return
         else:
             response = generation.task.result()
+        # Admission rejections must check capacity again on the next delivery.
+        if response.status_code in (429, 503):
+            logger.debug(
+                "Not caching admission rejection: status=%s request_id=%s",
+                response.status_code,
+                rid,
+            )
+            return
         # Non-string keys are unique batch pass-throughs, with no reusable reply.
         if (
             not self.closed
