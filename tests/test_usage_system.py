@@ -43,7 +43,11 @@ def deployment(tmp_path):
         )
         plane = ControlPlane(InMemoryKeyValueStore(), platform, usage=sink)
         app = create_control_plane_app(
-            plane, DEFINITIONS, api_key=API_KEY, retrieve_window=5.0
+            plane,
+            DEFINITIONS,
+            api_key=API_KEY,
+            retrieve_window=5.0,
+            usage_reader=sink,
         )
         yield stack.enter_context(serve(app)), meter
 

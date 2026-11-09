@@ -1,5 +1,5 @@
 import asyncio
-import json
+from dataclasses import fields
 
 import pytest
 from tinker import types
@@ -14,6 +14,7 @@ from spindle.usage import (
     allowed_metadata,
     attribute_cost,
     billing_usage,
+    meter_sample,
 )
 from tests.support import EchoExecutor
 
@@ -24,57 +25,46 @@ SESSIONS = {
     "session-a": {"run_id": "A", "team": "ranking"},
     "session-b": {"run_id": "B", "team": "ads"},
 }
-MODELS = {"model-a": "session-a", "model-b": "session-b"}
+TRAINER, SAMPLER = "dd-prod-trainer-qwen3-8b", "dd-prod-inference-qwen3-8b"
 
 
-def row(event_type, app_name, *, timestamp=HOUR, **values):
+def row(app_name, *, timestamp=HOUR, uid=None, **values):
     return UsageRow(
+        workspace_id="ws-1",
+        environment_id="main",
+        timestamp=timestamp,
+        model_id="Qwen/Qwen3-8B",
+        request_uuid=uid or f"{app_name}-{timestamp}-{sorted(values.items())}",
         deployment="dd-prod",
         app_name=app_name,
-        app_kind="sampler" if event_type.startswith("sampling") else "trainer",
+        app_kind="trainer" if app_name == TRAINER else "sampler",
         container_id="c1",
-        base_model="Qwen/Qwen3-8B",
-        event_type=event_type,
-        timestamp=timestamp,
-        event_uuid=f"{event_type}-{app_name}-{timestamp}-{json.dumps(values)}",
         **values,
     )
 
 
 def shared_pool_rows(*, idle_s=0.0):
-    trainer, sampler = "dd-prod-trainer-qwen3-8b", "dd-prod-inference-qwen3-8b"
     rows = [
-        row("training", trainer, model_id="model-a", token_count=25_000_000),
-        row("training", trainer, model_id="model-b", token_count=50_000_000),
+        row(TRAINER, session_id="session-a", train_tokens=25_000_000),
+        row(TRAINER, session_id="session-b", train_tokens=50_000_000),
         row(
-            "sampling_prefill", sampler, session_id="session-a", token_count=10_000_000
-        ),
-        row(
-            "sampling_prefill",
-            sampler,
+            SAMPLER,
             session_id="session-a",
-            cached=True,
-            token_count=25_000_000,
-        ),
-        row("sampling_sample", sampler, session_id="session-a", token_count=4_000_000),
-        row(
-            "sampling_prefill", sampler, session_id="session-b", token_count=15_000_000
+            prompt_tokens=35_000_000,
+            cached_prompt_tokens=25_000_000,
+            completion_tokens=4_000_000,
         ),
         row(
-            "sampling_prefill",
-            sampler,
+            SAMPLER,
             session_id="session-b",
-            cached=True,
-            token_count=50_000_000,
+            prompt_tokens=65_000_000,
+            cached_prompt_tokens=50_000_000,
+            completion_tokens=20_000_000,
         ),
-        row("sampling_sample", sampler, session_id="session-b", token_count=20_000_000),
     ]
     if idle_s:
-        rows += [
-            row("busy", trainer, seconds=3600 - idle_s),
-            row("idle", trainer, seconds=idle_s),
-        ]
-    return rows, {trainer: 10.0, sampler: 4.0}
+        rows.append(row(TRAINER, busy_seconds=3600 - idle_s, idle_seconds=idle_s))
+    return rows, {TRAINER: 10.0, SAMPLER: 4.0}
 
 
 @pytest.mark.parametrize(
@@ -91,7 +81,7 @@ def test_shared_pool_cost_splits_by_token_price_and_sums_to_the_bill(
 ) -> None:
     rows, app_costs = shared_pool_rows(idle_s=idle_s)
 
-    costs = attribute_cost(rows, app_costs, RATES, sessions=SESSIONS, models=MODELS)
+    costs = attribute_cost(rows, app_costs, RATES, sessions=SESSIONS)
 
     assert costs.keys() == expected.keys()
     for group, usd in expected.items():
@@ -100,46 +90,54 @@ def test_shared_pool_cost_splits_by_token_price_and_sums_to_the_bill(
 
 
 def test_same_work_costs_the_same_across_the_window() -> None:
-    trainer = "trainer"
     sessions = {f"s{name}": {"run_id": name} for name in "ABC"}
     rows = [
-        row("training", trainer, session_id="sA", token_count=1_000_000),
-        row("training", trainer, session_id="sB", token_count=1_000_000),
-        row("training", trainer, session_id="sC", token_count=500_000),
-        row(
-            "training",
-            trainer,
-            session_id="sC",
-            token_count=500_000,
-            timestamp=HOUR + 3600,
-        ),
+        row(TRAINER, session_id="sA", train_tokens=1_000_000),
+        row(TRAINER, session_id="sB", train_tokens=1_000_000),
+        row(TRAINER, session_id="sC", train_tokens=500_000),
+        row(TRAINER, session_id="sC", train_tokens=500_000, timestamp=HOUR + 3600),
     ]
 
     # $8 in hour 1 and $4 in hour 2, reported as one window.
-    costs = attribute_cost(rows, {trainer: 12.0}, RATES, sessions=sessions, models={})
+    costs = attribute_cost(rows, {TRAINER: 12.0}, RATES, sessions=sessions)
 
     assert costs == pytest.approx({"A": 4.0, "B": 4.0, "C": 4.0})
 
 
 def test_cost_without_usage_is_unattributed() -> None:
-    costs = attribute_cost([], {"trainer": 3.0}, RATES, sessions={}, models={})
+    costs = attribute_cost([], {TRAINER: 3.0}, RATES, sessions={})
     assert costs == {"unattributed": 3.0}
 
 
-def test_cold_start_is_charged_to_the_model_that_started_the_trainer() -> None:
+def test_cold_start_is_charged_to_the_session_that_started_the_trainer() -> None:
     rows = [
-        row("cold_start", "trainer", model_id="model-a", seconds=300),
-        row("busy", "trainer", seconds=600),
-        row("training", "trainer", model_id="model-a", token_count=1_000_000),
-        row("training", "trainer", model_id="model-b", token_count=1_000_000),
+        row(TRAINER, session_id="session-a", cold_start_seconds=300),
+        row(TRAINER, busy_seconds=600),
+        row(TRAINER, session_id="session-a", train_tokens=1_000_000),
+        row(TRAINER, session_id="session-b", train_tokens=1_000_000),
     ]
 
-    costs = attribute_cost(
-        rows, {"trainer": 9.0}, RATES, sessions=SESSIONS, models=MODELS
-    )
+    costs = attribute_cost(rows, {TRAINER: 9.0}, RATES, sessions=SESSIONS)
 
     # $3 of start-up goes to A; the $6 of work splits evenly.
     assert costs == pytest.approx({"A": 6.0, "B": 3.0})
+
+
+def test_rows_keep_shared_endpoint_column_names_and_types() -> None:
+    # Overlap with EndpointTokenMetricRow, so a ClickHouse writer can reuse its shape.
+    shared = {
+        "workspace_id": "str",
+        "environment_id": "str",
+        "timestamp": "float",
+        "model_id": "str",
+        "request_uuid": "str",
+        "prompt_tokens": "int",
+        "completion_tokens": "int",
+        "cached_prompt_tokens": "int",
+        "reasoning_tokens": "int",
+    }
+    columns = {field.name: field.type for field in fields(UsageRow)}
+    assert {name: columns.get(name) for name in shared} == shared
 
 
 class FlakySink(DirectorySink):
@@ -164,39 +162,51 @@ def test_meter_writes_closed_minutes_once_even_when_a_write_is_retried(
         sink, deployment="dd-prod", container_id="c1", clock=lambda: now[0]
     )
 
-    def train(tokens):
-        meter.add(
-            "training",
-            app_name="trainer",
-            app_kind="trainer",
+    def sample(prompt, cached, output):
+        meter_sample(
+            meter,
+            app_name=SAMPLER,
             base_model="Qwen/Qwen3-8B",
-            model_id="model-a",
-            tokens=tokens,
+            session_id="session-a",
+            stats={
+                "prefill_tokens": prompt,
+                "cached_prompt_tokens": cached,
+                "generated_tokens": output,
+            },
         )
 
-    train(100)
-    train(20)
+    sample(100, 60, 10)
+    sample(20, 0, 5)
     assert meter.flush() == 0  # The minute is still open.
 
     now[0] = HOUR + 61
-    train(7)  # A new minute; it stays in memory.
+    sample(7, 0, 1)  # A new minute; it stays in memory.
     with pytest.raises(OSError):
         meter.flush()
     assert meter.flush() == 1
 
-    rows = sink.read(HOUR, HOUR + 3600)
-    assert [(r.timestamp, r.token_count) for r in rows] == [(HOUR, 120)]
+    [first] = sink.read(HOUR, HOUR + 3600)
+    assert (
+        first.prompt_tokens,
+        first.cached_prompt_tokens,
+        first.completion_tokens,
+    ) == (
+        120,
+        60,
+        15,
+    )
 
     meter.close()
-    assert sorted(r.token_count for r in sink.read(HOUR, HOUR + 3600)) == [7, 120]
+    assert sorted(r.prompt_tokens for r in sink.read(HOUR, HOUR + 3600)) == [7, 120]
 
 
 def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
     sink = DirectorySink(tmp_path)
     rows, _ = shared_pool_rows()
+    # Trainers know the training model, not the session; the reader resolves it.
+    rows[0] = row(TRAINER, training_model_id="model-a", train_tokens=25_000_000)
     sink.write(rows)
     sink.put_model("model-a", "session-a")
-    sink.put_model("model-b", "session-b")
     for session_id, metadata in SESSIONS.items():
         sink.put_session(
             session_id, allowed_metadata({**metadata, "api_token": "x"}), HOUR
@@ -211,11 +221,19 @@ def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
             event.session_id,
             event.event_info.type,
             getattr(event.event_info, "cached", None),
-        ): (event.event_info.token_count)
+        ): event.event_info.token_count
         for event in usage.data
     }
-    assert totals[("session-a", "training", None)] == 25_000_000
-    assert totals[("session-b", "sampling_prefill", True)] == 50_000_000
+    assert totals == {
+        ("session-a", "training", None): 25_000_000,
+        ("session-b", "training", None): 50_000_000,
+        ("session-a", "sampling_prefill", False): 10_000_000,
+        ("session-a", "sampling_prefill", True): 25_000_000,
+        ("session-a", "sampling_sample", None): 4_000_000,
+        ("session-b", "sampling_prefill", False): 15_000_000,
+        ("session-b", "sampling_prefill", True): 50_000_000,
+        ("session-b", "sampling_sample", None): 20_000_000,
+    }
     assert usage.sessions["session-a"].user_metadata == SESSIONS["session-a"]
     assert [event.event_info.token_count for event in usage.data][:2] == [
         50_000_000,
@@ -256,7 +274,7 @@ def test_engine_meters_tokens_of_completed_forward_backward_only(
 
     async def run() -> FutureStatus:
         usage = TrainerUsage(
-            meter, app_name="trainer", base_model="Qwen/Qwen3-8B", started_at=0
+            meter, app_name=TRAINER, base_model="Qwen/Qwen3-8B", started_at=0
         )
         server = Engine(executor(), usage=usage)
         await server.accept_model("model-a", {})
@@ -269,6 +287,7 @@ def test_engine_meters_tokens_of_completed_forward_backward_only(
     meter.close()
 
     rows = sink.read(0, 2**32)
-    assert [r.token_count for r in rows if r.event_type == "training"] == trained
-    assert [r.model_id for r in rows if r.event_type == "cold_start"] == ["model-a"]
-    assert {r.event_type for r in rows} >= {"busy", "idle"}
+    assert [r.train_tokens for r in rows if r.train_tokens] == trained
+    assert [r.training_model_id for r in rows if r.cold_start_seconds] == ["model-a"]
+    assert sum(r.busy_seconds for r in rows) > 0
+    assert sum(r.idle_seconds for r in rows) > 0

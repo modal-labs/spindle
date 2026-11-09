@@ -30,7 +30,7 @@ from spindle.providers.contracts import (
     SessionKeyValueStores,
 )
 from spindle.telemetry.metadata import experiment_tags
-from spindle.usage import DEFAULT_METADATA_KEYS, DirectorySink, allowed_metadata
+from spindle.usage import DEFAULT_METADATA_KEYS, UsageWriter, allowed_metadata
 
 from .keys import (
     model_creation_key,
@@ -215,7 +215,7 @@ class ControlPlane:
         creation_error: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_gpu_wait: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_slots: Callable[[str], int | None] = lambda _: None,
-        usage: DirectorySink | None = None,
+        usage: UsageWriter | None = None,
         usage_metadata_keys: tuple[str, ...] = DEFAULT_METADATA_KEYS,
     ) -> None:
         self.kv = kv

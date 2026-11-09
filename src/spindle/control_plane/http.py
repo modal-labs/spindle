@@ -30,7 +30,7 @@ from spindle.providers.contracts import Parameterization
 from spindle.request_timing import enabled as request_timing_enabled
 from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
-from spindle.usage import billing_usage
+from spindle.usage import UsageReader, billing_usage
 from spindle.version import __version__, source_commit
 
 from .deployments import (
@@ -216,6 +216,7 @@ def create_control_plane_app(
     apps_status: Callable[[Routable], Awaitable[dict[str, str]]] | None = None,
     deploy_apps: Callable[[Routable], Awaitable[None]] | None = None,
     stop_apps: Callable[[Routable], Awaitable[None]] | None = None,
+    usage_reader: UsageReader | None = None,
 ) -> FastAPI:
     routes = (
         definitions
@@ -451,10 +452,10 @@ def create_control_plane_app(
     async def billing_usage_events(
         starting_on: str, ending_before: str
     ) -> dict[str, object]:
-        if control_plane.usage is None:
+        if usage_reader is None:
             raise RecordUnavailable("billing", "usage", "unconfigured")
         return await asyncio.to_thread(
-            billing_usage, control_plane.usage, starting_on, ending_before
+            billing_usage, usage_reader, starting_on, ending_before
         )
 
     @app.post("/api/v1/session_heartbeat")
