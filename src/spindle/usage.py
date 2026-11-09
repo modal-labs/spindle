@@ -384,12 +384,15 @@ class TrainerUsage:
         app_name: str,
         base_model: str,
         started_at: float,
+        cold_start_model: str | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.meter = meter
         self.app_name = app_name
         self.base_model = base_model
         self._cold_start_s = max(0.0, clock() - started_at)
+        if cold_start_model is not None:
+            self.accepted(cold_start_model)
 
     def trained(
         self, model_id: str, payload: object, forward_only: bool = False
@@ -400,7 +403,7 @@ class TrainerUsage:
             self._add(training_model_id=model_id, **{column: tokens})
 
     def accepted(self, model_id: str) -> None:
-        """Charge the container's start-up to the first model it accepted."""
+        """Charge start-up to the model that triggered it, else the first one accepted."""
         if self._cold_start_s:
             self._add(training_model_id=model_id, cold_start_seconds=self._cold_start_s)
             self._cold_start_s = 0.0

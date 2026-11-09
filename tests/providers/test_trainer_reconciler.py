@@ -358,3 +358,37 @@ def test_trainer_reconciler_scales_without_a_cap() -> None:
         )
 
     asyncio.run(run())
+
+
+def test_new_trainers_start_for_the_oldest_waiting_models() -> None:
+    async def run() -> None:
+        from spindle.providers.modal.engines import cold_start_trigger_key
+
+        kv = InMemoryKeyValueStore()
+        engines = LocalEnginePlatform(DEFINITION, EchoExecutor, max_models=1)
+        ticks = iter(range(1, 100))
+        plane = ControlPlane(kv, engines, clock=lambda: float(next(ticks)))
+        session = await plane.create_session()
+        models = [
+            await plane.create_model(
+                session_id=session.session_id,
+                model_seq_id=index,
+                definition_id=DEFINITION,
+                spec={},
+            )
+            for index in range(2)
+        ]
+
+        await reconcile_trainers(
+            kv, engines, DEFINITION, revision=None, maximum_instances=None
+        )
+
+        triggers = [
+            (await kv.get(cold_start_trigger_key(instance.instance_id)))["model_id"]
+            for instance in sorted(
+                await engines.list_instances(), key=lambda item: item.instance_id
+            )
+        ]
+        assert sorted(triggers) == sorted(model.model.model_id for model in models)
+
+    asyncio.run(run())

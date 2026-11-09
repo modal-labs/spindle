@@ -23,7 +23,7 @@ from spindle.engine.http import create_engine_app
 from spindle.startup_timing import TRAINER_COMPONENT, timeline
 from spindle.telemetry.trainer import TrainerTelemetry
 
-from .engines import EngineInstanceRecord, instance_key
+from .engines import EngineInstanceRecord, cold_start_trigger_key, instance_key
 from .kv import ModalKeyValueStore
 from .trainer_reconciler import request_reconcile
 
@@ -44,6 +44,11 @@ async def _kick_trainer_reconciler(definition_id: str) -> None:
         return call.object_id
 
     await request_reconcile(spawn, definition_id)
+
+
+async def _cold_start_trigger(kv: ModalKeyValueStore, instance_id: str) -> str | None:
+    record = await kv.get(cold_start_trigger_key(instance_id))
+    return record.get("model_id") if isinstance(record, dict) else None
 
 
 async def serve_engine(
@@ -152,7 +157,7 @@ def run_engine_with_backend(
     operation_timeout: float = BACKEND_OPERATION_TIMEOUT,
     notify_reconciler: bool = True,
     on_startup_error: Callable[[Exception], Awaitable[None]] | None = None,
-    usage: Callable[[], UsageRecorder] | None = None,
+    usage: Callable[[str | None], UsageRecorder] | None = None,
 ) -> None:
     if sampler_persistence_concurrency > 1 and nproc != 1:
         raise ValueError(
@@ -229,7 +234,11 @@ def run_engine_with_backend(
                                 sampler_persistence_concurrency=sampler_persistence_concurrency,
                                 max_forward_backward_batch=max_forward_backward_batch,
                                 max_forward_backward_models=max_forward_backward_models,
-                                usage=usage() if usage is not None else None,
+                                usage=(
+                                    usage(await _cold_start_trigger(kv, instance_id))
+                                    if usage is not None
+                                    else None
+                                ),
                             )
                     except httpx.TransportError:
                         pass

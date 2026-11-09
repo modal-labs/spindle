@@ -50,6 +50,11 @@ def instance_key(instance_id: str) -> str:
     return f"engine_instance:{instance_id}"
 
 
+def cold_start_trigger_key(instance_id: str) -> str:
+    """The model whose waiting demand made the reconciler start this trainer."""
+    return f"cold_start_trigger:{instance_id}"
+
+
 def call_key(instance_id: str) -> str:
     return f"engine_call:{instance_id}"
 

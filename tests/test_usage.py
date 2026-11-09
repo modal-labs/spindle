@@ -316,3 +316,23 @@ def test_engine_meters_tokens_of_completed_training_commands_only(
     assert [r.training_model_id for r in rows if r.cold_start_seconds] == ["model-a"]
     assert sum(r.busy_seconds for r in rows) > 0
     assert sum(r.idle_seconds for r in rows) > 0
+
+
+def test_cold_start_goes_to_the_model_that_triggered_it_not_the_first_accepted(
+    tmp_path,
+) -> None:
+    sink = DirectorySink(tmp_path)
+    meter = UsageMeter(sink, deployment="dd-prod", container_id="c1")
+    usage = TrainerUsage(
+        meter,
+        app_name=TRAINER,
+        base_model="Qwen/Qwen3-8B",
+        started_at=0,
+        cold_start_model="model-b",
+    )
+
+    usage.accepted("model-a")
+    meter.close()
+
+    rows = sink.read(0, 2**32)
+    assert [r.training_model_id for r in rows if r.cold_start_seconds] == ["model-b"]

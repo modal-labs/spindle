@@ -20,6 +20,7 @@ from spindle.providers.contracts import (
     KeyValueStore,
 )
 
+from .engines import cold_start_trigger_key
 from .kv import shared_kv
 
 RECONCILE_CALL_KEY = "trainer_reconcile:call"
@@ -231,8 +232,21 @@ async def reconcile_trainers(
             if maximum_instances is None
             else max(0, maximum_instances - len(records))
         )
-        for _ in range(min(max(0, desired - len(usable)), available)):
+        # Each new trainer starts for the oldest waiting models that the
+        # trainers already starting will not take.
+        waiting = sorted(
+            (model for model in live_models if model.model_id not in placements),
+            key=lambda model: model.created_at,
+        )
+        starting = sum(record.state == "starting" for record in usable)
+        for index in range(min(max(0, desired - len(usable)), available)):
             instance = await engines.spawn_instance(definition_id)
+            position = (starting + index) * models_per_instance
+            if position < len(waiting):
+                await kv.put(
+                    cold_start_trigger_key(instance.instance_id),
+                    {"model_id": waiting[position].model_id},
+                )
             usable.append(instance)
     records = [
         instance
