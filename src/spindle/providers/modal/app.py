@@ -486,10 +486,10 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
                 )
             router = _routers[spec.app_name]
 
-        async def keep_pool_ready(spec: LoraPoolSpec = spec) -> None:
+        async def keep_pool_ready() -> None:
             # Retries can outlive the cached readiness check. The pool's URL
             # is stable across redeployment of the same definition/revision.
-            await _ready_lora_pool(spec)
+            await _ready_lora_pool(spec)  # ty: ignore[invalid-argument-type]
 
         return await sample_task(
             task,
@@ -574,7 +574,6 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     call_id = modal.current_function_call_id()
-    assert call_id is not None
 
     async def run(definition_id: str, token: str) -> None:
         parameterization = await parameterization_for(definition_id)
@@ -611,7 +610,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
             *(run(definition_id, token) for definition_id, token in pending.items())
         )
     finally:
-        await release_reconcile_call(call_id)
+        await release_reconcile_call(call_id)  # ty: ignore[invalid-argument-type]
     remaining = await pending_reconciliations()
     if remaining:
         await kick_trainer_reconciler(next(iter(remaining)))
@@ -947,14 +946,12 @@ async def _cleanup_fft_pools() -> tuple[str, ...]:
     registry = fft_pool_kv()
     for key, value in await registry.list_items("fft_pool:"):
         try:
-            if not isinstance(value, dict):
-                raise ValueError("FFT pool record must be an object")
-            spec = FFTPoolSpec.from_dict(value)
+            spec = FFTPoolSpec.from_dict(value)  # ty: ignore[invalid-argument-type]
             if spec.latest:
                 if spec.app_name in active_latest:
                     continue
             else:
-                if await _last_touched(registry, spec, value) > (
+                if await _last_touched(registry, spec, value) > (  # ty: ignore[invalid-argument-type]
                     time.time() - FFT_POOL_IDLE_TIMEOUT
                 ):
                     continue
@@ -992,9 +989,7 @@ async def _cleanup_lora_pools() -> tuple[str, ...]:
     stopped = []
     for key, value in await registry.list_items("lora_pool:"):
         try:
-            if not isinstance(value, dict):
-                raise ValueError("LoRA pool record must be an object")
-            spec = LoraPoolSpec.from_dict(value)
+            spec = LoraPoolSpec.from_dict(value)  # ty: ignore[invalid-argument-type]
             if spec.app_name in active:
                 continue
             if float(value.get("touched_at", 0.0)) > (

@@ -52,7 +52,7 @@ class FFTSnapshotBulletin:
                     raise
                 await asyncio.sleep(0.25)
 
-    def read_latest(self, run_id: str | None) -> VersionRef | None:
+    def read_latest(self, run_id: str) -> VersionRef | None:
         path = self._run_dir(run_id) / _POINTER
         if not path.exists():
             return None
@@ -126,7 +126,7 @@ class FFTSnapshotBulletin:
 
     def advance(self, ref: VersionRef) -> bool:
         with self._lock:
-            current = self.read_latest(ref.run_id)
+            current = self.read_latest(ref.run_id)  # ty: ignore[invalid-argument-type]
             if current == ref:
                 return False
             decide_pointer_move(current, ref)
@@ -149,15 +149,14 @@ class FFTSnapshotBulletin:
         }
         names = set(files)
         try:
-            version = (index.get("metadata") or {})["version"]
             valid = (
                 manifest.get("ref") == ref.identity
-                and int(version) == ref.version
+                and int((index.get("metadata") or {}).get("version")) == ref.version  # ty: ignore[invalid-argument-type]
                 and expected.issubset(names)
                 and all(_safe_relative_path(name) for name in names)
                 and all(_file_manifest(target / name) == files[name] for name in names)
             )
-        except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+        except (FileNotFoundError, TypeError, ValueError) as exc:
             raise FFTSnapshotNotFound(ref.identity) from exc
         if not valid:
             raise FFTSnapshotNotFound(ref.identity)

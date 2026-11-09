@@ -1,14 +1,6 @@
 """Flat Python recipes. Modal and the backend validate their own options."""
 
 from copy import deepcopy
-from typing import TypedDict
-
-
-class Platform(TypedDict):
-    frontend: str
-    modal: dict[str, str | None]
-    secrets: dict[str, str]
-    storage: dict[str, str]
 
 
 def _apply_overrides(values, overrides):
@@ -21,7 +13,7 @@ def _apply_overrides(values, overrides):
 
 
 class BaseConfig:
-    platform: Platform = {
+    platform = {
         "frontend": "spindle",
         "modal": {"environment": None, "region": None},
         "secrets": {

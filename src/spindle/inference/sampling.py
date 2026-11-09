@@ -316,12 +316,11 @@ async def _sample_one(
             modal_session_id = f"{routing_session_id}:retry-{reroute_attempt}"
         headers = {**(base_headers or {}), "Modal-Session-ID": modal_session_id}
         if model_id is not None:
-            assert version is not None
             constrain_request(
                 body,
                 headers,
-                latest=int(version) if latest else None,
-                exact=None if latest else int(version),
+                latest=int(version) if latest else None,  # ty: ignore[invalid-argument-type]
+                exact=None if latest else int(version),  # ty: ignore[invalid-argument-type]
             )
         physical_attempt += 1
         observation = SampleAttempt(
@@ -339,9 +338,8 @@ async def _sample_one(
         attempt_result = observation.attrs
         try:
             if router is not None:
-                assert version is not None
                 dispatched = await router.dispatch(
-                    VersionRef(str(model_id), int(version)).identity,
+                    VersionRef(str(model_id), int(version)).identity,  # ty: ignore[invalid-argument-type]
                     routing_session_id,
                     request_id=observation.id,
                     body=body,

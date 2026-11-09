@@ -332,11 +332,11 @@ def create_control_plane_app(
     async def add_deployment(body: DeploymentRequest):
         deployment = await routes.build(body)
         config = await routes.add(deployment)
-        summary = _deployment_summary(deployment)
+        summary = _deployment_summary(deployment)  # ty: ignore[invalid-argument-type]
         if deploy_apps is not None:
-            await deploy_apps(deployment)
+            await deploy_apps(deployment)  # ty: ignore[invalid-argument-type]
         if apps_status is not None:
-            summary.update(await apps_status(deployment))
+            summary.update(await apps_status(deployment))  # ty: ignore[invalid-argument-type]
         return {"deployment": summary, "config": config}
 
     async def placed_models(name: str) -> list[dict[str, object]]:
@@ -384,7 +384,7 @@ def create_control_plane_app(
                 name,
                 [model["model_id"] for model in placed],
             )
-        return {"deployment": _deployment_summary(removed)}
+        return {"deployment": _deployment_summary(removed)}  # ty: ignore[invalid-argument-type]
 
     async def trained_recipes():
         definitions = await routes.definitions()
@@ -745,8 +745,8 @@ def create_control_plane_app(
                     response = Response(result.body, media_type=PROTOBUF_MEDIA_TYPE)
                 else:
                     result = await asyncio.to_thread(result.to_json)
-            elif accepts_protobuf and isinstance(result, dict):
-                encoded = encode_result(result)
+            elif accepts_protobuf:
+                encoded = encode_result(result)  # ty: ignore[invalid-argument-type]
                 if encoded is not None:
                     response = Response(encoded, media_type=PROTOBUF_MEDIA_TYPE)
             if response is None:

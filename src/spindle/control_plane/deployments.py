@@ -8,11 +8,11 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from collections.abc import Callable, Iterable
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from spindle.configuration import BaseConfig, Platform
+from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig
 from spindle.providers.contracts import KeyValueStore
 
@@ -60,6 +60,13 @@ class DeploymentRequest(BaseModel):
         return self
 
 
+class Platform(TypedDict):
+    frontend: str
+    modal: dict[str, str | None]
+    secrets: dict[str, str]
+    storage: dict[str, str]
+
+
 @dataclass(frozen=True)
 class FrontendSettings:
     platform: Platform
@@ -70,24 +77,18 @@ class FrontendSettings:
     @classmethod
     def from_recipe(cls, recipe: BaseConfig) -> FrontendSettings:
         return cls(
-            platform=recipe.platform,
+            platform=recipe.platform,  # ty: ignore[invalid-argument-type]
             **{field: getattr(recipe, field) for field in FRONTEND_FIELDS},
         )
 
 
 class Routable(Protocol):
-    @property
-    def definition_id(self) -> str: ...
-    @property
-    def name(self) -> str: ...
-    @property
-    def model(self) -> str: ...
-    @property
-    def weights_repo(self) -> str: ...
-    @property
-    def parameterization(self) -> str: ...
-    @property
-    def max_context_length(self) -> int: ...
+    definition_id: str
+    name: str
+    model: str
+    weights_repo: str
+    parameterization: str
+    max_context_length: int
 
 
 async def mark_registry_changed(versions: KeyValueStore) -> str:
@@ -234,8 +235,7 @@ class DeploymentRoutes:
         """Compile a request into a config under this frontend's settings."""
         recipe = request.recipe
         if recipe is None:
-            assert request.base is not None
-            parent = await self.get(request.base)
+            parent = await self.get(request.base)  # ty: ignore[invalid-argument-type]
             if not isinstance(parent, DeploymentConfig):
                 raise ValueError("unknown base deployment")
             recipe = vars(parent.recipe)

@@ -179,7 +179,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
             else image_for(recipe.backend, recipe.trainer_image)
         ),
         gpu=gpu_request(recipe.trainer_gpu, recipe.trainer_gpus_per_node),
-        region=platform["modal"]["region"],
+        region=platform["modal"]["region"],  # ty: ignore[invalid-argument-type]
         cpu=recipe.trainer_cpu,
         memory=recipe.trainer_memory_mib,
         ephemeral_disk=recipe.trainer_disk_mib or None,
@@ -189,7 +189,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         single_use_containers=True,
         volumes=volumes_for(platform),
         secrets=secrets_for(platform, training=True),
-        env=env,
+        env=env,  # ty: ignore[invalid-argument-type]
         experimental_options={"efa_enabled": True} if recipe.trainer_nodes > 1 else {},
     )(trainer)
 
@@ -246,7 +246,7 @@ def run_trainer(deployment, instance_id, platform=None):
         )
 
     run_engine_with_backend(
-        shared_kv(),
+        shared_kv(),  # ty: ignore[invalid-argument-type]
         executor,
         definition_id=deployment.definition_id,
         revision=config["image_id"],
@@ -348,19 +348,17 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                     recipe.inference_startup_timeout_s,
                 )
                 startup.mark("sglang_healthy")
+                kwargs = dict(
+                    port=8000,
+                    sglang_port=8001,
+                    bulletin_root="/bulletin",
+                    bulletin_volume=platform["storage"]["bulletin"],
+                )
                 self.sidecar = (
-                    start_lora_sidecar(
-                        port=8000,
-                        sglang_port=8001,
-                        bulletin_root="/bulletin",
-                        bulletin_volume=platform["storage"]["bulletin"],
-                    )
+                    start_lora_sidecar(**kwargs)  # ty: ignore[invalid-argument-type]
                     if lora
                     else start_fft_sidecar(
-                        port=8000,
-                        sglang_port=8001,
-                        bulletin_root="/bulletin",
-                        bulletin_volume=platform["storage"]["bulletin"],
+                        **kwargs,  # ty: ignore[invalid-argument-type]
                         run_id=pool.model_id,
                         pinned_version=None if pool.latest else pool.version,
                     )

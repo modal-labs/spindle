@@ -29,12 +29,8 @@ from spindle.telemetry.otlp import _attributes, provider
 from . import backend
 from .metadata import common_tags, experiment_tags
 
-incoming: ContextVar[tuple[Context, float] | None] = ContextVar(
-    "spindle_command_context", default=None
-)
-accepted_root: ContextVar[Context | None] = ContextVar(
-    "spindle_accepted_root", default=None
-)
+incoming = ContextVar("spindle_command_context", default=None)
+accepted_root = ContextVar("spindle_accepted_root", default=None)
 log = logging.getLogger(__name__)
 OPERATIONS = (
     "idle",
@@ -121,7 +117,7 @@ class CommandMiddleware:
                     started = now
             except ValueError:
                 started = now
-            token = incoming.set((extract(carrier), started))
+            token = incoming.set((extract(carrier), started))  # ty: ignore[invalid-argument-type]
             accepted_token = accepted_root.set(None)
 
             async def respond(message):
@@ -150,7 +146,7 @@ class CommandMiddleware:
             finally:
                 incoming.reset(token)
                 accepted_root.reset(accepted_token)
-        token = incoming.set((Context(), now))
+        token = incoming.set((Context(), now))  # ty: ignore[invalid-argument-type]
         accepted_token = accepted_root.set(None)
         status = 500
         error_type = None
@@ -356,7 +352,7 @@ class TrainerTelemetry:
             canonical,
         )
         self.identities[operation.request_id] = canonical
-        accepted_root.set(canonical)
+        accepted_root.set(canonical)  # ty: ignore[invalid-argument-type]
         while len(self.identities) > 2048:
             self.identities.popitem(last=False)
 

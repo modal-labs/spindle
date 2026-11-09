@@ -8,7 +8,6 @@ import os
 
 import modal
 
-from spindle.configuration import Platform
 from spindle.control_plane.deployments import FrontendSettings, mark_registry_changed
 from spindle.deployments import DeploymentConfig
 
@@ -29,7 +28,7 @@ def frontend_settings_from_env() -> FrontendSettings:
     return FrontendSettings(**json.loads(value))
 
 
-def platform_from_env() -> Platform:
+def platform_from_env() -> dict:
     if os.environ.get(FRONTEND_SETTINGS_ENV):
         return frontend_settings_from_env().platform
     value = os.environ.get(PLATFORM_ENV)

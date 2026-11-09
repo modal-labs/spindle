@@ -34,14 +34,13 @@ def publish_staged(
 ) -> None:
     """Promote a staged delta into the bulletin and wake its sampler pool."""
     staging = board.staging_dir(ref)
-    assert ref.run_id is not None
     board.prepare(ref, staging, metadata=metadata)
-    pool = publication_pool(os.environ["SPINDLE_DEFINITION_ID"], ref.run_id)
+    pool = publication_pool(os.environ["SPINDLE_DEFINITION_ID"], ref.run_id)  # ty: ignore[invalid-argument-type]
     stitch_publish_version(
-        FFTSnapshotStore(board, ref.run_id),
+        FFTSnapshotStore(board, ref.run_id),  # ty: ignore[invalid-argument-type]
         pool,
         str(staging),
-        run_id=ref.run_id,
+        run_id=ref.run_id,  # ty: ignore[invalid-argument-type]
     )
 
 
@@ -49,7 +48,7 @@ def discard_staged(
     board: FFTSnapshotBulletin, *, ref: VersionRef, parent: VersionRef
 ) -> None:
     """Remove a publication that did not complete, keeping a pointer that moved."""
-    current = board.read_latest(ref.run_id)
+    current = board.read_latest(ref.run_id)  # ty: ignore[invalid-argument-type]
     if current is None or current == parent:
         shutil.rmtree(board.snapshot_dir(ref), ignore_errors=True)
     shutil.rmtree(board.staging_dir(ref), ignore_errors=True)

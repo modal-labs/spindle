@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Literal, cast
 
 import numpy as np
 from tinker import ModelInput
-from tinker.types.datum import Datum as TinkerDatum
 from tinker.types._pydantic_types.datum import Datum
 from tinker.types._pydantic_types.tensor_data import TensorData
 from tinker.types.forward_backward_input import ForwardBackwardInput
@@ -17,7 +15,7 @@ from .api import OperationKind
 from .operations import OperationPayload, parse_operation_payload
 
 _ENVELOPE_FIELDS = {"model_id", "seq_id", "type"}
-_PROTO_DTYPES: dict[str, tuple[str, Literal["float32", "int64"]]] = {
+_PROTO_DTYPES = {
     "DTYPE_FLOAT32": ("f", "float32"),
     "DTYPE_INT64": ("q", "int64"),
 }
@@ -36,10 +34,7 @@ def decode_forward_backward(
             else OperationKind.FORWARD_BACKWARD
         )
         payload = ForwardBackwardInput(
-            # The SDK dataclass also carries validated Pydantic wire data.
-            data=cast(
-                list[TinkerDatum], [_decode_proto_datum(item) for item in message.data]
-            ),
+            data=[_decode_proto_datum(item) for item in message.data],  # ty: ignore[invalid-argument-type]
             loss_fn=message.loss_fn,
             loss_fn_config=_read_loss_fn_config(message),
         )
@@ -160,13 +155,15 @@ def _decode_proto_tensor(value) -> TensorData:
         sparse = value.sparse_csr
         return TensorData(
             data=_decode_values(sparse.values, item_format),
-            dtype=dtype,
+            dtype=dtype,  # ty: ignore[invalid-argument-type]
             shape=shape,
             sparse_crow_indices=_decode_values(sparse.crow_indices, "q"),
             sparse_col_indices=_decode_values(sparse.col_indices, "q"),
         )
     return TensorData(
-        data=_decode_values(value.dense, item_format), dtype=dtype, shape=shape
+        data=_decode_values(value.dense, item_format),
+        dtype=dtype,  # ty: ignore[invalid-argument-type]
+        shape=shape,
     )
 
 

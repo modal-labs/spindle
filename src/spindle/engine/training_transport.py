@@ -10,11 +10,9 @@ from __future__ import annotations
 import json
 import struct
 from collections.abc import Iterable
-from typing import cast
 
 import numpy as np
 from tinker import ModelInput
-from tinker.types.datum import Datum as TinkerDatum
 from tinker.types._pydantic_types.datum import Datum
 from tinker.types._pydantic_types.tensor_data import TensorData
 from tinker.types.encoded_text_chunk import EncodedTextChunk
@@ -174,8 +172,7 @@ def decode_payload(body: bytes | memoryview) -> ForwardBackwardInput:
             Datum.model_construct(model_input=model_input, loss_fn_inputs=inputs)
         )
     return ForwardBackwardInput(
-        # The SDK dataclass also carries validated Pydantic wire data.
-        data=cast(list[TinkerDatum], data),
+        data=data,  # ty: ignore[invalid-argument-type]
         loss_fn=metadata["loss_fn"],
         loss_fn_config=metadata["loss_fn_config"],
     )

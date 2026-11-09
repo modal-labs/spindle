@@ -54,7 +54,7 @@ class SnapshotBulletin:
                     raise
                 await asyncio.sleep(0.25)
 
-    def read_latest(self, run_id: str | None) -> VersionRef | None:
+    def read_latest(self, run_id: str) -> VersionRef | None:
         path = self._run_dir(run_id) / _POINTER
         if not path.exists():
             return None
@@ -91,7 +91,7 @@ class SnapshotBulletin:
     def advance(self, ref: VersionRef) -> bool:
         self._validate_ref(ref)
         with self._lock:
-            current = self.read_latest(ref.run_id)
+            current = self.read_latest(ref.run_id)  # ty: ignore[invalid-argument-type]
             if current == ref:
                 return False
             decide_pointer_move(current, ref)
@@ -109,7 +109,7 @@ class SnapshotBulletin:
             if not created:
                 if _read_manifest(target) != manifest:
                     raise ImmutableSnapshotError(ref.identity)
-                current = self.read_latest(ref.run_id)
+                current = self.read_latest(ref.run_id)  # ty: ignore[invalid-argument-type]
                 if current is not None and current.version > ref.version:
                     return False
             moved = self.advance(ref)

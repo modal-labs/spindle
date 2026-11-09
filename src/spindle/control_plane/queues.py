@@ -180,10 +180,8 @@ async def read_queues(kv: KeyValueStore, engines: EnginePlatform) -> QueueView:
         and placement.engine_boot_id
         in ("", running_boots[placement.engine_instance_id])
     )
-    by_state: Counter[tuple[str, str]] = Counter(
-        (i.definition_id, i.state) for i in listed
-    )
-    return QueueView(waiting, used, by_state)
+    by_state = Counter((i.definition_id, i.state) for i in listed)
+    return QueueView(waiting, used, by_state)  # ty: ignore[invalid-argument-type]
 
 
 async def describe_queues(
@@ -197,9 +195,8 @@ async def describe_queues(
     )
     events: dict[str, list[dict]] = defaultdict(list)
     for _, event in event_items:
-        assert isinstance(event, dict)
         if event["at"] >= now - RECENT_WINDOW_S:
-            events[event["definition_id"]].append(event)
+            events[event["definition_id"]].append(event)  # ty: ignore[invalid-argument-type]
     result = {}
     for limit in limits:
         name = limit.definition_id

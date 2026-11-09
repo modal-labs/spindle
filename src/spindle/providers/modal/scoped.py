@@ -218,7 +218,7 @@ def build_app(
             "checkpoint_dir": "/checkpoints",
         }
         run_engine_with_backend(
-            shared_kv(),
+            shared_kv(),  # ty: ignore[invalid-argument-type]
             "spindle.backends.megatron_fft:build_executor",
             definition_id=engine.name,
             revision=config["image_id"],

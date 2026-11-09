@@ -19,11 +19,11 @@ import uvicorn
 from spindle.engine import Engine
 from spindle.engine.backend_http import HttpBackendClient
 from spindle.engine.http import create_engine_app
-from spindle.providers.contracts import KeyValueStore
 from spindle.startup_timing import TRAINER_COMPONENT, timeline
 from spindle.telemetry.trainer import TrainerTelemetry
 
 from .engines import EngineInstanceRecord, instance_key
+from .kv import ModalKeyValueStore
 from .trainer_reconciler import request_reconcile
 
 ENGINE_PORT = 8000
@@ -46,7 +46,7 @@ async def _kick_trainer_reconciler(definition_id: str) -> None:
 
 
 async def serve_engine(
-    kv: KeyValueStore,
+    kv: ModalKeyValueStore,
     make_server: Callable[[], Awaitable[Engine]],
     *,
     definition_id: str,
@@ -135,7 +135,7 @@ async def serve_engine(
 
 
 def run_engine_with_backend(
-    kv: KeyValueStore,
+    kv: ModalKeyValueStore,
     executor_reference: str,
     *,
     definition_id: str,

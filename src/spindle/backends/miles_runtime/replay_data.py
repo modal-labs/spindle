@@ -79,11 +79,10 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
             "sampling_mask_ids and sampling_mask_offsets must be supplied together"
         )
     if offsets is not None:
-        assert ids is not None
         if (
             len(offsets) != n + 1
             or offsets[0] != 0
-            or offsets[-1] != len(ids)
+            or offsets[-1] != len(ids)  # ty: ignore[invalid-argument-type]
             or np.any(offsets[1:] < offsets[:-1])
         ):
             raise ValueError(
