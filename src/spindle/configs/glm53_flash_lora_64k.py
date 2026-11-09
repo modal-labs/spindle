@@ -8,7 +8,7 @@ class Config(BaseConfig):
     model = "zai-org/GLM-5.3-Flash"
     model_weights = "zai-org/GLM-5.3-Flash-BF16"
     max_context_length = 65552
-    trainer_image = "miles-v0.1.2"
+    trainer_image = "spindle.providers.modal.glm53_trainer_image:image"
     inference_image = "spindle.providers.modal.glm53_image:inference_image"
     trainer_gpu = "B200"
     trainer_gpus_per_node = 8

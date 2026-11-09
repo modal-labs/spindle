@@ -1,4 +1,4 @@
-"""GLM Flash sampler dependencies; training uses the shared Miles image."""
+"""GLM Flash sampler dependencies; training uses the GLM-specific Miles image."""
 
 from .image_dependencies import (
     CORE_PACKAGES,
