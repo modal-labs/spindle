@@ -150,15 +150,15 @@ config = Config()
 
 The frontend's URL is `https://<workspace>-<environment>--<frontend>-server.modal.run`. To choose the part after `--`, set `"platform.url_label"`; for example `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. Changing the label changes the URL clients use.
 
-Set `"platform.requires_proxy_auth": True` when the environment blocks unauthenticated URLs, or to keep the server off the open internet. Modal then rejects any request without a [proxy token](https://modal.com/docs/guide/webhook-proxy-auth) allowed for the environment, before it reaches Spindle. Clients send the token as headers next to their Tinker API key:
+Set `"platform.requires_proxy_auth": True` when the environment blocks unauthenticated URLs, or to keep the server off the open internet. Modal then rejects any request without a [proxy token](https://modal.com/docs/guide/webhook-proxy-auth) allowed for the environment, before it reaches Spindle. `spindle.ServiceClient` sends the token alongside the Tinker API key:
 
 ```python
-service = tinker.ServiceClient(
-    default_headers_overrides={"Modal-Key": token_id, "Modal-Secret": token_secret}
-)
+import spindle
+
+service = spindle.ServiceClient(proxy_token_id=token_id, proxy_token_secret=token_secret)
 ```
 
-Tinker SDKs older than 0.36 call this argument `default_headers`. Scripts that create their own `ServiceClient`, such as tinker-cookbook's, can run through [`with_proxy_auth.py`](../examples/shared-server/with_proxy_auth.py), which adds the headers to every client the script creates.
+Omit these arguments to read `MODAL_PROXY_TOKEN_ID` and `MODAL_PROXY_TOKEN_SECRET` from the environment. Scripts that create their own `ServiceClient`, such as tinker-cookbook's, can run through [`with_proxy_auth.py`](../examples/shared-server/with_proxy_auth.py), which adds the headers to every client the script creates.
 
 All configs deployed together must share platform settings. Use a shared parent config when deploying several models. Explicit `--app`, `--env`, and `--region` flags override the corresponding recipe settings for that invocation. Credentials remain in Modal secrets; recipes contain their names.
 
