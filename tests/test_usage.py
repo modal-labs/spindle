@@ -224,9 +224,15 @@ def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
         )
         sink.put_session(session_id, SessionUsage(session.user_id, labels), HOUR)
 
-    usage = types.BillingUsageResponse.model_validate(
-        billing_usage(sink, "2026-11-06T14:00:00Z", "2026-11-06T15:00:00Z")
-    )
+    response = billing_usage(sink, "2026-11-06T14:00:00Z", "2026-11-06T15:00:00Z")
+    usage = types.BillingUsageResponse.model_validate(response)
+
+    # Nothing beyond Tinker's own fields, at any level.
+    assert response.keys() <= types.BillingUsageResponse.model_fields.keys()
+    for event in response["data"]:
+        assert event.keys() <= types.BillingUsageEvent.model_fields.keys()
+    for session in response["sessions"].values():
+        assert session.keys() <= types.BillingUsageSession.model_fields.keys()
 
     totals = {
         (
@@ -263,6 +269,7 @@ def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
         ("2026-11-06T16:30:00Z", "2026-11-06T17:00:00Z", "UTC hour"),
         ("2026-11-06T17:00:00Z", "2026-11-06T16:00:00Z", "after"),
         ("2026-11-01T00:00:00Z", "2026-11-16T00:00:00Z", "14 days"),
+        ("2999-01-01T00:00:00Z", "2999-01-01T01:00:00Z", "future"),
     ],
 )
 def test_billing_usage_rejects_windows_tinker_rejects(

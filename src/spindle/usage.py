@@ -588,6 +588,8 @@ def usage_window(starting_on: str | datetime, ending_before: str | datetime):
     for value in (start, end):
         if value.minute or value.second or value.microsecond:
             raise ValueError("billing usage windows must align to a UTC hour")
+    if start > datetime.now(UTC):
+        raise ValueError("starting_on must not be in the future")
     if end <= start:
         raise ValueError("ending_before must be after starting_on")
     if end - start > MAX_QUERY_WINDOW:
