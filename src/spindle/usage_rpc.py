@@ -247,9 +247,7 @@ TABLES = (
     prompt_tokens UInt64,
     completion_tokens UInt64,
     cached_prompt_tokens UInt64,
-    reasoning_tokens UInt64,
     train_tokens UInt64,
-    forward_tokens UInt64,
     busy_seconds Float64,
     idle_seconds Float64,
     cold_start_seconds Float64,
@@ -280,8 +278,7 @@ SELECT
     sum(r.prompt_tokens) AS prompt_tokens,
     sum(r.cached_prompt_tokens) AS cached_prompt_tokens,
     sum(r.completion_tokens) AS completion_tokens,
-    sum(r.train_tokens) AS train_tokens,
-    sum(r.forward_tokens) AS forward_tokens
+    sum(r.train_tokens) AS train_tokens
 FROM training_api_token_metrics AS r FINAL
 LEFT JOIN (SELECT * FROM training_api_models FINAL WHERE workspace_id = {workspace:String}) AS m
     ON m.training_model_id = r.training_model_id
@@ -290,7 +287,7 @@ WHERE r.workspace_id = {workspace:String}
     AND r.timestamp >= toDateTime64({start:Float64}, 3, 'UTC')
     AND r.timestamp < toDateTime64({end:Float64}, 3, 'UTC')
 GROUP BY bucket_start, model_id, session_id
-HAVING prompt_tokens + completion_tokens + train_tokens + forward_tokens > 0
+HAVING prompt_tokens + completion_tokens + train_tokens > 0
 FORMAT JSONEachRow
 """
 

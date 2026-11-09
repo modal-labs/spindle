@@ -51,9 +51,7 @@ class UsageRow:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_prompt_tokens: int = 0
-    reasoning_tokens: int = 0
     train_tokens: int = 0
-    forward_tokens: int = 0
     busy_seconds: float = 0.0
     idle_seconds: float = 0.0
     cold_start_seconds: float = 0.0
@@ -64,9 +62,7 @@ COUNTERS = (
     "prompt_tokens",
     "completion_tokens",
     "cached_prompt_tokens",
-    "reasoning_tokens",
     "train_tokens",
-    "forward_tokens",
     "busy_seconds",
     "idle_seconds",
     "cold_start_seconds",
@@ -84,7 +80,6 @@ class HourlyUsage:
     cached_prompt_tokens: int = 0
     completion_tokens: int = 0
     train_tokens: int = 0
-    forward_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -221,7 +216,7 @@ class DirectorySink:
         return resolved
 
     def hourly_usage(self, start: float, end: float) -> list[HourlyUsage]:
-        totals: dict[tuple, list[int]] = defaultdict(lambda: [0, 0, 0, 0, 0])
+        totals: dict[tuple, list[int]] = defaultdict(lambda: [0, 0, 0, 0])
         for row in self.read(start, end):
             hour = math.floor(row.timestamp / 3600) * 3600
             entry = totals[(hour, row.model_id, row.session_id)]
@@ -229,7 +224,6 @@ class DirectorySink:
             entry[1] += row.cached_prompt_tokens
             entry[2] += row.completion_tokens
             entry[3] += row.train_tokens
-            entry[4] += row.forward_tokens
         return [
             HourlyUsage(hour, model_id, session_id, *counts)
             for (hour, model_id, session_id), counts in totals.items()
@@ -394,13 +388,11 @@ class TrainerUsage:
         if cold_start_model is not None:
             self.accepted(cold_start_model)
 
-    def trained(
-        self, model_id: str, payload: object, forward_only: bool = False
-    ) -> None:
+    def trained(self, model_id: str, payload: object) -> None:
+        """Count a completed forward or forward_backward, as Tinker bills both: training."""
         tokens = workload(payload).get("spindle.input_tokens")
         if tokens:
-            column = "forward_tokens" if forward_only else "train_tokens"
-            self._add(training_model_id=model_id, **{column: tokens})
+            self._add(training_model_id=model_id, train_tokens=tokens)
 
     def accepted(self, model_id: str) -> None:
         """Charge start-up to the model that triggered it, else the first one accepted."""
@@ -452,11 +444,7 @@ def billing_usage(
     data = []
     for usage in reader.hourly_usage(start.timestamp(), end.timestamp()):
         for info in (
-            # Tinker has no forward event, so forward-only tokens count as training.
-            {
-                "type": "training",
-                "token_count": usage.train_tokens + usage.forward_tokens,
-            },
+            {"type": "training", "token_count": usage.train_tokens},
             {
                 "type": "sampling_prefill",
                 "cached": False,
@@ -509,18 +497,11 @@ class Rates:
     prefill: float
     cached_prefill: float
     sample: float
-    forward: float | None = None
-
-    @property
-    def forward_rate(self) -> float:
-        """Forward-only passes default to the prefill rate."""
-        return self.prefill if self.forward is None else self.forward
 
     def price(self, row: UsageRow) -> float:
         uncached = row.prompt_tokens - row.cached_prompt_tokens
         return (
             self.train * row.train_tokens
-            + self.forward_rate * row.forward_tokens
             + self.prefill * uncached
             + self.cached_prefill * row.cached_prompt_tokens
             + self.sample * row.completion_tokens

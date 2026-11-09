@@ -140,7 +140,6 @@ def test_rows_keep_shared_endpoint_column_names_and_types() -> None:
         "prompt_tokens": "int",
         "completion_tokens": "int",
         "cached_prompt_tokens": "int",
-        "reasoning_tokens": "int",
     }
     columns = {field.name: field.type for field in fields(UsageRow)}
     assert {name: columns.get(name) for name in shared} == shared
@@ -213,8 +212,7 @@ def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
     rows[0] = row(
         TRAINER,
         training_model_id="model-a",
-        train_tokens=20_000_000,
-        forward_tokens=5_000_000,
+        train_tokens=25_000_000,
     )
     sink.write(rows)
     sink.put_model("model-a", "session-a")
@@ -285,15 +283,15 @@ class FailingExecutor(EchoExecutor):
 
 
 @pytest.mark.parametrize(
-    ("executor", "operation", "trained", "forwarded"),
+    ("executor", "operation", "trained"),
     [
-        (EchoExecutor, "forward_backward", [3], []),
-        (EchoExecutor, "forward", [], [1]),
-        (FailingExecutor, "forward_backward", [], []),
+        (EchoExecutor, "forward_backward", [3]),
+        (EchoExecutor, "forward", [1]),
+        (FailingExecutor, "forward_backward", []),
     ],
 )
 def test_engine_meters_tokens_of_completed_training_commands_only(
-    tmp_path, executor, operation, trained, forwarded
+    tmp_path, executor, operation, trained
 ) -> None:
     from tests.engine.test_server import forward, forward_backward
 
@@ -319,7 +317,6 @@ def test_engine_meters_tokens_of_completed_training_commands_only(
 
     rows = sink.read(0, 2**32)
     assert [r.train_tokens for r in rows if r.train_tokens] == trained
-    assert [r.forward_tokens for r in rows if r.forward_tokens] == forwarded
     assert [r.training_model_id for r in rows if r.cold_start_seconds] == ["model-a"]
     assert sum(r.busy_seconds for r in rows) > 0
     assert sum(r.idle_seconds for r in rows) > 0
