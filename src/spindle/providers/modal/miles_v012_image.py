@@ -8,7 +8,7 @@ MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
 MILES_BRANCH = "codex/glm53-shared-v012"
 # Head of MILES_BRANCH. Modal caches this layer by command, so fetching the branch
 # by name would keep serving an older head.
-MILES_COMMIT = "953c7cc112dda063ba69782c5aa21e3a1444925c"
+MILES_COMMIT = "ef73a03ef3abed991d10f80ceda1a6ee5be047de"
 
 image = (
     release_image.pip_install("transformers==5.16.0", "tilelang==0.1.12")
