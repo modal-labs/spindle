@@ -26,6 +26,8 @@ CLAIM_TIMEOUT_S = 60.0
 VERSION_CHECK_S = 1.0
 MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
+# Every recipe deploys a trainer and a base-model sampler, and both routes accept any listed name.
+SERVED = {"trainable": True, "sampleable": True}
 
 
 class DeploymentConflict(ValueError):
@@ -336,12 +338,13 @@ class DeploymentRoutes:
                 )
                 for d in recipes
             )
-            rows.append({"model_name": model, "max_context_length": context})
+            rows.append({"model_name": model, "max_context_length": context, **SERVED})
             if len(recipes) > 1:
                 rows += [
                     {
                         "model_name": d.definition_id,
                         "max_context_length": d.max_context_length,
+                        **SERVED,
                     }
                     for d in recipes
                 ]

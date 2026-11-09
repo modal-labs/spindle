@@ -124,6 +124,11 @@ def test_real_sdk_training_loop(base_url: str) -> None:
     assert [
         (m.model_name, m.max_context_length) for m in capabilities.supported_models
     ] == [(BASE_MODEL, MAX_CONTEXT_LENGTH)]
+    # SDKs before these fields existed drop them from the response.
+    if "trainable" in types.SupportedModel.model_fields:
+        assert [(m.trainable, m.sampleable) for m in capabilities.supported_models] == [
+            (True, True)
+        ]
 
     training = service.create_lora_training_client(base_model=BASE_MODEL, rank=32)
 

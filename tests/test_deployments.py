@@ -323,6 +323,8 @@ async def test_routing_prefers_longest_context():
     assert (await routes.capabilities())[0] == {
         "model_name": small.model,
         "max_context_length": 32768,
+        "trainable": True,
+        "sampleable": True,
     }
     validate_frontend([small.recipe, large.recipe])
 
@@ -564,9 +566,24 @@ async def test_every_recipe_routes_by_name_and_plain_models_pick_the_longest():
     assert (await routes.select(base.model)).definition_id == "longer"
     assert (await routes.select(base.name)).definition_id == base.definition_id
     assert await routes.capabilities() == [
-        {"model_name": base.model, "max_context_length": 65536},
-        {"model_name": "longer", "max_context_length": 65536},
-        {"model_name": base.name, "max_context_length": base.max_context_length},
+        {
+            "model_name": base.model,
+            "max_context_length": 65536,
+            "trainable": True,
+            "sampleable": True,
+        },
+        {
+            "model_name": "longer",
+            "max_context_length": 65536,
+            "trainable": True,
+            "sampleable": True,
+        },
+        {
+            "model_name": base.name,
+            "max_context_length": base.max_context_length,
+            "trainable": True,
+            "sampleable": True,
+        },
     ]
     async with client_for(routes, kv) as client:
         session_id = (await client.post("/api/v1/create_session", json={})).json()[
