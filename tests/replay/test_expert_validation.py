@@ -122,7 +122,7 @@ def test_native_sampler_dense_slots_are_preserved_and_ignored(
     rows = _rows(values)
     _forward(runtime, rows)
     assert len(calls) == 1
-    assert rows[0][1]["routed_experts"]["values"] == values
+    assert rows[0][1]["routed_experts"]["values"].tolist() == values
 
 
 @pytest.mark.parametrize(

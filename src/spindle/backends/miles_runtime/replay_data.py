@@ -44,12 +44,21 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
     for name in (REPLAY_FIELDS - {"sampling_mask_logprobs"}) & inputs.keys():
         tensor = inputs[name]
         shape = list(tensor.shape or ())
-        # TensorData.data materializes a fresh Python list on every access.
+        # TensorData.data materializes a Python list on every access. Keep the
+        # SDK array throughout admission; older/list-backed inputs still work.
         if tensor.dtype != "int64" or tensor.sparse_crow_indices is not None:
             raise ValueError(
                 f"{name} must be a dense int64 tensor with a matching shape"
             )
-        values = np.asarray(tensor.to_numpy()).reshape(-1)
+        if hasattr(tensor, "to_numpy"):
+            values = np.asarray(tensor.to_numpy()).reshape(-1)
+        else:
+            data = tensor.data
+            if any(type(value) is not int for value in data):
+                raise ValueError(
+                    f"{name} must be a dense int64 tensor with a matching shape"
+                )
+            values = np.asarray(data).reshape(-1)
         integral = not values.size or values.dtype.kind in "iu"
         if not integral or prod(shape) != values.size:
             raise ValueError(
