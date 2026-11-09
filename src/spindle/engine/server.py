@@ -77,6 +77,7 @@ class Observer(Protocol):
 
 class UsageRecorder(Protocol):
     def trained(self, model_id: str, payload: object) -> None: ...
+    def forwarded(self, model_id: str, payload: object) -> None: ...
     def accepted(self, model_id: str) -> None: ...
     def busy(self, seconds: float) -> None: ...
     def idle(self, seconds: float) -> None: ...
@@ -776,11 +777,15 @@ class Engine:
     def _finish(self, operation: Operation, state: FutureState) -> None:
         if self.observer is not None:
             self.observer.finish(operation, state)
-        if (
-            operation.kind == OperationKind.FORWARD_BACKWARD
-            and state.status == FutureStatus.COMPLETE
+        if state.status == FutureStatus.COMPLETE and operation.kind in (
+            OperationKind.FORWARD,
+            OperationKind.FORWARD_BACKWARD,
         ):
-            self._meter("trained", operation.model_id, operation.payload)
+            self._meter(
+                "forwarded" if operation.kind == OperationKind.FORWARD else "trained",
+                operation.model_id,
+                operation.payload,
+            )
         model = self._models.get(operation.model_id)
         if model is not None and model.unload is None:
             self._futures[operation.request_id] = state
