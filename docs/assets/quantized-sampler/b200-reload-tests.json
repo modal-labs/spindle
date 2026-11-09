@@ -1,0 +1,16 @@
+{
+  "gpu": "NVIDIA B200",
+  "sglang_revision": "2a3714aa0904566431d5edad2e94ea51a8b9f49e",
+  "published_fix": "https://github.com/modal-projects/sglang/pull/91",
+  "pytest_result": {
+    "passed": 8,
+    "seconds": 16.88
+  },
+  "coverage": [
+    "Existing block-FP8 staging device selection",
+    "Online MXFP8 linear and expert weights: two reloads equal fresh quantization",
+    "BF16 MoE packed-layout restore for ordinary and routed FlashInfer TRT-LLM backends, both expert matrices"
+  ],
+  "comparison": "Exact equality of named quantized weights and scales; BF16 reload preserves storage and copied values",
+  "limitations": "Layer-level tests; full-model results are reported separately"
+}

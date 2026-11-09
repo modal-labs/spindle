@@ -1,0 +1,23 @@
+{
+  "gpu": "NVIDIA B200",
+  "transformer_engine": "2.17.0",
+  "parameters": 6000,
+  "parameter_shape": [
+    4
+  ],
+  "steps": 3,
+  "reference": "torch.optim.AdamW",
+  "reference_tolerance": {
+    "atol": 2e-07,
+    "rtol": 2e-06
+  },
+  "checkpoint_restore_tolerance": {
+    "atol": 0,
+    "rtol": 0
+  },
+  "passed": 1,
+  "seconds": 19.24,
+  "bounded_tensors_per_kernel_call": 1024,
+  "checkpoint_parameter_groups": "unchanged",
+  "wrapper": "Megatron ChainedOptimizer with multiple optimizer branches"
+}

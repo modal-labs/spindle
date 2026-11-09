@@ -1,0 +1,7 @@
+{
+  "gpu": "NVIDIA B200",
+  "restored_dtype": "torch.bfloat16",
+  "same_weight": true,
+  "same_scale": true,
+  "different_weight_values": 0
+}

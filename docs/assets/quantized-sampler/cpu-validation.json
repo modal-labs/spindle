@@ -1,0 +1,25 @@
+{
+  "spindle_runtime_local_commit": "e932db6",
+  "base_commit": "93e03ce",
+  "pytest": {
+    "passed": 1201,
+    "skipped": 10,
+    "failed": 1,
+    "seconds": 112.76
+  },
+  "failure": "tests/test_deployment_cli.py::test_add_cli_validation_fails_before_http[extra_args4-expected a --FIELD=VALUE recipe field]",
+  "failure_reproduced_on_unchanged_base": true,
+  "pre_commit": "ruff format and ruff check passed",
+  "source_after_validation": "Merged 9028a74 synthetic monitoring files; runtime files unchanged.",
+  "published_commit": "265fd635ea7d119f0723b8f3ce57c38490edb422",
+  "github_actions": {
+    "Core CPU tests": {
+      "conclusion": "success",
+      "url": "https://github.com/modal-projects/spindle/actions/runs/42693158951"
+    },
+    "Codegolf example": {
+      "conclusion": "success",
+      "url": "https://github.com/modal-projects/spindle/actions/runs/42693159417"
+    }
+  }
+}

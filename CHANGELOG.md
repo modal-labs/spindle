@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- `qwen35_4b_fft_fp8_64k` pairs BF16 full-parameter training with an FP8 sampler that requantizes published weights.
+
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.
 
 ### Changed
@@ -13,6 +15,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
 
 ### Fixed
+
+- Large full-parameter MoE models bound fused Adam tensor lists to avoid Transformer Engine tensor-handle exhaustion without changing checkpoint layout.
+
+- Online MXFP8 samplers restore BF16 checkpoint storage before requantizing new weight publications. BF16 FlashInfer TRT-LLM MoE samplers restore packed expert shapes before loading updates.
 
 - Frontend containers reread the recipe list as soon as it changes, so a config just added or removed through another container is seen at once by name, by model ID, and in `GET /api/v1/spindle/deployments` and `get_server_capabilities`.
 - `spindle stop` no longer aborts on apps that `spindle remove` is already stopping, and removing a config while its apps are still deploying no longer leaves those apps running.
