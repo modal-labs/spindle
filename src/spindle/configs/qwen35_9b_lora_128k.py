@@ -6,8 +6,6 @@ class Config(Parent):
     max_context_length = 131_072
     trainer_gpu = "H200"
     trainer_max_clients_per_instance = 8
-    inference_min_replicas = 8
-    inference_max_replicas = 8
     overrides = {
         "miles_cfg.max_tokens_per_gpu": 131_072,
         "miles_cfg.max_lora_slots": 8,
