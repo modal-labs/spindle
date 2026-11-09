@@ -552,7 +552,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "questionary", specifier = ">=2.1" },
     { name = "stitch", git = "https://github.com/modal-projects/stitch.git?rev=d9f681fd894b02257da129ec3483a977659cd7ab" },
-    { name = "tinker", specifier = ">=0.24.1" },
+    { name = "tinker", specifier = ">=0.26.0" },
     { name = "uvicorn", specifier = ">=0.52.0" },
     { name = "xxhash", specifier = ">=3.8.1" },
     { name = "zstandard", specifier = ">=0.25.0" },
@@ -1105,7 +1105,7 @@ wheels = [
 
 [[package]]
 name = "tinker"
-version = "0.25.0"
+version = "0.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1123,9 +1123,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/4f/567cca8d9b87ac507f128bddc3a720ca7df5bf7bbe522be8da6670f73657/tinker-0.25.0.tar.gz", hash = "sha256:6c53009d3fb94d0f84ee9d0387882bb422a39a1c2a095878a8a3678333099b9f", size = 259638, upload-time = "2026-08-08T03:36:41.114Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/ef/c4c1f70f64cd0d88db5ad3d60c5254b9d58e9c0ec146c2b9fb11eb0795e7/tinker-0.26.0.tar.gz", hash = "sha256:741b5b89588024782508a06f0b17802b27e0700555bb3dde5519e6003c12459c", size = 290597, upload-time = "2026-08-25T18:21:28.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/b0/7792f0e3a4308aabb3badf4c068b92eb07672c470ad885d8126e31bf161c/tinker-0.25.0-py3-none-any.whl", hash = "sha256:edc452500592fe78ae9d2928540737e3700765c6658032caa68705c5188e2d69", size = 247660, upload-time = "2026-08-08T03:36:39.677Z" },
+    { url = "https://files.pythonhosted.org/packages/98/47/79a83f45e951ccec13d3bc5794a4d712fc917d48a30f5341f99a39a695cc/tinker-0.26.0-py3-none-any.whl", hash = "sha256:c5cf5132c23dff1ed168bfc1f8d918d7d1543e6eff5742f729cf8e8126a872f0", size = 265887, upload-time = "2026-08-25T18:21:27.546Z" },
 ]
 
 [[package]]

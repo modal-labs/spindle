@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable
 from typing import Any, Protocol, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from tinker.types import SupportedModel
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig
@@ -325,7 +326,7 @@ class DeploymentRoutes:
             raise ValueError("this frontend serves a fixed set of recipes")
         return self.kv()
 
-    async def capabilities(self) -> list[dict[str, Any]]:
+    async def capabilities(self) -> list[SupportedModel]:
         definitions = await self.definitions()
         rows = []
         for model in dict.fromkeys(d.model for d in definitions):
@@ -338,14 +339,16 @@ class DeploymentRoutes:
                 )
                 for d in recipes
             )
-            rows.append({"model_name": model, "max_context_length": context, **SERVED})
+            rows.append(
+                SupportedModel(model_name=model, max_context_length=context, **SERVED)
+            )
             if len(recipes) > 1:
                 rows += [
-                    {
-                        "model_name": d.definition_id,
-                        "max_context_length": d.max_context_length,
+                    SupportedModel(
+                        model_name=d.definition_id,
+                        max_context_length=d.max_context_length,
                         **SERVED,
-                    }
+                    )
                     for d in recipes
                 ]
         return rows

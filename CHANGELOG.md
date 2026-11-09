@@ -10,6 +10,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
 
 ### Fixed
