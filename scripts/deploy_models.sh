@@ -12,6 +12,8 @@ deployment_files=(
   src/spindle/configs/qwen35_4b_fft_64k.py
   src/spindle/configs/gpt_oss_20b_lora_32k.py
   src/spindle/configs/gpt_oss_20b_lora_64k.py
+  src/spindle/configs/qwen35_35b_a3b_lora_8k.py
+  src/spindle/configs/qwen35_35b_a3b_mxfp8_lora_8k.py
   src/spindle/configs/qwen36_35b_a3b_lora_32k.py
 )
 

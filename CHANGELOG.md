@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Miles LoRA can keep frozen base projections in MXFP8 while training BF16 adapters. Matched Qwen3.5-35B-A3B recipes use B300 GPUs.
+
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.
 
 ### Changed

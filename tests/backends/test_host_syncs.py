@@ -278,3 +278,71 @@ def test_geglu_patch_requires_known_source():
     original = fused.weighted_bias_quick_geglu_impl
     assert host_syncs.install_geglu(fused, experts=None) is False
     assert fused.weighted_bias_quick_geglu_impl is original
+
+
+@pytest.mark.parametrize("token_splits,ep_size", [((0, 9, 0, 0), 1), ((4, 0, 3, 2), 2)])
+def test_installed_mxfp8_hook_routes_padded_rows_to_their_adapters(
+    token_splits, ep_size
+):
+    layers = _fake_layers()
+    host_syncs.install_multi_lora(layers)
+    dispatcher, counts = _dispatch(token_splits)
+    dispatcher.ep_size = ep_size
+    reference = SimpleNamespace(
+        n_adapters=N_ADAPTERS,
+        num_local_experts=EXPERTS,
+        tokens_per_adapter=torch.tensor(token_splits, dtype=torch.int32),
+        tokens_per_adapter_splits=token_splits,
+        _adapter_enabled=True,
+        to_wrap=SimpleNamespace(
+            config=SimpleNamespace(fp8="hybrid", fp8_recipe="mxfp8")
+        ),
+    )
+    x = torch.randn(int(counts.sum()), HIDDEN, requires_grad=True)
+    hook = layers._make_slot_routing_hook(
+        SimpleNamespace(token_dispatcher=dispatcher), [reference]
+    )
+    hook(None, (x, counts))
+    routing = reference.expert_slot_routing
+    padded_counts = (counts + 31) // 32 * 32
+    padded_x = torch.cat(
+        [
+            F.pad(chunk, (0, 0, 0, int(padded - count)))
+            for chunk, count, padded in zip(
+                x.split(counts.tolist()), counts, padded_counts, strict=True
+            )
+        ]
+    )
+    assert routing.num_tokens == len(padded_x)
+    weights = torch.randn(N_ADAPTERS, EXPERTS, HIDDEN, OUT, requires_grad=True)
+    sorted_x = padded_x if routing.sort_idx is None else padded_x[routing.sort_idx]
+    group_counts = routing.group_offsets.diff(prepend=torch.tensor([0])).tolist()
+    grouped = torch.cat(
+        [
+            rows @ weight
+            for rows, weight in zip(
+                sorted_x.split(group_counts), weights.flatten(0, 1), strict=True
+            )
+        ]
+    )
+    actual = grouped if routing.inverse_idx is None else grouped[routing.inverse_idx]
+    actual = torch.cat(
+        [
+            rows[:count]
+            for rows, count in zip(
+                actual.split(padded_counts.tolist()), counts, strict=True
+            )
+        ]
+    )
+    slots = torch.arange(N_ADAPTERS).repeat_interleave(reference.tokens_per_adapter)[
+        dispatcher.reversed_local_input_permutation_mapping
+    ]
+    experts = torch.arange(EXPERTS).repeat_interleave(counts)
+    expected = torch.bmm(x[:, None, :], weights[slots, experts]).squeeze(1)
+    torch.testing.assert_close(actual, expected)
+    for a, b in zip(
+        torch.autograd.grad(actual.square().sum(), (x, weights)),
+        torch.autograd.grad(expected.square().sum(), (x, weights)),
+        strict=True,
+    ):
+        torch.testing.assert_close(a, b)

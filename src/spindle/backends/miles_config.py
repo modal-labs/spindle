@@ -74,6 +74,7 @@ class MilesBackendConfig:
     hf_checkpoint: str
     model_type: str
     actor_num_gpus_per_node: int
+    base_quantization: str | None = None
     actor_num_nodes: int = 1
     megatron_to_hf_mode: str = "bridge"
     tensor_model_parallel_size: int = 1
@@ -123,6 +124,8 @@ class MilesBackendConfig:
         return tuple(targets)
 
     def validate(self) -> None:
+        if self.base_quantization not in (None, "mxfp8"):
+            raise ValueError("Miles base_quantization must be mxfp8 or None")
         if self.megatron_to_hf_mode not in ("bridge", "raw"):
             raise ValueError("megatron_to_hf_mode must be bridge or raw")
         positive = {

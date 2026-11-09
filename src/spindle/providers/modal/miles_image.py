@@ -6,6 +6,11 @@ from pathlib import Path
 
 import modal
 
+from spindle.backends.miles_runtime.quantization_patches import (
+    BRIDGE_PATCH,
+    MILES_PATCH,
+)
+
 from .image_dependencies import (
     CORE_PACKAGES,
     MEGATRON_RUNTIME_CHECK,
@@ -105,6 +110,20 @@ DSA_KERNEL_INSTALL = (
 )
 
 
+MXFP8_LORA_INSTALL = (
+    "python - <<'PY'\n"
+    "from importlib.metadata import distribution\n"
+    "import subprocess\n"
+    "root = distribution('megatron-bridge').locate_file('')\n"
+    "subprocess.run(['patch', '-p2', '-d', str(root)], input="
+    + repr(BRIDGE_PATCH)
+    + ", text=True, check=True)\n"
+    f"subprocess.run(['patch', '-p1', '-d', '{MILES_PATH}'], input="
+    + repr(MILES_PATCH)
+    + ", text=True, check=True)\nPY"
+)
+
+
 image = (
     modal.Image.from_registry(BASE_IMAGE)
     .entrypoint([])
@@ -144,6 +163,6 @@ image = (
         "('load_slot', 'unload_slot', 'forward_backward', "
         "'forward_only', 'optim_step', 'save_slot', 'export_slot'))\"",
     )
-    .run_commands(DSA_KERNEL_INSTALL)
+    .run_commands(DSA_KERNEL_INSTALL, MXFP8_LORA_INSTALL)
     .add_local_python_source("spindle", ignore=ignore_config_source)
 )
