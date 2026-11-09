@@ -5,10 +5,10 @@ from .bridge_import_cache import BRIDGE_IMPORT_CACHE_PATCH
 from .miles_release_image import MILES_PATH, release_image
 
 MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
-MILES_BRANCH = "codex/glm53-shared-v012"
+MILES_BRANCH = "spindle-miles-v0.1.2"
 # Head of MILES_BRANCH. Modal caches this layer by command, so fetching the branch
 # by name would keep serving an older head.
-MILES_COMMIT = "ef73a03ef3abed991d10f80ceda1a6ee5be047de"
+MILES_COMMIT = "464efc9781bbf8edf2135f0857f5aa417685eae2"
 
 image = release_image.run_commands(
     f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {MILES_COMMIT}"
