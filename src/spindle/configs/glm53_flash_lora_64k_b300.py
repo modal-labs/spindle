@@ -26,6 +26,8 @@ class Config(SingleNodeConfig):
             "lm_head",
         ],
         "miles_cfg.cli_options.use_rollout_routing_replay": True,
+        "miles_cfg.cli_options.global_batch_size": 32,
+        "miles_cfg.cli_options.micro_batch_size": 1,
         "sglang_cfg.enable_return_routed_experts": True,
         "sglang_cfg.disable_radix_cache": True,
         "sglang_cfg.max_running_requests": 4,
