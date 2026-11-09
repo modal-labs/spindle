@@ -28,8 +28,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MODAL_ENV = "spindle-ci"
 HISTORY_DICT_NAME = "spindle-synmon-prod-timings"
 TRAINER_APPS = {
-    "dapo-math": "spindle-trainer-prod-qwen38-27b-lora-64k",
-    "swe-gym": "spindle-trainer-prod-qwen35-9b-lora-128k",
+    "dapo-math": "prod-trainer-prod-qwen38-27b-lora-64k",
+    "swe-gym": "prod-trainer-prod-qwen35-9b-lora-128k",
 }
 DAPO_DIR = "/opt/dapo-math"
 SWE_GYM = "/opt/modal-examples/06_gpu_and_ml/swe_gym/swe_gym.py"
