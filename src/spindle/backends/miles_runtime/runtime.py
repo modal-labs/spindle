@@ -258,6 +258,15 @@ class MilesRuntime:
             else:
                 args = parse_args(entry="serve")
         self._args = args
+        if self.config.base_quantization is not None:
+            # The patched Miles provider exists only in the GPU trainer image.
+            from miles.backends.megatron_utils.lora import bridge as lora_bridge
+
+            if not getattr(lora_bridge, "SPINDLE_MXFP8_BASE_SUPPORTED", False):
+                raise RuntimeError(
+                    "MXFP8 base LoRA requires the patched Miles trainer image"
+                )
+        args.spindle_base_quantization = self.config.base_quantization
 
         # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
         args.lora_A_init_method = "kaiming"

@@ -1,5 +1,7 @@
 import modal
 
+from spindle.inference.quantization_patches import SGLANG_LORA_PATCH
+
 from .image_dependencies import (
     CORE_PACKAGES,
     STITCH_PACKAGE,
@@ -11,6 +13,14 @@ SGLANG_IMAGE = "lmsysorg/sglang:v0.5.21"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
 SGLANG_BRANCH = "spindle-sglang-v0.5.21"
 SGLANG_REVISION = "a3e0e1725406b9330bd062520d4f99d0aa73ee4f"
+
+SGLANG_LORA_INSTALL = (
+    "python - <<'PY'\n"
+    "import subprocess\n"
+    "subprocess.run(['patch', '-p1', '-d', '/sgl-workspace/sglang'], input="
+    + repr(SGLANG_LORA_PATCH)
+    + ", text=True, check=True)\nPY"
+)
 
 image = (
     modal.Image.from_registry(SGLANG_IMAGE)
@@ -39,6 +49,7 @@ image = (
         'assert hasattr(bindings.RustUnifiedTreeCoreBinding, "routing_snapshot_delta")\'',
     )
     .env({"SGLANG_RUST_BUILD_MODE": "never"})
+    .run_commands(SGLANG_LORA_INSTALL)
     .pip_install(*CORE_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE)
     .pip_install("huggingface-hub")
     .env(
