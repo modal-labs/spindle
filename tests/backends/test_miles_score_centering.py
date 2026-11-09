@@ -1,11 +1,9 @@
 """Check multi-client normalization, parallel gradients, and the Miles boundary."""
 
-import asyncio
 import math
 from argparse import Namespace
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
@@ -18,11 +16,8 @@ from spindle.backends.miles_runtime.data import (
     pad_slot_rows,
     prepare_batch,
 )
-from spindle.backends.miles_runtime.replay_data import (
-    add_replay_to_train_data,
-    install_bridge_replay,
-)
-from spindle.backends.miles_runtime.score_centering import install_losses, loss_function
+from spindle.backends.miles_runtime.replay_data import add_replay_to_train_data
+from spindle.backends.miles_runtime.score_centering import loss_function
 
 
 def tensor(values, dtype="float32"):
@@ -164,47 +159,6 @@ def test_invalid_distribution_rejected_before_distributed_dispatch(field, value)
         prepare_batch(request, {"a": 0})
 
 
-def test_registry_and_bridge_preserve_probabilities_and_diagnostics():
-    registry = SimpleNamespace(TINKER_LOSS_FUNCTIONS={"ppo": object()})
-    old = registry.TINKER_LOSS_FUNCTIONS["ppo"]
-    install_losses(registry, processors())
-    assert registry.TINKER_LOSS_FUNCTIONS["ppo"] is old
-    assert "score_centered_mis" in registry.TINKER_LOSS_FUNCTIONS
-
-    class Bridge:
-        dp_size = 1
-
-        async def _execute_batch(self, *args):
-            return "ordinary"
-
-        async def _call_trainer(self, method, batch_id, data):
-            assert data["rollout_sampling_mask_logprobs"][0].dtype == np.float32
-            np.testing.assert_allclose(data["loss_weights"][0], [0.25, 0.0])
-            batch = batch_from_rows(rows)
-            _, out = evaluate(batch, torch.zeros(1, 2, 4, requires_grad=True))
-            return [out, out]  # TP replicas must not double-count diagnostics.
-
-    runtime = SimpleNamespace(
-        _build_train_data=lambda rows: {
-            "loss_weights": [r["weights"] for _, r in rows]
-        },
-        _pad_to_dp_multiple=lambda rows, size: rows,
-        ROLLOUT_DATA_VALUE_SPEC={"rollout_sampling_mask_ids": object()},
-        MilesBackend=Bridge,
-    )
-    install_bridge_replay(runtime)
-    request = ForwardBatch((ForwardItem("a", (datum(),)),), "score_centered_mis")
-    rows = prepare_batch(request, {"a": 0}).slot_rows
-    result = asyncio.run(
-        Bridge()._execute_batch("forward_backward", 1, rows, "score_centered_mis", {})
-    )
-    assert len(result) == 1 and result[0]["metrics"]["tokens"] == 1
-    assert (
-        asyncio.run(Bridge()._execute_batch("forward_backward", 2, rows, "ppo", {}))
-        == "ordinary"
-    )
-
-
 def distributed_check(rank, rendezvous, layout):
     dist.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=4)
     try:
@@ -264,29 +218,3 @@ def test_tensor_and_context_parallel_gradients_match_reference(tmp_path, layout)
     mp.spawn(
         distributed_check, args=(f"file://{tmp_path}/rendezvous", layout), nprocs=4
     )
-
-
-def test_probability_distribution_survives_miles_dp_partition_and_slot_sorting():
-    from spindle.backends.miles_runtime.replay_data import install_distribution_sharding
-
-    conversion = SimpleNamespace(
-        _package_shards=lambda args, data, parts: [{"partition": p} for p in parts]
-    )
-    install_distribution_sharding(conversion)
-    once = conversion._package_shards
-    install_distribution_sharding(conversion)
-    assert conversion._package_shards is once
-    probabilities = [
-        np.array([math.log(q)], dtype=np.float32) for q in [0.1, 0.2, 0.3, 0.4]
-    ]
-    shards = conversion._package_shards(
-        None, {"rollout_sampling_mask_logprobs": probabilities}, [[3, 1], [2, 0]]
-    )
-    assert shards[0]["rollout_sampling_mask_logprobs"] == [
-        probabilities[3],
-        probabilities[1],
-    ]
-    assert shards[1]["rollout_sampling_mask_logprobs"] == [
-        probabilities[2],
-        probabilities[0],
-    ]

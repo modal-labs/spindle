@@ -157,6 +157,7 @@ def _load_actor(monkeypatch):
     loss_hub.tinker_losses = _module(
         monkeypatch, "miles.backends.training_utils.loss_hub.tinker_losses"
     )
+    loss_hub.tinker_losses.TINKER_LOSS_FUNCTIONS = {}
     for module in (training_loss, loss_hub.tinker_losses, megatron_actor, fsdp_actor):
         module.get_log_probs_and_entropy = (
             loss_hub.logit_processors.get_log_probs_and_entropy
