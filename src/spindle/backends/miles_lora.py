@@ -352,6 +352,9 @@ class MilesCommandBackend(Backend):
             }
             if successful:
                 metrics["grad_norm:mean"] = float(outcome["grad_norm"])
+                for key, value in outcome.items():
+                    if key.startswith("group_"):
+                        metrics[f"timing/{key}"] = float(value)
             else:
                 metrics["skipped_nonfinite:sum"] = float(outcome["skipped_nonfinite"])
             outputs.append(OptimStepResponse(metrics=metrics))

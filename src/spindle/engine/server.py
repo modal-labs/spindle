@@ -50,6 +50,9 @@ PERSIST_LANES = {
 }
 
 
+GROUP_STEP_COST_RATIO = 0.25
+
+
 class Observer(Protocol):
     def register_model(self, model_id: str, spec: object) -> None: ...
     def forget_model(self, model_id: str) -> None: ...
@@ -155,6 +158,7 @@ class Engine:
         ):
             raise ValueError("executor does not support optimizer overlap")
         self.overlap_optimizer_step = overlap_optimizer_step
+        self._phase_cost: dict[str, float] = {}
         self.executor = executor
         self.observer = observer
         self._persistence_active: dict[str, int] = {}
@@ -535,6 +539,7 @@ class Engine:
                     else FutureState(FutureStatus.COMPLETE, result=result)
                     for result in results
                 )
+                self._record_cost(name, time.time() - started)
                 mark(
                     "engine.op.exec_end",
                     kind=name,
@@ -805,6 +810,25 @@ class Engine:
         if self._lifecycle:
             return self._lifecycle[0]
 
+    def _record_cost(self, name: str, seconds: float) -> None:
+        previous = self._phase_cost.get(name)
+        self._phase_cost[name] = (
+            seconds if previous is None else 0.8 * previous + 0.2 * seconds
+        )
+
+    def _should_group(self, ready) -> bool:
+        """Group when a step costs a meaningful share of a forward batch; a
+        cheap step runs plain so forward requests keep batching together."""
+        if not (
+            self.overlap_optimizer_step and ready[0].kind == OperationKind.OPTIM_STEP
+        ):
+            return False
+        step = self._phase_cost.get(OperationKind.OPTIM_STEP.value)
+        forward = self._phase_cost.get(OperationKind.FORWARD_BACKWARD.value)
+        if step is None or forward is None:
+            return True
+        return step >= GROUP_STEP_COST_RATIO * forward
+
     def _ready_batch(
         self,
     ) -> tuple[Operation | _AcceptOperation | _UnloadOperation, ...] | None:
@@ -841,7 +865,7 @@ class Engine:
             )
         )
 
-        if self.overlap_optimizer_step and ready[0].kind == OperationKind.OPTIM_STEP:
+        if self._should_group(ready):
             optimizers = [
                 item for item in ready if item.kind == OperationKind.OPTIM_STEP
             ]
