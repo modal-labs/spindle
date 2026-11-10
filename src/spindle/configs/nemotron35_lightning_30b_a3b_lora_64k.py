@@ -9,7 +9,8 @@ class Config(Parent):
     trainer_memory_mib = 262144
     trainer_max_clients_per_instance = 4
     overrides = {
-        "miles_cfg.expert_model_parallel_size": 2,
+        # Every GPU holds all 128 experts, so no tokens move between GPUs.
+        "miles_cfg.expert_model_parallel_size": 1,
         "miles_cfg.max_lora_slots": 4,
         # Score long rows 4,096 tokens at a time. Scoring a 64K row in one pass
         # takes about 15 GB more on each GPU.
