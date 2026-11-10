@@ -49,7 +49,7 @@ class Config(BaseConfig):
             "moe_router_dtype": "fp32",
             "moe_router_use_torch_mm": True,
             "moe_router_bias_update_rate": 0,
-            "moe_aux_loss_coeff": 0,
+            "moe_aux_loss_coeff": [0.0],
             "recompute_granularity": "full",
             "recompute_method": "uniform",
             "recompute_num_layers": 1,
