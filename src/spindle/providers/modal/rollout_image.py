@@ -9,8 +9,8 @@ from .image_dependencies import (
 
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
-SGLANG_BRANCH = "micah/dsv4-lora-mxfp8-input"
-SGLANG_REVISION = "d3b75b9b525944a9eb09f1f5ce838c1b942f314f"
+SGLANG_BRANCH = "spindle-sglang-v0.5.23"
+SGLANG_REVISION = "c8fabf7d283c83ee5ccccc8ee203645e12fff2fc"
 # v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
 SAMPLER_OTEL_PACKAGES = (
     "opentelemetry-sdk==1.45.2",
