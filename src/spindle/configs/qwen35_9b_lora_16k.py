@@ -41,8 +41,8 @@ class Config(BaseConfig):
     sglang_cfg = {
         "tp_size": 1,
         "mem_fraction_static": 0.8,
-        "max_running_requests": 32,
-        "max_queued_requests": 8,
+        "max_running_requests": 128,
+        "max_queued_requests": 128,
         "max_loaded_loras": 64,
         "max_loras_per_batch": 8,
     }
