@@ -1243,6 +1243,13 @@ async def test_a_claim_left_by_a_dead_container_expires():
     assert await store.get("variant") is not None
 
 
+def test_optimizer_overlap_changes_only_trainer_identity():
+    base = resolved()
+    overlap = resolved(trainer_overlap_optimizer_step=True)
+    assert overlap.trainer_identity() != base.trainer_identity()
+    assert overlap.inference_identity() == base.inference_identity()
+
+
 async def listed_names(client):
     listed = (await client.get("/api/v1/spindle/deployments")).json()
     return {d["name"] for d in listed["deployments"]}

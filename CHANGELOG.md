@@ -6,6 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Experimental `trainer_overlap_optimizer_step=True` lets Miles LoRA trainers run every ready optimizer step as one group together with a forward/backward batch for other adapters. Step math runs on `SPINDLE_OPTIMIZER_STREAMS` side CUDA streams (default 4); collectives keep one slot order on every rank; a failed slot fails only its own adapter's future. Optimizer classes that define `step_many` step the whole group in one call. It is disabled by default.
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.
 
 ### Changed
