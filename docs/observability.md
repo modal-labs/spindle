@@ -16,6 +16,39 @@ Spindle sends these measurements via OTLP (export off by default), from which Da
 
 ## Setup
 
+### PyTorch monitor metrics
+
+When an OTLP metrics endpoint is configured, Spindle also forwards
+`torch.monitor` events from the trainer server and each Miles Ray actor process.
+Set `SPINDLE_TORCH_MONITOR_METRICS=0` to disable this bridge. It defaults to on,
+but does nothing without `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` or
+`OTEL_EXPORTER_OTLP_ENDPOINT`. `OTEL_SDK_DISABLED=true` disables it too.
+It uses the same HTTP/protobuf exporter settings and five-second export interval
+as `spindle.trainer.state`, with a private meter provider in each process.
+
+Each finite integer or float in `event.data` becomes a synchronous Gauge named
+`torch.monitor.<data-key>`. Other characters than letters, numbers, dots,
+underscores and hyphens in data keys are replaced by underscores; keys are
+truncated to 240 characters. Colliding sanitized keys share an instrument.
+Strings and non-finite numbers are skipped. Boolean values are skipped if
+delivered as Python booleans; PyTorch 2.10.0 converts event booleans to numbers
+before delivery. Gauges preserve the latest
+window summary or event value rather than aggregating already summarized values
+into histogram buckets. Each process creates at most 256 distinct instruments;
+additional names are dropped. Event-name attribute values should also be bounded
+by callers; the instrument cap does not cap attribute cardinality.
+
+Labels include `torch.monitor.event`, `spindle.rank` (the initialized distributed
+rank, otherwise `RANK` if set), `spindle.definition_id` when available, and
+`spindle.component` (`trainer` or `trainer-rank`). No collectives are used.
+
+On CPU PyTorch 2.10.0, `torch.monitor.log_event` reaches Python handlers directly.
+`torch.monitor.Stat` emits `torch.monitor.Stat` events with keys such as
+`my_stat.sum` and `my_stat.count` when an `add` closes an elapsed window, and
+flushes remaining samples on destruction. A `_WaitCounter(...).guard()` does
+not emit events through these Python handlers in that build. This bridge does
+not enable native wait-counter backends or synthesize GPU utilization metrics.
+
 ### Modal to Datadog
 
 Add the following variables to the `spindle-api` Modal secret in your deployment's

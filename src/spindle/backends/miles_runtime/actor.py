@@ -42,6 +42,7 @@ except ImportError:
     from . import tinker_cp
 
 from spindle.startup_timing import timeline
+from spindle.telemetry.torch_monitor import install as install_torch_monitor
 
 from . import allgather_cp_lora, expert_lora_compat, host_syncs
 from .volumes import install_cross_node_checkpoint_publish, sync_checkpoint_volume
@@ -116,6 +117,7 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
     """Upstream multi-LoRA actor with Qwen MTP and weights-only save support."""
 
     def init(self, args, role, **kwargs):
+        install_torch_monitor(component="trainer-rank")
         _use_distributed_timeout_for_gloo(args.distributed_timeout_minutes)
         # Miles's LoRA builder inherits checkpoint MTP heads without honoring
         # enable_mtp_training. Qwen3.5 then injects an auxiliary backward loss

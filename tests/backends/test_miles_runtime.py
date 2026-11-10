@@ -25,9 +25,17 @@ def test_worker_env_carries_volume_names_to_other_nodes(monkeypatch):
     monkeypatch.setenv("SPINDLE_BULLETIN_VOLUME", "spindle-bulletin")
     monkeypatch.delenv("SPINDLE_BULLETIN_ROOT", raising=False)
     monkeypatch.setenv("SPINDLE_BACKEND_CONFIG", "{}")
+    monkeypatch.setenv(
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://collector/v1/metrics"
+    )
+    monkeypatch.setenv("SPINDLE_DEFINITION_ID", "definition")
+    monkeypatch.setenv("SPINDLE_TORCH_MONITOR_METRICS", "0")
     monkeypatch.setenv("TRITON_CACHE_DIR", "/root/.cache/kernel-cache/triton")
     monkeypatch.setenv("TORCHINDUCTOR_CACHE_DIR", "/root/.cache/kernel-cache/inductor")
     assert _worker_env() == {
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://collector/v1/metrics",
+        "SPINDLE_DEFINITION_ID": "definition",
+        "SPINDLE_TORCH_MONITOR_METRICS": "0",
         "SPINDLE_CHECKPOINT_VOLUME": "spindle-checkpoints",
         "SPINDLE_BULLETIN_VOLUME": "spindle-bulletin",
         "TRITON_CACHE_DIR": "/root/.cache/kernel-cache/triton",

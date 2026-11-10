@@ -21,6 +21,7 @@ from spindle.engine.backend_http import HttpBackendClient
 from spindle.engine.http import create_engine_app
 from spindle.startup_timing import TRAINER_COMPONENT, timeline
 from spindle.telemetry.trainer import TrainerTelemetry
+from spindle.telemetry.torch_monitor import install as install_torch_monitor
 
 from .engines import EngineInstanceRecord, instance_key
 from .kv import ModalKeyValueStore
@@ -76,6 +77,7 @@ async def serve_engine(
     engine = None
     trainer_telemetry = None
     try:
+        install_torch_monitor(definition_id=definition_id)
         engine = await make_server()
         startup.mark("backend_ready")
 
