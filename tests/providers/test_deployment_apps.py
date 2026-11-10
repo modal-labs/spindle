@@ -588,6 +588,19 @@ def test_single_node_trainer_rdma_allocation(builders, monkeypatch, rdma):
     assert restored.trainer_identity() == row.trainer_identity()
 
 
+@pytest.mark.parametrize("rdma", [False, True])
+def test_trainer_can_exclude_reserved_capacity(builders, monkeypatch, rdma):
+    row = deployment()
+    row.recipe.trainer_rdma = rdma
+    monkeypatch.setitem(row.recipe.platform["modal"], "exclude_reserved_capacity", True)
+    monkeypatch.setattr(modal, "clustered", lambda **_: lambda fn: fn)
+    app, _ = deployment_apps.build_trainer_app(row, image="test")
+    settings, _ = app.functions["trainer"]
+    assert settings["experimental_options"] == (
+        {"efa_enabled": True, "exclude_reserved_capacity": True} if rdma else {}
+    )
+
+
 def test_multinode_trainer_uses_cluster_launcher(builders, monkeypatch):
     row = deployment("qwen38-27b-lora-256k")
     clusters = []

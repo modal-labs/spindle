@@ -112,6 +112,16 @@ def secrets_for(platform, *, training=False):
     return result
 
 
+def trainer_experimental_options(rdma, platform):
+    if not rdma:
+        return {}
+    options = {"efa_enabled": True}
+    # Modal accepts this option only on clustered functions.
+    if platform["modal"].get("exclude_reserved_capacity"):
+        options["exclude_reserved_capacity"] = True
+    return options
+
+
 def server_placement(region):
     if region is None:
         return {}
@@ -196,7 +206,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         volumes=volumes_for(platform),
         secrets=secrets_for(platform, training=True),
         env=env,  # ty: ignore[invalid-argument-type]
-        experimental_options={"efa_enabled": True} if rdma else {},
+        experimental_options=trainer_experimental_options(rdma, platform),
     )(trainer)
 
     return app, trainer
