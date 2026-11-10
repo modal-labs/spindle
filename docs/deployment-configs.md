@@ -61,7 +61,38 @@ When several clients share a trainer, it trains all of their queued batches toge
 
 Sampler replicas scale between `inference_min_replicas` and `inference_max_replicas`. Each sampled sequence counts as one request, so `num_samples=4` counts four times. By default another replica starts once every replica holds `sglang_cfg.max_running_requests` requests. Set `inference_target_concurrency` lower to scale out earlier. Idle replicas stop after `inference_scaledown_window_s`, so replicas added in one sampling round stay up for the next.
 
-A new replica takes a few minutes to load. For one-off jobs such as evals, set `inference_scaleup_window_s` (for example to 120) so that short bursts don't start replicas that would arrive after the work is done. Leave it unset for training loops that sample in repeated rounds.
+`inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
+
+## Recommended configuration for eval jobs
+
+An eval sends one batch of sampling requests and then stops, with no training in between. The defaults suit training loops, so an eval can start replicas it never uses. A new replica takes a few minutes to load, so replicas started by a batch that lasts a minute or two arrive after the work is done. They then stay up, idle, for the scale-down window.
+
+For an eval-only config:
+
+- Let one replica take the whole batch. Raise `sglang_cfg.max_running_requests` and `sglang_cfg.max_queued_requests` until the replica's KV cache is well used. Remember that `num_samples=4` counts as four requests.
+- Set `inference_scaleup_window_s = 120` so a short batch never starts another replica.
+- Cap `inference_max_replicas` at what the eval needs, often 1 or 2.
+- Lower `inference_scaledown_window_s`, for example to 60, since no next round will reuse an idle replica.
+
+```python
+from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
+
+
+class Config(Parent):
+    name = "qwen35-9b-eval"
+    inference_max_replicas = 2
+    inference_scaleup_window_s = 120
+    inference_scaledown_window_s = 60
+    overrides = {
+        "sglang_cfg.max_running_requests": 128,
+        "sglang_cfg.max_queued_requests": 128,
+    }
+
+
+config = Config()
+```
+
+On a running server, the same settings can be added as a new config with `spindle add` (see below). Send eval requests to it by passing its name as `base_model`, so training runs keep their own config.
 
 ## Backend options
 
