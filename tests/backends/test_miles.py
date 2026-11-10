@@ -63,7 +63,7 @@ class FakeMilesRuntime:
             (
                 slot,
                 {
-                    key: getattr(value, "tolist", lambda: value)()
+                    key: getattr(value, "tolist", lambda value=value: value)()
                     for key, value in row.items()
                 },
             )

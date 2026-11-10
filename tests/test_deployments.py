@@ -802,7 +802,7 @@ def test_config_import_error_preserves_traceback_and_restores_path(tmp_path):
 
 
 def test_no_yaml_config_ingestion(tmp_path):
-    with pytest.raises(ValueError, match="Python .py"):
+    with pytest.raises(ValueError, match=r"Python \.py"):
         load(tmp_path / "old.yaml")
 
 

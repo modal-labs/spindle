@@ -226,7 +226,9 @@ def test_startup_failure_is_visible_and_blocks_new_spawns(monkeypatch):
                 "failed_at": app.time.time(),
             },
         )
-        with pytest.raises(ValueError, match="Trainer startup failed.*failed-instance"):
+        with pytest.raises(
+            ValueError, match=r"Trainer startup failed.*failed-instance"
+        ):
             await app._spawn_engine(row.definition_id, "new-instance")
         assert await app.deployment_error("legacy") is None
 

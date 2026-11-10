@@ -453,7 +453,7 @@ def test_deploy_rejects_python_mismatch_before_remote_changes(monkeypatch):
         "from_name",
         lambda *a, **k: pytest.fail("must reject before touching Modal"),
     )
-    with pytest.raises(ValueError, match="requires Python 3.12"):
+    with pytest.raises(ValueError, match=r"requires Python 3\.12"):
         cli.deploy([deployment()])
 
 
@@ -853,7 +853,7 @@ def test_add_reports_a_failed_deploy_and_how_to_retry(monkeypatch):
     )
     mock_frontend_client(monkeypatch, handle)
     monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
-    with pytest.raises(ValueError, match="no H200 quota.*same spindle add again"):
+    with pytest.raises(ValueError, match=r"no H200 quota.*same spindle add again"):
         cli.add_deployment("variant", base="qwen35-9b-lora-16k", overrides={})
 
 
