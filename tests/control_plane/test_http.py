@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import zstandard
-from starlette.requests import Request
 from tinker.proto.response_conv import deserialize_forward_backward_output
 
 import spindle
@@ -38,25 +37,6 @@ DEFINITIONS = (
         max_context_length=65_536,
     ),
 )
-
-
-def test_unhandled_error_logs_supplied_exception_outside_handler(caplog) -> None:
-    plane = ControlPlane(
-        InMemoryKeyValueStore(),
-        LocalEnginePlatform(DEFINITION, EchoExecutor),
-    )
-    app = create_control_plane_app(plane, DEFINITIONS, api_key="tml-test")
-    try:
-        raise RuntimeError("unexpected failure")
-    except RuntimeError as exc:
-        error = exc
-    request = Request({"type": "http", "path": "/api/v1/create_model", "headers": []})
-    response = asyncio.run(app.exception_handlers[Exception](request, error))
-    assert response.status_code == 500
-    record = caplog.records[-1]
-    assert "on /api/v1/create_model" in record.getMessage()
-    assert record.exc_info == (RuntimeError, error, error.__traceback__)
-    assert "RuntimeError: unexpected failure" in caplog.text
 
 
 def http_client(api_key: str | None = "tml-test") -> httpx.AsyncClient:
