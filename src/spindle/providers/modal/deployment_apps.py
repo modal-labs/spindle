@@ -323,7 +323,9 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         ),
         min_containers=minimum,
         max_containers=maximum,
-        target_concurrency=recipe.inference_target_concurrency,
+        target_concurrency=recipe.inference_target_concurrency
+        or options["max_running_requests"],
+        scaleup_window=recipe.inference_scaleup_window_s,
         scaledown_window=window,
         startup_timeout=recipe.inference_startup_timeout_s,
         exit_grace_period=300,

@@ -11,7 +11,6 @@ class Config(Parent):
     trainer_memory_mib = 131072
     trainer_max_clients_per_instance = 8
     inference_gpu = "H100"
-    inference_target_concurrency = 32
     overrides = {
         "miles_cfg.model_type": "qwen3.5-4B",
         "miles_cfg.tensor_model_parallel_size": 1,

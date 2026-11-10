@@ -59,6 +59,8 @@ Each parent's settings and overrides apply before its child's. Constructor field
 
 When several clients share a trainer, it trains all of their queued batches together by default, and each client waits for the whole step to finish. For RL, where clients sample at different times, set `trainer_max_clients_per_batch = 1`. The trainer then runs one client at a time, so each client can go back to sampling as soon as its own step is done.
 
+Sampler replicas scale between `inference_min_replicas` and `inference_max_replicas`. Each sampled sequence counts as one request, so `num_samples=4` counts four times. A replica is full when it holds `sglang_cfg.max_running_requests` requests. Another replica starts only after demand has stayed above that for `inference_scaleup_window_s` (120 seconds by default). A new replica takes a few minutes to load, so it cannot help a shorter burst and would only add cost. Set `inference_target_concurrency` to scale out earlier, or lower `inference_scaleup_window_s` when steady load should add replicas faster. Idle replicas stop after `inference_scaledown_window_s`.
+
 ## Backend options
 
 | Setting | Consumed by |

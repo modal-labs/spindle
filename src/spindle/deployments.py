@@ -233,6 +233,7 @@ class DeploymentConfig(BaseModel):
             recipe.inference_min_replicas,
             recipe.inference_max_replicas,
             recipe.inference_target_concurrency,
+            recipe.inference_scaleup_window_s,
             recipe.inference_scaledown_window_s,
             recipe.inference_startup_timeout_s,
             recipe.inference_env,
