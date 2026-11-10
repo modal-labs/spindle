@@ -10,6 +10,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- Samplers run SGLang v0.5.23 with PyTorch 2.14.1 and Transformers 5.19. Redeploying rebuilds every sampler, and DeepSeek-V4.1-Flash samplers recompile their kernels once on first start.
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
 

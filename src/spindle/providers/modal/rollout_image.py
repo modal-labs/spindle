@@ -12,7 +12,14 @@ SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
 SGLANG_BRANCH = "spindle-sglang-v0.5.23"
 SGLANG_REVISION = "b3dc676e8c64e3f007073e8ba4fd8bd6093ca2e2"
 # v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
-CORE_SAMPLER_PACKAGES = tuple(p.replace("==1.43.0", "==1.45.2") for p in CORE_PACKAGES)
+SAMPLER_OTEL_PACKAGES = (
+    "opentelemetry-sdk==1.45.2",
+    "opentelemetry-exporter-otlp-proto-http==1.45.2",
+)
+CORE_SAMPLER_PACKAGES = (
+    *(p for p in CORE_PACKAGES if not p.startswith("opentelemetry-")),
+    *SAMPLER_OTEL_PACKAGES,
+)
 
 image = (
     modal.Image.from_registry(SGLANG_IMAGE)
