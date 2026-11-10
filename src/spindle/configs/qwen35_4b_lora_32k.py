@@ -19,6 +19,7 @@ class Config(Parent):
         "miles_cfg.cli_options.log_probs_chunk_size": 4096,
         "miles_cfg.cli_options.balance_data": True,
         "sglang_cfg.max_running_requests": 64,
+        "sglang_cfg.max_queued_requests": 8,
         "sglang_cfg.mem_fraction_static": 0.85,
     }
 

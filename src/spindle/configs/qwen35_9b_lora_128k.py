@@ -11,6 +11,8 @@ class Config(Parent):
     overrides = {
         "miles_cfg.max_tokens_per_gpu": 131_072,
         "miles_cfg.max_lora_slots": 8,
+        "sglang_cfg.max_running_requests": 32,
+        "sglang_cfg.max_queued_requests": 8,
     }
 
 
