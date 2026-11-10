@@ -13,8 +13,6 @@ class Config(Parent):
         "miles_cfg.max_lora_slots": 4,
         "sglang_cfg.max_loras_per_batch": 4,
         "sglang_cfg.max_loaded_loras": 32,
-        # Rows packed into one micro-batch must not share Mamba state.
-        "trainer_env.MAMBA_SEQUENCE_RESET": "1",
     }
 
 
