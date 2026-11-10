@@ -38,7 +38,7 @@ def install(*, definition_id=None, component="trainer"):
             return
         provider = None
         try:
-            provider = meter_provider()
+            provider, _ = meter_provider()
             if provider is None:
                 return
             # Torch is optional in control-plane and local CLI installations.

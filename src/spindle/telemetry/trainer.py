@@ -214,17 +214,13 @@ class TrainerTelemetry:
         self.closed = False
         self.meter_provider = None
         try:
-            self.meter_provider = meter_provider(metric_reader)
+            self.meter_provider, resource = meter_provider(metric_reader)
             if self.meter_provider is not None:
                 if scoped:
                     # Direct OTLP intake may not promote custom resource fields
                     # to metric tags. This deployment has one experiment owner.
                     self.metric_tags = experiment_tags(
-                        {
-                            "run_id": self.meter_provider._sdk_config.resource.attributes.get(
-                                "spindle.run_id"
-                            )
-                        }
+                        {"run_id": resource.attributes.get("spindle.run_id")}
                     )
                 self.meter_provider.get_meter(
                     "spindle.trainer"

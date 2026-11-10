@@ -12,8 +12,8 @@ from spindle.telemetry import metrics, torch_monitor
 @pytest.fixture
 def bridge(monkeypatch):
     reader = InMemoryMetricReader()
-    provider = metrics.meter_provider(reader)
-    monkeypatch.setattr(torch_monitor, "meter_provider", lambda: provider)
+    provider, resource = metrics.meter_provider(reader)
+    monkeypatch.setattr(torch_monitor, "meter_provider", lambda: (provider, resource))
     monkeypatch.setattr(torch_monitor, "_handler", None)
     monkeypatch.setattr(torch_monitor, "_provider", None)
     monkeypatch.setattr(torch_monitor, "_warned", False)
