@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 # Add a model by creating its Python config in src/spindle/configs/ and adding it here.
 # Put the preferred recipe first when multiple configs share a model.
 deployment_files=(
+  src/spindle/configs/beam_501b_a23b_lora_5k.py
   src/spindle/configs/qwen35_9b_lora_16k.py
   src/spindle/configs/qwen35_9b_lora_64k.py
   src/spindle/configs/qwen35_4b_fft_64k.py

@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Beam-1.0-501B-A23B BF16 LoRA recipe with sixteen H200 training GPUs and an eight-B300 sampler.
+
 - GLM-5.3 Flash LoRA recipes with model-specific SGLang v0.5.23 and Miles images, including single-node B300 training with RDMA and expert-routing replay.
 
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.
