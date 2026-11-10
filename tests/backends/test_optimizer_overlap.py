@@ -53,6 +53,13 @@ def test_detachment_restores_parameters_when_cloning_fails():
     assert parameter.main_grad is main
 
 
+def _outcomes(result):
+    return {
+        slot: {k: v for k, v in outcome.items() if not k.startswith("group_")}
+        for slot, outcome in result["optimizer_outcomes"].items()
+    }
+
+
 class FakeCuda:
     """Side streams whose queued kernels run when the stream drains."""
 
@@ -179,9 +186,7 @@ def test_group_shares_a_stream_pool_and_commits_after_the_forward(
             {slot: parameters[slot][0] for slot in parameters},
             forward_fails=forward_fails,
         )
-        assert result["optimizer_outcomes"] == {
-            slot: {"grad_norm": 2.0} for slot in (1, 2, 3)
-        }
+        assert _outcomes(result) == {slot: {"grad_norm": 2.0} for slot in (1, 2, 3)}
     assert len(cuda.streams) == 2
     assert cuda.trace == [
         ("wait", 0),
@@ -220,7 +225,7 @@ def test_failed_slot_is_isolated_and_collectives_keep_slot_order(
         {slot: parameters[slot][0] for slot in parameters},
         fail=() if remote else (1,),
     )
-    assert result["optimizer_outcomes"] == {
+    assert _outcomes(result) == {
         0: {"grad_norm": 2.0},
         1: {"error": REMOTE_FAILURE if remote else "RuntimeError: boom"},
         2: {"grad_norm": 2.0},
@@ -272,9 +277,7 @@ def test_shared_step_many_runs_once_per_group(monkeypatch, mixed):
     )
     adam = {slot: {"learning_rate": 0.1, "grad_clip_norm": 1.0} for slot in parameters}
     result = optim_step_group(actor, adam_params_by_slot=adam)
-    assert result["optimizer_outcomes"] == {
-        slot: {"grad_norm": 2.0} for slot in range(3)
-    }
+    assert _outcomes(result) == {slot: {"grad_norm": 2.0} for slot in range(3)}
     batched = [slot for kind, slot in cuda.trace if kind == "step_many"]
     assert batched == ([] if mixed else [0, 1, 2])
     assert [slot for kind, slot in cuda.trace if kind == "norm"] == [0, 1, 2]
@@ -297,7 +300,7 @@ def test_failing_step_many_fails_every_slot_and_restores_staging(monkeypatch):
     )
     adam = {slot: {"learning_rate": 0.1, "grad_clip_norm": 1.0} for slot in parameters}
     result = optim_step_group(actor, adam_params_by_slot=adam)
-    assert result["optimizer_outcomes"] == {
+    assert _outcomes(result) == {
         slot: {"error": "RuntimeError: boom"} for slot in range(2)
     }
     assert not [item for item in cuda.trace if item[0] == "gather"]

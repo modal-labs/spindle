@@ -846,9 +846,8 @@ class Engine:
                 item for item in ready if item.kind == OperationKind.OPTIM_STEP
             ]
             forwards = [item for item in ready if item.kind in BATCHED_OPERATIONS]
-            if len(optimizers) > 1 or forwards:
-                batched = self._batch_forward_backward(forwards) if forwards else ()
-                return (*optimizers, *batched)
+            if forwards:
+                return (*optimizers, *self._batch_forward_backward(forwards))
         return self._batch_forward_backward(ready)
 
     def _batch_forward_backward(self, ready: list[Operation]) -> tuple[Operation, ...]:

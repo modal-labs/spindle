@@ -1,6 +1,7 @@
 """Stage slot updates while another adapter uses shared model buffers."""
 
 import os
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -137,10 +138,13 @@ def optim_step_group(
     compute = torch.cuda.current_stream()
     outcomes = {}
     result = {}
+    phases = {}
+    started = time.perf_counter()
     parameters_by_slot = {
         slot: adapter_slot_parameters(actor.model, slot) for slot in slots
     }
     with detached_slot_state(parameters_by_slot) as detached:
+        phases["stage"] = time.perf_counter() - started
         try:
             step_many = step_many_of([actor.slot_optimizers[slot] for slot in slots])
             if step_many is not None:
@@ -169,18 +173,25 @@ def optim_step_group(
                 if failed_on_any_rank("error" in outcome) and "error" not in outcome:
                     outcome = {"error": REMOTE_FAILURE}
                 outcomes[slot] = outcome
+            phases["steps"] = time.perf_counter() - started - phases["stage"]
             if rollout_data_ref is not None:
                 method = actor.forward_only if forward_only else actor.forward_backward
                 result = method(batch_id=batch_id, rollout_data_ref=rollout_data_ref)
+            phases["forward"] = time.perf_counter() - started - sum(phases.values())
         finally:
             # Keep detached tensors alive and drain GPU work before lifecycle operations.
             for stream in streams:
                 stream.synchronize()
+            phases["drain"] = time.perf_counter() - started - sum(phases.values())
     for slot in slots:
         if "error" not in outcomes[slot]:
             detached.commit(slot)
     for slot in slots:
         if "grad_norm" in outcomes[slot]:
             actor.slot_optimizers[slot].allgather_params()
+    phases["commit_gather"] = time.perf_counter() - started - sum(phases.values())
+    for outcome in outcomes.values():
+        if "error" not in outcome:
+            outcome.update({f"group_{name}_s": value for name, value in phases.items()})
     result["optimizer_outcomes"] = outcomes
     return result
