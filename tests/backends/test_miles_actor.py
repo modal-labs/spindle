@@ -124,6 +124,7 @@ def _load_actor(monkeypatch):
     megatron_actor = _module(monkeypatch, "miles.backends.megatron_utils.actor")
     megatron_model = _module(monkeypatch, "miles.backends.megatron_utils.model")
     megatron_model.get_batch = lambda *args, **kwargs: {}
+    megatron_model.get_packed_seq_params = lambda *args, **kwargs: None
     checkpoint = _module(monkeypatch, "miles.backends.megatron_utils.lora.checkpoint")
     _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
     _module(
