@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 
 import httpx
 import pytest
@@ -113,10 +114,10 @@ def test_replayed_generation_shares_work_and_preserves_active_count(
                 "error": "Request ID reused with a different payload"
             }
             await asyncio.sleep(0.02)
-            state = (await client.get("/routing-state")).json()
+            active = len(app.state.routing_requests)
             release.set()
             replies = await asyncio.wait_for(asyncio.gather(first, second), 1)
-            assert state["active"] == 1
+            assert active == 1
             assert [r.status_code for r in replies] == [200, 200]
             assert calls == 1
             # A reply lost after completion must not generate a second sample.
@@ -258,11 +259,11 @@ def test_cancelled_original_does_not_cancel_connected_replay(tmp_path):
             await wait_for_waiters(app, payload["rid"], 2)
             first.cancel()
             await asyncio.gather(first, return_exceptions=True)
-            state = (await client.get("/routing-state")).json()
+            active = len(app.state.routing_requests)
             release.set()
             result = await asyncio.wait_for(second, 1)
             assert result.status_code == 200
-            assert state["active"] == 1
+            assert active == 1
             assert [p for p, _ in calls] == ["/generate"]
 
     asyncio.run(scenario())
@@ -302,10 +303,10 @@ def test_last_cancellation_is_bounded_when_engine_abort_does_not_reply(tmp_path)
             )
             assert cancelling.status_code == 409
             assert cancelling.headers["x-spindle-replay-state"] == "cancelling"
-            replica = (await client.get("/routing-state")).json()["replica"]
+            replica = os.environ.get("MODAL_TASK_ID", "local")
             assert cancelling.headers["x-spindle-replica"] == replica
             await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 3)
-            assert (await client.get("/routing-state")).json()["active"] == 0
+            assert not app.state.routing_requests
             cancelled = await client.post(
                 "/generate", json={"rid": "cancel", "input_ids": [1]}
             )

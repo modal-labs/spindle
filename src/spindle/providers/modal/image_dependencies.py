@@ -14,6 +14,9 @@ CORE_PACKAGES = (
     "pydantic>=2.13.4",
     "uvicorn>=0.52.0",
     "xxhash>=3.8.1",
+    "msgspec>=0.19",
+    "pyzmq>=26",
+    "grpcio>=1.70",
     "zstandard>=0.25.0",
 )
 STITCH_PACKAGE = (

@@ -13,6 +13,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 ### Changed
 
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
+- Cache-aware sampling consumes native SGLang KV events through per-replica gRPC streams instead of a scheduler hook and JSON snapshot files.
+
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
 
 ### Fixed

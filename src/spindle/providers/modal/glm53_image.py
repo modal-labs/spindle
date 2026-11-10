@@ -10,7 +10,7 @@ from .rollout_image import runtime_image_for
 # dimensions, expert-local reads and async loading. Match its runtime image.
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_BRANCH = "spindle-sglang-v0.5.23"
-SGLANG_REVISION = "b3dc676e8c64e3f007073e8ba4fd8bd6093ca2e2"
+SGLANG_REVISION = "8080e7d5790044e452337bcc443b005d062a83ad"
 
 
 inference_image = (

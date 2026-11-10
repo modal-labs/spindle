@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 import signal
@@ -10,6 +11,8 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
+
+from .kv_events import publisher_config
 
 
 def start_sglang(
@@ -85,6 +88,8 @@ def start_sglang(
         "127.0.0.1",
         "--port",
         str(port),
+        "--kv-events-config",
+        json.dumps(publisher_config(attention_data_parallel_size)),
         "--tp-size",
         str(world_size),
     ]

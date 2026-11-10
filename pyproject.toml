@@ -20,6 +20,9 @@ dependencies = [
     "tinker>=0.26.0",
     "uvicorn>=0.52.0",
     "xxhash>=3.8.1",
+    "msgspec>=0.19",
+    "pyzmq>=26",
+    "grpcio>=1.70",
     "zstandard>=0.25.0",
     "questionary>=2.1",
 ]
@@ -31,14 +34,14 @@ version = { attr = "spindle.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-spindle = ["skills/**/*"]
+spindle = ["skills/**/*", "proto/*.proto", "proto/*.pyi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.setuptools.data-files]
 "share/spindle/router" = ["rust/router/Cargo.toml", "rust/router/Cargo.lock", "rust/router/pyproject.toml"]
-"share/spindle/router/src" = ["rust/router/src/lib.rs", "rust/router/src/native.rs", "rust/router/src/cache_wait.rs"]
+"share/spindle/router/src" = ["rust/router/src/lib.rs", "rust/router/src/native.rs", "rust/router/src/cache_wait.rs", "rust/router/src/routing_grpc.rs"]
 
 [tool.ruff]
 extend-exclude = ["*.md", "src/spindle/proto/*_pb2.py"]
@@ -81,6 +84,7 @@ unsupported-operator = "ignore"
 
 [dependency-groups]
 dev = [
+    "h2>=4.2",
     "jinja2>=3.1.6",
     "pre-commit>=4.5.1",
     "pytest>=9.1.1",

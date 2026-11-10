@@ -2,6 +2,7 @@
 //! inference pool. The policy does no I/O; its caller owns transport.
 mod cache_wait;
 mod native;
+mod routing_grpc;
 
 use pyo3::prelude::*;
 use serde::Deserialize;

@@ -313,13 +313,6 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
             # Split-K speeds up decode-sized LoRA batches on H200 and B200.
             ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
             | recipe.inference_env
-            | (
-                {
-                    "SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1",
-                }
-                if lora and recipe.inference_lora_routing == "cache_wait"
-                else {}
-            )
         ),
         min_containers=minimum,
         max_containers=maximum,
@@ -373,7 +366,7 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                 )
                 self.supervisor = supervise_children(self.sglang, self.sidecar)
                 wait_http(
-                    "http://127.0.0.1:8000/health",
+                    f"http://127.0.0.1:{8002 if lora else 8000}/health",
                     self.sidecar,
                     recipe.inference_startup_timeout_s,
                 )
