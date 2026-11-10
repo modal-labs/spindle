@@ -41,6 +41,8 @@ class BaseConfig:
     trainer_gpu = "H100"
     trainer_gpus_per_node = 1
     trainer_nodes = 1
+    # Request an RDMA allocation even for a single trainer node.
+    trainer_rdma = False
     trainer_cpu = 8
     trainer_memory_mib = 32768
     trainer_disk_mib = 0
@@ -50,8 +52,10 @@ class BaseConfig:
     trainer_max_clients_per_batch = None
     trainer_timeout_s = 86400
     trainer_env = {}
-    # A name from TRAINER_IMAGES in spindle.providers.modal.deployment_apps; empty uses the default.
+    # A built-in trainer image name or module:attribute; empty uses the default.
     trainer_image = ""
+    # Optional module:attribute for a model-specific sampler image.
+    inference_image = ""
     sampler_persistence_concurrency = 8
 
     inference_gpu = "H100"

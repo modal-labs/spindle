@@ -70,6 +70,9 @@ class SamplingReplay(BaseModel):
                 raise ValueError(
                     "router replay shape does not match prompt + response - 1"
                 )
+            # Decode in bulk; constructing one Python integer per route is costly
+            # for long MoE trajectories. TensorData widens to its public int64
+            # dtype directly from this array.
             values = np.frombuffer(raw, dtype="<i4")
             result["routed_experts"] = types.TensorData(
                 data=values, dtype="int64", shape=[n, num_layers, experts_per_token]
