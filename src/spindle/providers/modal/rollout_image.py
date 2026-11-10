@@ -7,10 +7,12 @@ from .image_dependencies import (
     ignore_config_source,
 )
 
-SGLANG_IMAGE = "lmsysorg/sglang:v0.5.21"
+SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
-SGLANG_BRANCH = "spindle-sglang-v0.5.21"
-SGLANG_REVISION = "a3e0e1725406b9330bd062520d4f99d0aa73ee4f"
+SGLANG_BRANCH = "spindle-sglang-v0.5.23"
+SGLANG_REVISION = "b3dc676e8c64e3f007073e8ba4fd8bd6093ca2e2"
+# v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
+CORE_SAMPLER_PACKAGES = tuple(p.replace("==1.43.0", "==1.45.2") for p in CORE_PACKAGES)
 
 image = (
     modal.Image.from_registry(SGLANG_IMAGE)
@@ -39,7 +41,7 @@ image = (
         'assert hasattr(bindings.RustUnifiedTreeCoreBinding, "routing_snapshot_delta")\'',
     )
     .env({"SGLANG_RUST_BUILD_MODE": "never"})
-    .pip_install(*CORE_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE)
+    .pip_install(*CORE_SAMPLER_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE)
     .pip_install("huggingface-hub")
     .env(
         {
