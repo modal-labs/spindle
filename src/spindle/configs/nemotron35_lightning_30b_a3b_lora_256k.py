@@ -9,6 +9,7 @@ class Config(Parent):
         "miles_cfg.expert_model_parallel_size": 8,
         "miles_cfg.context_parallel_size": 4,
         "miles_cfg.align_sequences_to_parallel_layout": True,
+        "miles_cfg.max_tokens_per_gpu": 65536,
         # Chunked scoring is not validated with context parallelism.
         "miles_cfg.cli_options.log_probs_chunk_size": -1,
     }
