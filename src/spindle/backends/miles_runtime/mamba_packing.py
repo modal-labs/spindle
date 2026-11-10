@@ -26,7 +26,7 @@ def install(megatron_model) -> None:
             params is not None
             and params.seq_idx is None
             and enabled()
-            # Context-parallel ranks hold slices of each row, not whole rows.
+            # tokens is this rank's slice under context parallelism; not validated there.
             and args.context_parallel_size == 1
         ):
             params.total_tokens = batch["tokens"].size(-1)
