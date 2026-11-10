@@ -43,7 +43,7 @@ except ImportError:
 
 from spindle.startup_timing import timeline
 
-from . import allgather_cp_lora, expert_lora_compat, host_syncs
+from . import allgather_cp_lora, expert_lora_compat, grad_accumulation, host_syncs
 from .volumes import install_cross_node_checkpoint_publish, sync_checkpoint_volume
 from .profiling import RankProfiler, TorchProfileConfig
 from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
@@ -155,6 +155,7 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
         return profiler.stop(output_dir, f"rank{dist.get_rank()}")
 
     def forward_backward(self, *args, **kwargs):
+        grad_accumulation.keep_grads_through_reduce(self.model)
         return self._profiled("forward_backward", *args, **kwargs)
 
     def optim_step(self, *args, **kwargs):
