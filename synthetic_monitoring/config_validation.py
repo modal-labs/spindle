@@ -17,7 +17,7 @@ import sys
 import tempfile
 import time
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import modal
@@ -183,7 +183,7 @@ def _raw_cell(text: str) -> dict:
 
 
 def slack_report_blocks(rows: list[dict]) -> list[dict]:
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
     table_rows = [
         [
             _raw_cell("Script"),
@@ -256,7 +256,7 @@ def _post_report(rows: list[dict]) -> None:
     client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
     channel = os.environ["SLACK_CHANNEL_ID"]
 
-    header = f"Nightly validation - {datetime.now(timezone.utc):%Y-%m-%d}"
+    header = f"Nightly validation - {datetime.now(UTC):%Y-%m-%d}"
     thread_ts = client.chat_postMessage(
         channel=channel,
         text=header,
