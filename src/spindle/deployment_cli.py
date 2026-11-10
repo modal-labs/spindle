@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from concurrent.futures import Future
+from copy import deepcopy
 from functools import partial
 from importlib import resources
 from pathlib import Path
@@ -130,16 +131,6 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
     current_configs = [DeploymentConfig.from_registry(row) for row in served]
     unlisted = [row for row in served if row["recipe"]["name"] not in names]
     current_platform = deployed_platform(platform["frontend"], environment)
-    if current_platform is not None and current_platform != platform:
-        if unlisted:
-            raise ValueError(
-                "This deploy changes the frontend's platform settings, so "
-                "recipes it does not list would keep apps built for the old "
-                f"settings: {sorted(row['recipe']['name'] for row in unlisted)}. "
-                "List them in this deploy too."
-            )
-        trainers.update(names)
-        inference.update(names)
     # The frontend's idle timeouts and sweep interval come from the listed recipes,
     # so they must match the recipes this deploy leaves serving.
     changed = {
@@ -162,6 +153,19 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
             )
             + ". Match their settings or list them in this deploy too."
         )
+    carried = set()
+    if current_platform is not None and current_platform != platform:
+        # Unlisted recipes' apps were built for the old platform; rebuild them
+        # from their saved configs.
+        for row in unlisted:
+            deployment = DeploymentConfig.from_registry(row)
+            deployment.recipe.platform = deepcopy(platform)
+            configs = [*configs, deployment]
+            carried.add(deployment.name)
+        unlisted = []
+        names = {deployment.name for deployment in configs}
+        trainers.update(names)
+        inference.update(names)
     trainers, inference = apps_to_publish(
         configs, current_configs, environment, trainers, inference
     )
@@ -171,6 +175,8 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
         build_trainer_app(deployment, platform)[0].deploy(
             environment_name=environment, tag=deployment_tag()
         )
+        if deployment.name in carried:
+            return "not listed; rebuilt for the new platform settings"
 
     def deploy_inference(deployment):
         build_inference_app(deployment, platform)[0].deploy(
