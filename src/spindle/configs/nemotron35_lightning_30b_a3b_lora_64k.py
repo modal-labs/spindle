@@ -8,6 +8,9 @@ class Config(Parent):
     trainer_cpu = 32
     trainer_memory_mib = 262144
     trainer_max_clients_per_instance = 4
+    # A replica takes about four minutes to start, so add a second one only when the first is full.
+    inference_max_replicas = 2
+    inference_target_concurrency = 128
     overrides = {
         "miles_cfg.expert_model_parallel_size": 2,
         "miles_cfg.max_lora_slots": 4,
