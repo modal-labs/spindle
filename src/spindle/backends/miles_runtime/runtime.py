@@ -387,7 +387,15 @@ _WORKER_ENV_VARS = (
 )
 
 
+def _without_timings(outcome: dict) -> dict:
+    return {
+        key: value for key, value in outcome.items() if not key.startswith("group_")
+    }
+
+
 def _agreed_outcomes(worker_results: list[dict]) -> dict[int, dict]:
+    """Rank 0's outcomes, checked against every other rank; rank-local
+    ``group_*`` phase timings are not compared."""
     outcomes = dict(worker_results[0]["optimizer_outcomes"])
     for worker_result in worker_results[1:]:
         other = worker_result["optimizer_outcomes"]
@@ -397,7 +405,7 @@ def _agreed_outcomes(worker_results: list[dict]) -> dict[int, dict]:
             if "error" in outcome and "error" in outcomes[slot]:
                 if outcomes[slot]["error"] == REMOTE_FAILURE:
                     outcomes[slot] = outcome
-            elif outcome != outcomes[slot]:
+            elif _without_timings(outcome) != _without_timings(outcomes[slot]):
                 raise RuntimeError("optimizer outcomes disagree across ranks")
     return outcomes
 
