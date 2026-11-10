@@ -264,9 +264,24 @@ def test_service_endpoints(monkeypatch) -> None:
         capabilities = await client.get("/api/v1/get_server_capabilities")
         assert capabilities.json() == {
             "supported_models": [
-                {"model_name": BASE_MODEL, "max_context_length": 16_384},
-                {"model_name": DEFINITION, "max_context_length": 16_384},
-                {"model_name": f"{DEFINITION}_full", "max_context_length": 65_536},
+                {
+                    "model_name": BASE_MODEL,
+                    "max_context_length": 16_384,
+                    "trainable": True,
+                    "sampleable": True,
+                },
+                {
+                    "model_name": DEFINITION,
+                    "max_context_length": 16_384,
+                    "trainable": True,
+                    "sampleable": True,
+                },
+                {
+                    "model_name": f"{DEFINITION}_full",
+                    "max_context_length": 65_536,
+                    "trainable": True,
+                    "sampleable": True,
+                },
             ],
             "spindle_version": spindle.__version__,
             "spindle_commit": "abc123",
@@ -306,6 +321,47 @@ def test_model_info_and_unload() -> None:
             "type": "unload_model",
             "model_id": model_id,
         }
+        await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_every_trainable_and_sampleable_model_accepts_training_and_sampling() -> None:
+    async def run() -> None:
+        client = http_client()
+        listed = (await client.get("/api/v1/get_server_capabilities")).json()
+        session_id = (await client.post("/api/v1/create_session", json={})).json()[
+            "session_id"
+        ]
+        for seq, row in enumerate(listed["supported_models"]):
+            assert row["trainable"] is True and row["sampleable"] is True
+            trained = [
+                await client.post(
+                    "/api/v1/create_model",
+                    json={
+                        "session_id": session_id,
+                        "model_seq_id": 2 * seq + offset,
+                        "base_model": row["model_name"],
+                        **parameterization,
+                    },
+                )
+                for offset, parameterization in enumerate(
+                    (
+                        {"lora_config": {"rank": 32}},
+                        {"parameterization": {"type": "full"}},
+                    )
+                )
+            ]
+            assert 200 in {response.status_code for response in trained}, row
+            sampling = await client.post(
+                "/api/v1/create_sampling_session",
+                json={
+                    "session_id": session_id,
+                    "sampling_session_seq_id": seq,
+                    "base_model": row["model_name"],
+                },
+            )
+            assert sampling.status_code == 200, (row, sampling.text)
         await client.aclose()
 
     asyncio.run(run())

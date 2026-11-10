@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable
 from typing import Any, Protocol, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from tinker.types import SupportedModel
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig
@@ -26,6 +27,8 @@ CLAIM_TIMEOUT_S = 60.0
 VERSION_CHECK_S = 1.0
 MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
+# Every recipe deploys a trainer and a base-model sampler, and both routes accept any listed name.
+SERVED = {"trainable": True, "sampleable": True}
 
 
 class DeploymentConflict(ValueError):
@@ -323,7 +326,7 @@ class DeploymentRoutes:
             raise ValueError("this frontend serves a fixed set of recipes")
         return self.kv()
 
-    async def capabilities(self) -> list[dict[str, Any]]:
+    async def capabilities(self) -> list[SupportedModel]:
         definitions = await self.definitions()
         rows = []
         for model in dict.fromkeys(d.model for d in definitions):
@@ -336,13 +339,16 @@ class DeploymentRoutes:
                 )
                 for d in recipes
             )
-            rows.append({"model_name": model, "max_context_length": context})
+            rows.append(
+                SupportedModel(model_name=model, max_context_length=context, **SERVED)
+            )
             if len(recipes) > 1:
                 rows += [
-                    {
-                        "model_name": d.definition_id,
-                        "max_context_length": d.max_context_length,
-                    }
+                    SupportedModel(
+                        model_name=d.definition_id,
+                        max_context_length=d.max_context_length,
+                        **SERVED,
+                    )
                     for d in recipes
                 ]
         return rows

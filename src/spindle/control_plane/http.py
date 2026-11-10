@@ -313,7 +313,10 @@ def create_control_plane_app(
     @app.get("/api/v1/get_server_capabilities")
     async def get_server_capabilities() -> dict[str, object]:
         return {
-            "supported_models": await routes.capabilities(),
+            "supported_models": [
+                model.model_dump(exclude_none=True)
+                for model in await routes.capabilities()
+            ],
             "spindle_version": __version__,
             "spindle_commit": source_commit(),
         }

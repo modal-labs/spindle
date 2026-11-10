@@ -7,7 +7,7 @@
 - `target_tokens` accepts `[seq, choices]` on Miles only; weights/advantages/logprobs must match that shape.
 - Megatron derives missing `weights` from positions with nonzero logprob or advantage.
 - Loss support: `LossFn` in `spindle/backends/contract.py` (all names), `SUPPORTED_LOSSES` in `spindle/backends/miles_runtime/data.py` (Miles subset), `loss_fn_config` defaults in `spindle/backends/megatron_runtime/common/forward_backward.py`. Miles and Megatron support different sets; check both before choosing.
-- Versions: `tinker>=0.24.1`. Deploy the current server before upgrading clients: 0.25 needs protobuf responses, 0.26 needs per-sequence sample ids.
+- Versions: `tinker>=0.26.0`. Deploy the current server before upgrading clients: 0.25 needs protobuf responses, 0.26 needs per-sequence sample ids.
 
 ## Validated runs
 
