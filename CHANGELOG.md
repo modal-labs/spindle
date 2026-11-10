@@ -12,6 +12,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- `inference_max_replicas` now defaults to 2 instead of 8. Recipes that set their own value are unchanged; set it higher for workloads that keep more sampler replicas busy.
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
 

@@ -905,7 +905,7 @@ def test_backend_dictionary_assignment_replaces_inherited_values():
 
     config = Child()
     assert config.inference_gpu == "H100"
-    assert config.inference_max_replicas == 8
+    assert config.inference_max_replicas == 2
     assert config.sglang_cfg == {"max_running_requests": 4}
 
 

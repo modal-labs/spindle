@@ -349,7 +349,7 @@ def test_inference_changes_refresh_existing_pools_and_retry_before_frontend(
     with pytest.raises(RuntimeError, match="pool deploy failed"):
         cli.deploy([changed])
     assert deployed.calls == ["inference", "pool"]
-    assert deployed.configs[0]["recipe"]["inference_max_replicas"] == 8
+    assert deployed.configs[0]["recipe"]["inference_max_replicas"] == 2
     deployed.fail = None
     deployed.calls.clear()
     cli.deploy([changed])
