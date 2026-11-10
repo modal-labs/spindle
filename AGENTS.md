@@ -5,7 +5,7 @@ These rules apply to everyone who changes this repo, people and coding agents al
 ## Before you push
 
 - Python 3.12 with uv: `uv sync --locked --python 3.12`.
-- `uv run pre-commit run --all-files` (ruff format and ruff check).
+- `uv run pre-commit run --all-files` (ruff format, ruff check and ty check).
 - `uv run --no-sync pytest -q`.
 
 ## Code

@@ -457,12 +457,15 @@ def _array_bridge(trainer):
                 for datum_output in worker_result["per_datum"]:
                     index = int(datum_output["sample_index"])
                     if index not in outputs:
-                        outputs[index] = {
+                        recorded = {
                             "loss": float(datum_output["loss"]),
                             "logprobs": torch.as_tensor(datum_output["logprobs"])
                             .float()
                             .numpy(),
                         }
+                        if "metrics" in datum_output:
+                            recorded["metrics"] = datum_output["metrics"]
+                        outputs[index] = recorded
             ordered = [outputs[index] for index in range(len(slot_datums))]
             if adam_params_by_slot is not None:
                 return ordered, _agreed_outcomes(worker_results)

@@ -28,7 +28,7 @@ Spindle requires Python 3.12. With [uv](https://docs.astral.sh/uv/), create a pr
 ```bash
 uv init --python 3.12 my-spindle-project
 cd my-spindle-project
-uv add 'modal-spindle @ git+https://github.com/modal-projects/spindle.git@v0.1.5'
+uv add 'modal-spindle @ git+https://github.com/modal-projects/spindle.git@v0.1.6'
 uv run spindle skills install
 ```
 
@@ -198,7 +198,7 @@ for row in rows:
 
 Any Tinker-compatible script can be run out of the box against a Spindle server just by changing the base URL and API key.
 
-Supported Tinker SDK versions: `>=0.24.1`. CI tests the minimum version, the version
+Supported Tinker SDK versions: `>=0.26.0`. CI tests the minimum version, the version
 the server images pin, and the latest release. Deploy the current Spindle server before
 upgrading clients: SDK 0.25 requires protobuf training and sampling responses, and SDK
 0.26 requires per-sequence ids on sampling submissions.

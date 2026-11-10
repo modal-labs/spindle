@@ -19,6 +19,39 @@ async def wait_for_waiters(app, rid, count):
 
 
 @pytest.mark.parametrize(
+    ("status", "retries"), [(429, True), (503, True), (400, False), (500, False)]
+)
+def test_completed_errors_retry_only_admission_rejections(tmp_path, status, retries):
+    calls = 0
+
+    async def scenario():
+        def engine(request):
+            nonlocal calls
+            calls += 1
+            return httpx.Response(status if calls == 1 else 200, json={"calls": calls})
+
+        app = create_app(
+            SnapshotBulletin(tmp_path),
+            "http://engine",
+            transport=httpx.MockTransport(engine),
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://sidecar"
+            ) as client,
+        ):
+            payload = {"rid": "retry-same-id", "input_ids": [1, 2, 3]}
+            first = await client.post("/generate", json=payload)
+            second = await client.post("/generate", json=payload)
+            assert first.status_code == status
+            assert second.status_code == (200 if retries else status)
+            assert calls == (2 if retries else 1)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
     "conflicting_body",
     [
         b'{ "rid": "same-attempt:0", "input_ids": [1, 2, 4] }',

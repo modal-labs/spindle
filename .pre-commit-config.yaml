@@ -13,3 +13,9 @@ repos:
         language: system
         types_or: [python, pyi]
         require_serial: false
+      - id: ty-check
+        name: ty check
+        entry: uv run --frozen ty check
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false

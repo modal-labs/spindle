@@ -71,11 +71,17 @@ async def sample_task(
         stop_token_ids_only=stop_token_ids_only,
     )
     replay_flags = {}
-    for key in ("return_routed_experts", "return_sampling_mask"):
+    for key in (
+        "return_routed_experts",
+        "return_sampling_mask",
+        "return_sampling_probabilities",
+    ):
         value = request.get(key, False)
         if type(value) is not bool:
             raise ValueError(f"{key} must be a boolean")
         replay_flags[key] = value
+    if replay_flags["return_sampling_probabilities"]:
+        replay_flags["return_sampling_mask"] = True
     model_id = task.get("model_id")
     version = task.get("publish_version")
     latest = bool(task.get("latest"))
@@ -182,6 +188,7 @@ async def sample_task(
                 temperature=params.get("temperature", 1.0),
                 routes=replay_flags["return_routed_experts"],
                 mask=replay_flags["return_sampling_mask"],
+                probabilities=replay_flags["return_sampling_probabilities"],
             )
     if stats is not None:
         meta = outputs[0].get("meta_info") or {}
@@ -242,7 +249,15 @@ async def _sample_one(
         "return_logprob": True,
         "routed_dp_rank": routed_dp_rank,
     }
-    body.update({key: value for key, value in replay_flags.items() if value})
+    body.update(
+        {
+            key: value
+            for key, value in replay_flags.items()
+            if value and key != "return_sampling_probabilities"
+        }
+    )
+    if replay_flags["return_sampling_probabilities"]:
+        body["sampling_logprobs_mode"] = "support"
     if replay_flags["return_routed_experts"]:
         body["routed_experts_start_len"] = 0
     if cache_affinity_id is not None:
@@ -304,8 +319,8 @@ async def _sample_one(
             constrain_request(
                 body,
                 headers,
-                latest=int(version) if latest else None,
-                exact=None if latest else int(version),
+                latest=int(version) if latest else None,  # ty: ignore[invalid-argument-type]
+                exact=None if latest else int(version),  # ty: ignore[invalid-argument-type]
             )
         physical_attempt += 1
         observation = SampleAttempt(
@@ -324,7 +339,7 @@ async def _sample_one(
         try:
             if router is not None:
                 dispatched = await router.dispatch(
-                    VersionRef(str(model_id), int(version)).identity,
+                    VersionRef(str(model_id), int(version)).identity,  # ty: ignore[invalid-argument-type]
                     routing_session_id,
                     request_id=observation.id,
                     body=body,

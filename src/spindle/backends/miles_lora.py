@@ -222,17 +222,23 @@ class MilesCommandBackend(Backend):
                 prepared.slot_rows,
                 self.config.data_parallel_size,
             )
-            arguments = dict(
-                loss_fn=str(batch.loss_fn),
-                loss_fn_config=dict(batch.loss_fn_config),
-                forward_only=batch.forward_only,
-            )
+            loss_fn = str(batch.loss_fn)
+            loss_fn_config = dict(batch.loss_fn_config)
             outcomes = None
             if adam_params_by_slot is None:
-                raw_outputs = self.runtime.forward_backward(slot_rows, **arguments)
+                raw_outputs = self.runtime.forward_backward(
+                    slot_rows,
+                    loss_fn=loss_fn,
+                    loss_fn_config=loss_fn_config,
+                    forward_only=batch.forward_only,
+                )
             else:
                 raw_outputs, outcomes = self.runtime.optim_step_group(
-                    slot_rows, adam_params_by_slot=adam_params_by_slot, **arguments
+                    slot_rows,
+                    adam_params_by_slot=adam_params_by_slot,
+                    loss_fn=loss_fn,
+                    loss_fn_config=loss_fn_config,
+                    forward_only=batch.forward_only,
                 )
         self._first(
             f"first_{phase_name}_done",
