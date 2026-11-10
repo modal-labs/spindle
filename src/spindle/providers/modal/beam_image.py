@@ -5,9 +5,9 @@ from .miles_image import BRIDGE_IMPORT_CACHE_PATCH
 from .miles_release_image import MILES_PATH, release_image
 from .rollout_image import runtime_image_for
 
-MILES_COMMIT = "a1a4ae31dbbd01a00fc6396a5a8b9fb954101505"
+MILES_COMMIT = "bbb90744c87e2e2d0c8feef92b76af89a4ce7385"
 TRAINER_SGLANG_COMMIT = "9ac1c65bec3dc832766d03970e545da5bd6fcb6f"
-SAMPLER_SGLANG_COMMIT = "db757b5898145009decd6f48492846a45a431725"
+SAMPLER_SGLANG_COMMIT = "e22646bfef3dfd79aa4390fb95b644a5268eb53c"
 
 trainer_image = release_image.run_commands(
     f"git -C {MILES_PATH} fetch --depth=1"
