@@ -9,6 +9,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 
 from spindle.inference.routing_grpc import RoutingBridge, WATCH_PATH, start_proxy
+from spindle.inference.serving import terminate
 from spindle.proto.routing_pb2 import RoutingSnapshot, WatchRequest
 
 
@@ -99,8 +100,8 @@ def test_http_and_grpc_share_the_replica_port():
                 stream.cancel()
         finally:
             if proxy is not None:
-                proxy.terminate()
-                await asyncio.to_thread(proxy.wait, 5)
+                await asyncio.to_thread(terminate, proxy)
+                assert proxy.poll() is not None
                 directory.cleanup()
             http_server.should_exit = True
             publisher.cancel()

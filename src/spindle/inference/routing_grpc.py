@@ -116,7 +116,9 @@ http {{
 }}
 """)
     try:
-        process = subprocess.Popen(["nginx", "-c", str(config), "-g", "daemon off;"])
+        process = subprocess.Popen(
+            ["nginx", "-c", str(config), "-g", "daemon off;"], start_new_session=True
+        )
     except BaseException:
         directory.cleanup()
         raise
