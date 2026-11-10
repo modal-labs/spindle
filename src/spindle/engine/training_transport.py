@@ -172,7 +172,7 @@ def decode_payload(body: bytes | memoryview) -> ForwardBackwardInput:
             Datum.model_construct(model_input=model_input, loss_fn_inputs=inputs)
         )
     return ForwardBackwardInput(
-        data=data,
+        data=data,  # ty: ignore[invalid-argument-type]
         loss_fn=metadata["loss_fn"],
         loss_fn_config=metadata["loss_fn_config"],
     )

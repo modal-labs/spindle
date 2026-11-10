@@ -374,7 +374,7 @@ class ControlPlane:
         entries = [
             dict(entry) for entry in await self.list_checkpoints(training_run_id)
         ]
-        entries.sort(key=lambda entry: float(entry["time"]), reverse=True)
+        entries.sort(key=lambda entry: float(entry["time"]), reverse=True)  # ty: ignore[invalid-argument-type]
         return entries
 
     async def checkpoint(
@@ -393,7 +393,7 @@ class ControlPlane:
         return {
             "checkpoint_id": f"weights/{name}",
             "checkpoint_type": "training",
-            "time": datetime.fromtimestamp(float(entry["time"]), UTC).isoformat(),
+            "time": datetime.fromtimestamp(float(entry["time"]), UTC).isoformat(),  # ty: ignore[invalid-argument-type]
             "tinker_path": checkpoint_tinker_path(model_id, name),
             "size_bytes": entry.get("size_bytes"),
         }
@@ -511,7 +511,7 @@ class ControlPlane:
         return await self.create_model(
             session_id=session_id,
             model_seq_id=model_seq_id,
-            definition_id=definition_id,
+            definition_id=definition_id,  # ty: ignore[invalid-argument-type]
             spec={
                 "base_model": saved_base_model,
                 "lora_config": dict(lora_config) if lora_config is not None else None,
@@ -1403,7 +1403,7 @@ class ControlPlane:
             record = {"model_id": model.model_id, "since": now, "polled_at": now}
             await self.kv.put(key, record)
         elif now - float(record["polled_at"]) >= SLOT_WAIT_POLL_REFRESH_S:
-            record = {**record, "polled_at": now}
+            record = {**record, "polled_at": now}  # ty: ignore[invalid-argument-type]
             waited = now - float(record["since"])
             if waited >= SLOT_WAIT_WARN_AFTER_S and not record.get("warned"):
                 logging.getLogger(__name__).warning(

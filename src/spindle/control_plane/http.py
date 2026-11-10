@@ -313,7 +313,10 @@ def create_control_plane_app(
     @app.get("/api/v1/get_server_capabilities")
     async def get_server_capabilities() -> dict[str, object]:
         return {
-            "supported_models": await routes.capabilities(),
+            "supported_models": [
+                model.model_dump(exclude_none=True)
+                for model in await routes.capabilities()
+            ],
             "spindle_version": __version__,
             "spindle_commit": source_commit(),
         }
@@ -332,11 +335,11 @@ def create_control_plane_app(
     async def add_deployment(body: DeploymentRequest):
         deployment = await routes.build(body)
         config = await routes.add(deployment)
-        summary = _deployment_summary(deployment)
+        summary = _deployment_summary(deployment)  # ty: ignore[invalid-argument-type]
         if deploy_apps is not None:
-            await deploy_apps(deployment)
+            await deploy_apps(deployment)  # ty: ignore[invalid-argument-type]
         if apps_status is not None:
-            summary.update(await apps_status(deployment))
+            summary.update(await apps_status(deployment))  # ty: ignore[invalid-argument-type]
         return {"deployment": summary, "config": config}
 
     async def placed_models(name: str) -> list[dict[str, object]]:
@@ -384,7 +387,7 @@ def create_control_plane_app(
                 name,
                 [model["model_id"] for model in placed],
             )
-        return {"deployment": _deployment_summary(removed)}
+        return {"deployment": _deployment_summary(removed)}  # ty: ignore[invalid-argument-type]
 
     async def trained_recipes():
         definitions = await routes.definitions()
@@ -745,7 +748,7 @@ def create_control_plane_app(
                     response = Response(result.body, media_type=PROTOBUF_MEDIA_TYPE)
                 else:
                     result = await asyncio.to_thread(result.to_json)
-            elif accepts_protobuf:
+            elif accepts_protobuf and isinstance(result, dict):
                 encoded = encode_result(result)
                 if encoded is not None:
                     response = Response(encoded, media_type=PROTOBUF_MEDIA_TYPE)

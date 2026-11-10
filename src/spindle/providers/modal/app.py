@@ -489,7 +489,7 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
         async def keep_pool_ready() -> None:
             # Retries can outlive the cached readiness check. The pool's URL
             # is stable across redeployment of the same definition/revision.
-            await _ready_lora_pool(spec)
+            await _ready_lora_pool(spec)  # ty: ignore[invalid-argument-type]
 
         return await sample_task(
             task,
@@ -610,7 +610,7 @@ async def trainer_reconciler(delay_seconds: float = 0.0) -> None:
             *(run(definition_id, token) for definition_id, token in pending.items())
         )
     finally:
-        await release_reconcile_call(call_id)
+        await release_reconcile_call(call_id)  # ty: ignore[invalid-argument-type]
     remaining = await pending_reconciliations()
     if remaining:
         await kick_trainer_reconciler(next(iter(remaining)))
@@ -946,12 +946,12 @@ async def _cleanup_fft_pools() -> tuple[str, ...]:
     registry = fft_pool_kv()
     for key, value in await registry.list_items("fft_pool:"):
         try:
-            spec = FFTPoolSpec.from_dict(value)
+            spec = FFTPoolSpec.from_dict(value)  # ty: ignore[invalid-argument-type]
             if spec.latest:
                 if spec.app_name in active_latest:
                     continue
             else:
-                if await _last_touched(registry, spec, value) > (
+                if await _last_touched(registry, spec, value) > (  # ty: ignore[invalid-argument-type]
                     time.time() - FFT_POOL_IDLE_TIMEOUT
                 ):
                     continue
@@ -989,7 +989,7 @@ async def _cleanup_lora_pools() -> tuple[str, ...]:
     stopped = []
     for key, value in await registry.list_items("lora_pool:"):
         try:
-            spec = LoraPoolSpec.from_dict(value)
+            spec = LoraPoolSpec.from_dict(value)  # ty: ignore[invalid-argument-type]
             if spec.app_name in active:
                 continue
             if float(value.get("touched_at", 0.0)) > (

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from tinker.types import SupportedModel
 
 from spindle.backends.deployment import backend_config, serving_options
 from spindle.backends.megatron_config import parse_backend_config
@@ -320,10 +321,12 @@ async def test_routing_prefers_longest_context():
     routes, _ = routes_for(small, large)
     assert (await routes.select(small.model, "lora")).definition_id == large.name
     assert (await routes.select(small.name)).definition_id == small.name
-    assert (await routes.capabilities())[0] == {
-        "model_name": small.model,
-        "max_context_length": 32768,
-    }
+    assert (await routes.capabilities())[0] == SupportedModel(
+        model_name=small.model,
+        max_context_length=32768,
+        trainable=True,
+        sampleable=True,
+    )
     validate_frontend([small.recipe, large.recipe])
 
     twin = resolved(recipe("deepseek-v41-flash-lora-8k", name="twin"))
@@ -564,9 +567,24 @@ async def test_every_recipe_routes_by_name_and_plain_models_pick_the_longest():
     assert (await routes.select(base.model)).definition_id == "longer"
     assert (await routes.select(base.name)).definition_id == base.definition_id
     assert await routes.capabilities() == [
-        {"model_name": base.model, "max_context_length": 65536},
-        {"model_name": "longer", "max_context_length": 65536},
-        {"model_name": base.name, "max_context_length": base.max_context_length},
+        SupportedModel(
+            model_name=base.model,
+            max_context_length=65536,
+            trainable=True,
+            sampleable=True,
+        ),
+        SupportedModel(
+            model_name="longer",
+            max_context_length=65536,
+            trainable=True,
+            sampleable=True,
+        ),
+        SupportedModel(
+            model_name=base.name,
+            max_context_length=base.max_context_length,
+            trainable=True,
+            sampleable=True,
+        ),
     ]
     async with client_for(routes, kv) as client:
         session_id = (await client.post("/api/v1/create_session", json={})).json()[

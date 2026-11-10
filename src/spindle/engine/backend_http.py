@@ -257,7 +257,7 @@ class HttpBackendClient:
             content_type=TRAINING_BATCH_CONTENT_TYPE,
             accept=FORWARD_RESULTS_CONTENT_TYPE,
         )
-        return tuple(result)
+        return tuple(result)  # ty: ignore[invalid-argument-type]
 
     async def capture_snapshot(
         self,

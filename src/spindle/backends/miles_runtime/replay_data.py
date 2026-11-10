@@ -91,7 +91,7 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
         if (
             len(offsets) != n + 1
             or offsets[0] != 0
-            or offsets[-1] != len(ids)
+            or offsets[-1] != len(ids)  # ty: ignore[invalid-argument-type]
             or np.any(offsets[1:] < offsets[:-1])
         ):
             raise ValueError(

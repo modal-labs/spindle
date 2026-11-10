@@ -198,7 +198,7 @@ for row in rows:
 
 Any Tinker-compatible script can be run out of the box against a Spindle server just by changing the base URL and API key.
 
-Supported Tinker SDK versions: `>=0.24.1`. CI tests the minimum version, the version
+Supported Tinker SDK versions: `>=0.26.0`. CI tests the minimum version, the version
 the server images pin, and the latest release. Deploy the current Spindle server before
 upgrading clients: SDK 0.25 requires protobuf training and sampling responses, and SDK
 0.26 requires per-sequence ids on sampling submissions.

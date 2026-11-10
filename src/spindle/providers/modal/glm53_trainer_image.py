@@ -1,6 +1,6 @@
 """Miles-pinned GLM model dependency with the release Bridge core preserved."""
 
-from .bridge_import_cache import BRIDGE_IMPORT_CACHE_PATCH
+from .miles_image import BRIDGE_IMPORT_CACHE_PATCH
 from .image_dependencies import ignore_config_source
 from .miles_release_image import MILES_PATH, release_image
 

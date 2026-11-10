@@ -16,7 +16,7 @@ jobs:
       matrix:
         # The package's minimum Tinker SDK, the release the server images pin,
         # and the newest release.
-        tinker: ["0.24.1", "image-pin", "latest"]
+        tinker: ["0.26.0", "image-pin", "latest"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

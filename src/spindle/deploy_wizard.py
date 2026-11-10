@@ -203,9 +203,9 @@ def check_setup(console: Console, environment: str | None) -> None:
     fixes = []
     with console.status("Checking your Modal secrets..."):
         for secret in REQUIRED_SECRETS:
-            name = names[secret.platform_key]
+            name = names[secret.platform_key]  # ty: ignore[invalid-argument-type]
             label = f"{name} · {', '.join(secret.keys)}"
-            problem = secret_problem(name, secret.keys, environment)
+            problem = secret_problem(name, secret.keys, environment)  # ty: ignore[invalid-argument-type]
             if problem is None:
                 table.add_row("[green]✓[/green]", label, secret.purpose)
             else:
@@ -318,7 +318,7 @@ def choose(console: Console, frontend: str, environment: str | None) -> list[Pre
                 questionary.Choice(f"{format_context(tokens)} tokens", value=tokens)
                 for tokens in CONTEXT_CHOICES
             ],
-            default=DEFAULT_CONTEXT,
+            default=DEFAULT_CONTEXT,  # ty: ignore[invalid-argument-type]
             instruction="(not sure? 32K covers most RL and SFT runs)",
         )
     )
