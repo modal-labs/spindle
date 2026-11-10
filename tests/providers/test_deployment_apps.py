@@ -141,7 +141,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
         == f"{row.recipe.inference_gpu}:{row.recipe.inference_gpus_per_node}"
     )
     assert settings["min_containers"] == 0
-    assert settings["target_concurrency"] == 32
+    assert settings["target_concurrency"] == 128
     assert settings.get("scaleup_window") is None
     assert "compute_region" not in settings
     assert "routing_region" not in settings
