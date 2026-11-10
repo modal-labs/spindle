@@ -47,7 +47,7 @@ def _validate_recipe(recipe: BaseConfig) -> None:
                 raise ValueError(
                     f"{field} must be a string or non-empty array of strings"
                 )
-        elif field == "inference_target_concurrency":
+        elif field in {"inference_target_concurrency", "inference_scaleup_window_s"}:
             if value is not None and (type(value) is not int or value < 1):
                 raise ValueError(f"{field} must be a positive integer or None")
         elif isinstance(default, bool):

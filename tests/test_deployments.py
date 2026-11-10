@@ -233,11 +233,14 @@ def test_asset_paths_follow_the_model():
     assert a.asset_path != b.asset_path
 
 
-@pytest.mark.parametrize("target", [0, "32", True])
-def test_target_concurrency_is_a_positive_integer_or_none(target):
-    assert resolved(inference_target_concurrency=48)
-    with pytest.raises(ValueError, match="inference_target_concurrency"):
-        resolved(inference_target_concurrency=target)
+@pytest.mark.parametrize(
+    "field", ["inference_target_concurrency", "inference_scaleup_window_s"]
+)
+@pytest.mark.parametrize("value", [0, "32", True])
+def test_autoscaling_settings_are_positive_integers_or_none(field, value):
+    assert resolved(**{field: 48})
+    with pytest.raises(ValueError, match=field):
+        resolved(**{field: value})
 
 
 @pytest.mark.parametrize("field", ["trainer_disk_mib", "inference_disk_mib"])
