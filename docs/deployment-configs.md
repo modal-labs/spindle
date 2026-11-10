@@ -65,14 +65,12 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 ## Recommended configuration for eval jobs
 
-An eval sends one batch of sampling requests and then stops, with no training in between. The defaults suit training loops, so an eval can start replicas it never uses. A new replica takes a few minutes to load, so replicas started by a batch that lasts a minute or two arrive after the work is done. They then stay up, idle, for the scale-down window.
+The defaults suit training loops. An eval sends one short batch, and any replica it starts takes a few minutes to load, so it arrives after the work is done and then sits idle. For eval-only configs:
 
-For an eval-only config:
-
-- Let one replica take the whole batch. Raise `sglang_cfg.max_running_requests` and `sglang_cfg.max_queued_requests` until the replica's KV cache is well used. Remember that `num_samples=4` counts as four requests.
-- Set `inference_scaleup_window_s = 120` so a short batch never starts another replica.
-- Cap `inference_max_replicas` at what the eval needs, often 1 or 2.
-- Lower `inference_scaledown_window_s`, for example to 60, since no next round will reuse an idle replica.
+- Give one replica more slots, so it can take the whole batch.
+- Wait 120 seconds before adding a replica.
+- Cap replicas at 1 or 2.
+- Stop idle replicas after 60 seconds.
 
 ```python
 from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
@@ -92,7 +90,7 @@ class Config(Parent):
 config = Config()
 ```
 
-On a running server, the same settings can be added as a new config with `spindle add` (see below). Send eval requests to it by passing its name as `base_model`, so training runs keep their own config.
+On a running server, add this as its own config with `spindle add` and pass its name as `base_model`.
 
 ## Backend options
 
