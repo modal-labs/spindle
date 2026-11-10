@@ -34,7 +34,7 @@ class Config(BaseConfig):
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
     }
     trainer_max_clients_per_instance = 6
-    inference_gpu = "H200"
+    inference_gpu = ["B200", "H200"]
     sglang_cfg = {
         "tp_size": 1,
         "ep_size": 1,
