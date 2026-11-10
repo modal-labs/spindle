@@ -64,7 +64,11 @@ select = [
     "TRY400",
     "UP",
 ]
-ignore = ["ASYNC109", "ASYNC110", "B905"]
+ignore = [
+    "ASYNC109",
+    "ASYNC110",
+    "B905",
+]
 
 [tool.ty.src]
 include = ["src"]
