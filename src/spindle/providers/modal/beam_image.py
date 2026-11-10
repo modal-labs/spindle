@@ -14,11 +14,11 @@ trainer_image = release_image.run_commands(
     f" https://github.com/modal-projects/miles.git {MILES_COMMIT}"
     f" && git -C {MILES_PATH} checkout --detach FETCH_HEAD",
     # Beam's config must match the Torch 2.13 trainer and its compiled extensions.
-    "git clone --filter=blob:none --single-branch --branch beam-miles"
-    " https://github.com/sgl-project/sglang.git /tmp/beam-sglang"
-    f" && git -C /tmp/beam-sglang checkout {TRAINER_SGLANG_COMMIT}"
-    " && cp -a /tmp/beam-sglang/python/. /sgl-workspace/sglang/python/"
-    " && rm -rf /tmp/beam-sglang",
+    "git -C /sgl-workspace/sglang fetch --depth=1"
+    f" https://github.com/sgl-project/sglang.git {TRAINER_SGLANG_COMMIT}"
+    " && git -C /sgl-workspace/sglang checkout --detach -f FETCH_HEAD"
+    " && SGLANG_BUILD_RUST_EXTS=none pip install -e"
+    " '/sgl-workspace/sglang/python[all]' --no-deps --no-build-isolation",
     "python - <<'PY'\n"
     "from importlib.metadata import distribution\n"
     "import subprocess\n"
