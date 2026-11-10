@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Forward process-local PyTorch monitor events to configured OTLP metrics, including Miles trainer ranks. Set `SPINDLE_TORCH_MONITOR_METRICS=0` to disable.
+
 - GLM-5.3 Flash LoRA recipes with model-specific SGLang v0.5.23 and Miles images, including single-node B300 training with RDMA and expert-routing replay.
 
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.

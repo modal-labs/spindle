@@ -5,7 +5,6 @@ from __future__ import annotations
 import functools
 import json
 import logging
-import os
 import threading
 import time
 from collections import OrderedDict
@@ -28,6 +27,7 @@ from spindle.telemetry.otlp import _attributes, provider
 
 from . import backend
 from .metadata import common_tags, experiment_tags
+from .metrics import meter_provider
 
 incoming = ContextVar("spindle_command_context", default=None)
 accepted_root = ContextVar("spindle_accepted_root", default=None)
@@ -213,47 +213,15 @@ class TrainerTelemetry:
         self.activity = {"execution": "idle", "checkpoint": "idle", "sampler": "idle"}
         self.closed = False
         self.meter_provider = None
-        if metric_reader is not None or (
-            os.getenv("OTEL_SDK_DISABLED", "").lower() != "true"
-            and (
-                os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
-                or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-            )
-        ):
-            try:
-                from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
-                    OTLPMetricExporter,
-                )
-                from opentelemetry.sdk.metrics import MeterProvider
-                from opentelemetry.sdk.metrics.export import (
-                    PeriodicExportingMetricReader,
-                )
-                from opentelemetry.sdk.resources import Resource
-
-                protocol = os.getenv(
-                    "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
-                    os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
-                )
-                if protocol != "http/protobuf":
-                    raise ValueError("Trainer metrics require http/protobuf")
-                reader = metric_reader or PeriodicExportingMetricReader(
-                    OTLPMetricExporter(),
-                    export_interval_millis=5000,
-                    export_timeout_millis=4000,
-                )
-                resource = Resource.create(
-                    {"service.name": os.getenv("OTEL_SERVICE_NAME", "spindle")}
-                )
+        try:
+            self.meter_provider, resource = meter_provider(metric_reader)
+            if self.meter_provider is not None:
                 if scoped:
                     # Direct OTLP intake may not promote custom resource fields
                     # to metric tags. This deployment has one experiment owner.
                     self.metric_tags = experiment_tags(
                         {"run_id": resource.attributes.get("spindle.run_id")}
                     )
-                self.meter_provider = MeterProvider(
-                    resource=resource,
-                    metric_readers=[reader],
-                )
                 self.meter_provider.get_meter(
                     "spindle.trainer"
                 ).create_observable_gauge(
@@ -262,8 +230,8 @@ class TrainerTelemetry:
                     description="Sampled trainer operation activity, one-hot per lane",
                     unit="1",
                 )
-            except Exception:  # noqa: BLE001 - optional telemetry
-                log.warning("Trainer state metric initialization failed")
+        except Exception:  # noqa: BLE001 - optional telemetry
+            log.warning("Trainer state metric initialization failed")
 
     def observe(self, options):
         from opentelemetry.metrics import Observation
