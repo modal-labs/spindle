@@ -4,8 +4,21 @@ import json
 import pytest
 
 from spindle.engine import Engine, FutureStatus, OperationKind
+from spindle.engine.server import _failure
 from spindle.errors import EngineSaturated, RecordNotFound, SequenceConflict
 from tests.support import EchoExecutor
+
+
+def test_failure_logs_supplied_exception_outside_handler(caplog) -> None:
+    try:
+        raise ValueError("invalid batch")
+    except ValueError as exc:
+        error = exc
+    assert _failure(error, "forward") == "ValueError: invalid batch"
+    record = caplog.records[-1]
+    assert record.getMessage() == "engine forward failed"
+    assert record.exc_info == (ValueError, error, error.__traceback__)
+    assert "ValueError: invalid batch" in caplog.text
 
 
 def test_parallel_sampler_persistence_backpressure_keeps_training_ready() -> None:

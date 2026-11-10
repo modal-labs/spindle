@@ -76,7 +76,7 @@ class Observer(Protocol):
 
 
 def _failure(exc: BaseException, what: str) -> str:
-    logging.getLogger(__name__).exception("engine %s failed", what)
+    logging.getLogger(__name__).error("engine %s failed", what, exc_info=exc)
     return f"{type(exc).__name__}: {exc}"
 
 

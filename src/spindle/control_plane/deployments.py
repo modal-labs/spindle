@@ -191,7 +191,7 @@ class DeploymentRoutes:
                 definitions.append(DeploymentConfig.from_registry(row))
             except (ValueError, TypeError) as error:
                 if name not in self._skipped:
-                    logger.error("Skipping unreadable recipe %r: %s", name, error)
+                    logger.exception("Skipping unreadable recipe %r: %s", name, error)
                 skipped.add(name)
         self._definitions, self._skipped = definitions, skipped
         self._version, self._loaded = version, True
