@@ -20,9 +20,9 @@ Run every model the server serves before a change that touches all of them, such
 uv run --with tinker-cookbook==0.6.1 python regression/run.py --all
 ```
 
-A model that tinker-cookbook has no renderer for is skipped. Models with a no-thinking renderer use it, because each turn is a short answer.
+`--all` runs each base model once, on the recipe the server picks for that model name. A model that tinker-cookbook has no renderer for is skipped. Models with a no-thinking renderer use it, because each turn is a short answer.
 
-The defaults are 3 steps, 8 groups of 4 games each, and 4 models at a time. `--steps`, `--batch-size`, `--group-size` and `--parallel` change them. Results are only compared with earlier runs that used the same settings. `--wandb-project` also logs each run to Weights & Biases, and `--no-save` prints results without saving them.
+The defaults are 3 steps, 8 groups of 4 games each, 4 models at a time and a 3-hour limit per model. `--steps`, `--batch-size`, `--group-size`, `--parallel` and `--timeout-s` change them. Results are only compared with earlier runs that used the same settings, renderer and tinker-cookbook version. `--wandb-project` also logs each run to Weights & Biases, and `--no-save` prints results without saving them. A failed run prints its error and saves only `"ok": false`, so the results file never holds server output.
 
 ## What to look at
 
@@ -33,6 +33,6 @@ The defaults are 3 steps, 8 groups of 4 games each, and 4 models at a time. `--s
 | `reward_first`, `reward_last` | Mean reward on the first and last step. Over 3 steps this mostly shows that rollouts ran. |
 | `ok` | All steps finished without an error. |
 
-Each line also records the server's Spindle version and commit and the Tinker and tinker-cookbook versions.
+Each line also records when the model finished, the server's Spindle version and commit at that moment, and the Tinker and tinker-cookbook versions.
 
 Runs on a cold server spend most of their time starting trainers and samplers, so a full sweep takes hours on the largest models. KL from a few steps is noisy: compare against several earlier runs before calling a change a regression.
