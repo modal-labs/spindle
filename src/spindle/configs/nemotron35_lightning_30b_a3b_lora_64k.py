@@ -11,6 +11,9 @@ class Config(Parent):
     overrides = {
         "miles_cfg.expert_model_parallel_size": 2,
         "miles_cfg.max_lora_slots": 4,
+        # Score long rows 4,096 tokens at a time. Scoring a 64K row in one pass
+        # takes about 15 GB more on each GPU.
+        "miles_cfg.cli_options.log_probs_chunk_size": 4096,
         "sglang_cfg.max_loras_per_batch": 4,
         "sglang_cfg.max_loaded_loras": 32,
     }
