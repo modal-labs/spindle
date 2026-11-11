@@ -14,7 +14,7 @@ from tinker.types.forward_backward_input import ForwardBackwardInput
 from spindle.encoding import fingerprint
 from spindle.errors import EngineSaturated, RecordNotFound, SequenceConflict
 from spindle.request_timing import mark
-from spindle.usage import TrainerUsage
+from spindle.usage import ContainerUsage
 from spindle.usage.meter import WINDOW_S
 
 from .api import (
@@ -141,7 +141,7 @@ class Engine:
         sampler_persistence_concurrency: int = 1,
         max_forward_backward_batch: int | None = None,
         max_forward_backward_models: int | None = None,
-        usage: TrainerUsage | None = None,
+        usage: ContainerUsage | None = None,
     ) -> None:
         if sampler_persistence_concurrency < 1:
             raise ValueError("sampler_persistence_concurrency must be positive")

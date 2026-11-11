@@ -28,7 +28,7 @@ Values must be strings of 1 to 256 characters. Spindle drops a longer or empty v
 ## How it works
 
 - Trainers count the input tokens of every completed `forward` and `forward_backward`, including each image's `expected_tokens`, and the time they spend busy, idle and starting up.
-- Samplers count prompt tokens, how many of them came from the prefix cache, and sampled tokens. A request for 4 samples counts its prompt 4 times, since each sample is a separate request to the inference server.
+- Samplers count prompt tokens, how many of them came from the prefix cache, and sampled tokens. A request for 4 samples counts its prompt 4 times, since each sample is a separate request to the inference server. Each sampler pool container also records its start-up time and, once a second, whether SGLang had a request running, queued or finished. Spindle turns SGLang metrics on for this. A recipe that turns them off with `sglang_cfg.enable_metrics=False` gets a warning from `spindle deploy`, and its pools' whole cost is split by tokens.
 - Each container adds its counts up per minute and session, and writes them to a Modal Volume named `<frontend>-usage`, such as `spindle-usage`. Training and sampling never wait on these writes.
 - Each time the frontend's cleaner runs (every `sweep_interval_s`, 5 minutes by default), it rolls each finished hour and day into one file, so queries stay fast. It rolls up each hour once an hour has passed since it ended. Rows written more than 10 minutes after their hour, for example because a container couldn't reach the Volume, go to a separate folder that queries always read, so they're still counted.
 - The cleaner deletes raw per-minute files 14 days after their hour, once that day is rolled up. The rollups keep the history, so older windows can still be queried.
@@ -119,7 +119,7 @@ It reads usage through the frontend, so it needs a frontend deployed with this v
 
 The lines add up to those costs:
 
-- `idle` and `cold_start`: time trainers spent waiting for work or starting up. No run is charged for it, but you still pay Modal for it. Samplers record only tokens, so a sampler pool's whole cost, including time it sat warm, is split across the runs that sampled from it.
+- `idle` and `cold_start`: time trainers and sampler pools spent waiting for work or starting up. No run is charged for it, but you still pay Modal for it. Idle and cold start are priced by the container time that was recorded, so they're overstated for a window where some containers recorded none, such as old pool containers still serving right after an upgrade.
 - `unattributed`: cost with no tokens to split it by, such as the frontend, a pool that served nothing, or a trainer that only saved weights.
 - `unknown`: usage from sessions without that label.
 

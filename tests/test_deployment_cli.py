@@ -247,6 +247,17 @@ def test_sampler_image_failure_still_deploys_the_frontend(
     assert "Sampler image build failed: image build failed" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("metrics", [True, False])
+def test_deploy_warns_when_pools_cannot_record_idle_time(
+    deployed, capsys, metrics: bool
+) -> None:
+    config = deployment()
+    settings = {**config.inference_settings, "enable_metrics": metrics}
+    cli.deploy([config.model_copy(update={"inference_settings": settings})])
+    warned = "turns off SGLang metrics" in capsys.readouterr().err
+    assert warned is not metrics
+
+
 def test_frontend_deploys_while_the_sampler_image_builds(monkeypatch, deployed):
     frontend_deployed = threading.Event()
     deploy_frontend = subprocess.run

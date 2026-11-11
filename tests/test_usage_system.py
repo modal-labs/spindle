@@ -16,7 +16,7 @@ from spindle.engine import Engine
 from spindle.engine.backend_http import HttpBackendClient, create_backend_app
 from spindle.engine.http import HttpEngineClient, create_engine_app
 from spindle.providers.local import InMemoryKeyValueStore
-from spindle.usage import DirectorySink, TrainerUsage, UsageMeter
+from spindle.usage import DirectorySink, ContainerUsage, UsageMeter
 from tests.support import SingleEnginePlatform, TinkerStubExecutor, serve
 from tests.test_system import API_KEY, BASE_MODEL, DEFINITION, DEFINITIONS, ENGINE_TOKEN
 
@@ -31,7 +31,7 @@ def deployment(tmp_path):
         backend_url = stack.enter_context(
             serve(create_backend_app(TinkerStubExecutor()))
         )
-        usage = TrainerUsage(
+        usage = ContainerUsage(
             meter, app_name="shared-trainer", base_model=BASE_MODEL, started_at=0
         )
         engine_url = stack.enter_context(

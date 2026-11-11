@@ -2,6 +2,7 @@ import asyncio
 from collections import defaultdict
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -15,11 +16,12 @@ from spindle.usage import (
     DAY_S,
     PRUNE_AFTER_S,
     DirectorySink,
-    TrainerUsage,
+    ContainerUsage,
     UsageMeter,
     UsageRow,
     labels_from,
     meter_sample,
+    poll_busy,
 )
 from spindle.usage.rows import HOUR_S, hour_start, read_rows
 from spindle.usage.store import ROLLUP_DELAY_S
@@ -69,7 +71,7 @@ def shared_pool_rows():
 def test_trained_tokens_include_image_chunks() -> None:
     added = []
     meter = SimpleNamespace(add=lambda **values: added.append(values))
-    usage = TrainerUsage(meter, app_name=TRAINER, base_model="m", started_at=0)  # ty: ignore[invalid-argument-type]
+    usage = ContainerUsage(meter, app_name=TRAINER, base_model="m", started_at=0)  # ty: ignore[invalid-argument-type]
     image = types.ImageChunk(data=b"x", format="png", expected_tokens=10)
     chunks = [types.EncodedTextChunk(tokens=[1, 2, 3]), image]
     datum = types.Datum(model_input=types.ModelInput(chunks=chunks), loss_fn_inputs={})
@@ -197,7 +199,7 @@ def test_engine_meters_tokens_of_completed_training_commands_only(
     meter = UsageMeter(sink, container_id="c1")
 
     async def run() -> FutureStatus:
-        usage = TrainerUsage(
+        usage = ContainerUsage(
             meter, app_name=TRAINER, base_model="Qwen/Qwen3-8B", started_at=0
         )
         server = Engine(executor(), usage=usage)
@@ -383,3 +385,34 @@ def test_reads_must_start_and_end_on_an_hour(tmp_path) -> None:
     # Rollups are stamped with their hour, so a mid-hour range would change once rolled up.
     with pytest.raises(ValueError, match="on an hour"):
         DirectorySink(tmp_path).read(HOUR + 1800, HOUR + 3600)
+
+
+def test_poll_busy_records_busy_and_idle_time_and_skips_unknown_intervals(
+    tmp_path,
+) -> None:
+    sink = DirectorySink(tmp_path)
+    meter = UsageMeter(sink, container_id="pool-1")
+    usage = ContainerUsage(meter, app_name=SAMPLER, base_model="m", started_at=0)
+    answers = iter([True, False, RuntimeError("metrics down"), False])
+    done = threading.Event()
+
+    def busy() -> bool:
+        answer = next(answers, None)
+        if answer is None:
+            done.set()
+            return False
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    stop = poll_busy(usage, busy, interval=0.05)
+    assert done.wait(5)
+    stop.set()
+    meter.flush(include_open=True)
+
+    hour = hour_start(time.time())
+    rows = sink.read(hour - HOUR_S, hour + HOUR_S)
+    total = {name: sum(getattr(r, name) for r in rows) for name in COUNTERS}
+    # A loaded machine can only make intervals longer.
+    assert total["busy_seconds"] >= 0.04
+    assert total["idle_seconds"] >= 0.08
