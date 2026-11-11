@@ -1523,7 +1523,7 @@ def test_stop_apps_stops_and_forgets_the_configs_sampler_pools(monkeypatch):
         return {key for key, _ in await store.list_items("")}
 
     remaining = asyncio.run(run())
-    assert stopped == [lora.app_name, fft.app_name]
+    assert sorted(stopped) == sorted([lora.app_name, fft.app_name])
     assert remaining == {
         f"fft_pool:{other.app_name}",
         f"fft_pool_touch:{other.app_name}",

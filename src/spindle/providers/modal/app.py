@@ -852,24 +852,32 @@ async def _stop_apps(definition) -> None:
     for name in (definition.trainer_app_name, definition.inference_app_name):
         if await _app_exists(name) is not False:
             await asyncio.to_thread(_stop_app, name)
+    # Pools deploy through the inference app, so none can start once it is stopped.
     await _stop_pools(definition.definition_id)
 
 
 async def _stop_pools(definition_id: str) -> None:
-    """Stop every sampler pool deployed for a config and forget it."""
-    lora = LoraPoolSpec(definition_id, APP_NAME)
-    if await _app_exists(lora.app_name) is not False:
-        await asyncio.to_thread(_stop_app, lora.app_name)
-    await shared_kv().delete(f"lora_pool:{lora.app_name}")
-    _lora_pool_gateways.pop(lora.app_name, None)
+    async def stop_lora() -> None:
+        lora = LoraPoolSpec(definition_id, APP_NAME)
+        if await _app_exists(lora.app_name) is not False:
+            await asyncio.to_thread(_stop_app, lora.app_name)
+        await shared_kv().delete(f"lora_pool:{lora.app_name}")
+        _lora_pool_gateways.pop(lora.app_name, None)
+
     registry = fft_pool_kv()
-    for key, value in await registry.list_items("fft_pool:"):
-        spec = FFTPoolSpec.from_dict(value)  # ty: ignore[invalid-argument-type]
-        if spec.definition_id != definition_id or spec.frontend != APP_NAME:
-            continue
+
+    async def stop_fft(key: str, spec: FFTPoolSpec) -> None:
         await asyncio.to_thread(_stop_app, spec.app_name)
         await registry.delete(key)
         await registry.delete(_touch_key(spec))
+
+    fft_pools = [
+        (key, spec)
+        for key, value in await registry.list_items("fft_pool:")
+        for spec in (FFTPoolSpec.from_dict(value),)  # ty: ignore[invalid-argument-type]
+        if spec.definition_id == definition_id and spec.frontend == APP_NAME
+    ]
+    await asyncio.gather(stop_lora(), *(stop_fft(*pool) for pool in fft_pools))
 
 
 def _stop_app(name: str) -> None:
