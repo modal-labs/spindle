@@ -43,6 +43,21 @@ def test_record_keeps_other_nights(history):
     ]
 
 
+def test_record_dedupes_same_la_date_across_utc_midnight(history):
+    cv._record("cfg", _point(23, day=11))  # 15:00 PT Nov 11
+    cv._record("cfg", _point(5, day=12))  # 21:00 PT Nov 11
+    assert [p["ts"] for p in history["cfg"]] == [_point(5, day=12).ts]
+
+
+def test_record_keeps_different_la_dates_within_one_utc_day(history):
+    cv._record("cfg", _point(7, day=12))  # 23:00 PT Nov 11
+    cv._record("cfg", _point(8, day=12))  # 00:00 PT Nov 12
+    assert [p["ts"] for p in history["cfg"]] == [
+        _point(7, day=12).ts,
+        _point(8, day=12).ts,
+    ]
+
+
 def test_row_delta_compares_previous_night(history):
     cv._record("cfg", _point(10, day=11, startup=100))
     cv._record("cfg", _point(10, day=12, startup=120))
