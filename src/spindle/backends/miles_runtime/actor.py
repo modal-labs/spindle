@@ -44,6 +44,7 @@ except ImportError:
 from spindle.startup_timing import timeline
 
 from . import allgather_cp_lora, expert_lora_compat, host_syncs
+from .gdn_lora import freeze_gdn_gate_adapters
 from .volumes import install_cross_node_checkpoint_publish, sync_checkpoint_volume
 from .profiling import RankProfiler, TorchProfileConfig
 from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
@@ -122,7 +123,7 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
         # even for a client datum whose weights are all zero.
         if args.enable_mtp_training:
             result = super().init(args, role, **kwargs)
-            _mark_actor_initialized()
+            self._finish_init(args)
             return result
         original = AutoBridge.to_megatron_provider
 
@@ -137,8 +138,17 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
             result = super().init(args, role, **kwargs)
         finally:
             AutoBridge.to_megatron_provider = original
-        _mark_actor_initialized()
+        self._finish_init(args)
         return result
+
+    def _finish_init(self, args) -> None:
+        if "in_proj_b" in args.target_modules.split(
+            ","
+        ) and not freeze_gdn_gate_adapters(self.model, args.tensor_model_parallel_size):
+            raise RuntimeError(
+                "found no linear-attention in_proj adapters to keep the gates frozen"
+            )
+        _mark_actor_initialized()
 
     def torch_profile_start(self) -> None:
         if not TorchProfileConfig.from_env().profiles_rank(dist.get_rank()):

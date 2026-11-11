@@ -15,7 +15,13 @@ _PEFT_TARGETS = {
     "linear_fc1_up": ("up_proj",),
     "linear_fc2": ("down_proj",),
     "output_layer": ("lm_head",),
+    # The sampler serves Qwen3.5 linear-attention q, k, v, z as in_proj_qkvz; b and a stay frozen.
+    "in_proj_qkv": ("in_proj_qkvz",),
+    "in_proj_z": ("in_proj_qkvz",),
+    "in_proj_b": (),
+    "in_proj_a": (),
 }
+GDN_INPUT_PROJECTIONS = ("in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a")
 _ATTN_LEAVES = frozenset(
     {
         "linear_qkv",
@@ -40,6 +46,8 @@ _ATTN_LEAVES = frozenset(
         "wkv",
         "wq_b",
         "wo_b",
+        *GDN_INPUT_PROJECTIONS,
+        "out_proj",
     }
 )
 _MLP_LEAVES = frozenset(
@@ -160,6 +168,19 @@ class MilesBackendConfig:
             or not all(isinstance(name, str) and name for name in self.target_modules)
         ):
             raise ValueError("target_modules must be a nonempty list of module names")
+        gdn_targets = [
+            name
+            for name in self.target_modules
+            if name.rsplit(".", 1)[-1] in GDN_INPUT_PROJECTIONS
+        ]
+        if gdn_targets and (
+            set(gdn_targets) != set(GDN_INPUT_PROJECTIONS)
+            or len(gdn_targets) != len(GDN_INPUT_PROJECTIONS)
+        ):
+            raise ValueError(
+                "linear-attention LoRA trains one adapter over the fused input "
+                f"projection; list all of {', '.join(GDN_INPUT_PROJECTIONS)} by name"
+            )
         if (
             self.default_lora_alpha <= 0
             or not float(self.default_lora_alpha).is_integer()

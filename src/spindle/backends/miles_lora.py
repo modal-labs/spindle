@@ -34,6 +34,7 @@ from .miles_config import (
     parse_backend_config,
 )
 from .miles_runtime.data import build_outputs, pad_slot_rows, prepare_batch
+from .miles_runtime.gdn_lora import merge_gdn_input_adapters
 from .miles_runtime.profiling import RankProfiler, StepPhaseTimer, TorchProfileConfig
 from .miles_runtime.runtime import MilesRuntime
 
@@ -330,6 +331,7 @@ class MilesCommandBackend(Backend):
                 "train_attn": state.train_attn,
                 "train_mlp": state.train_mlp,
                 "train_unembed": state.train_unembed,
+                "target_modules": list(self.config.target_modules),
             },
             "optimizer_step": state.optimizer_step,
             "has_optimizer": include_optimizer,
@@ -448,6 +450,8 @@ class MilesCommandBackend(Backend):
                 target_modules=self.config.peft_target_modules,
                 lora_dropout=self.config.lora_dropout,
             )
+            if "in_proj_qkvz" in self.config.peft_target_modules:
+                merge_gdn_input_adapters(path)
         self._first("first_sampler_export_done", step=state.optimizer_step)
         self._sampler_captures[capture_id] = {
             "model_id": model_id,
@@ -663,6 +667,17 @@ class MilesCommandBackend(Backend):
         }
         if any(lora.get(name) != value for name, value in expected_targets.items()):
             raise ValueError("checkpoint LoRA targets do not match the model")
+        saved_modules = lora.get("target_modules")
+        modules = list(self.config.target_modules)
+        # Checkpoints from before the field existed never trained linear-attention adapters.
+        if saved_modules not in (None, modules) or (
+            saved_modules is None and "in_proj_qkv" in modules
+        ):
+            raise ValueError(
+                "checkpoint LoRA target_modules do not match the deployment: "
+                f"saved {saved_modules or 'without linear-attention adapters'}, "
+                f"deployment {modules}"
+            )
         expected_topology = {
             "world_size": self.config.world_size,
             "data_parallel_size": self.config.data_parallel_size,
