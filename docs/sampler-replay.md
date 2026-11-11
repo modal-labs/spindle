@@ -37,9 +37,9 @@ have at most 524,288 entries per trajectory. IDs and float32 log probabilities
 alone occupy about 6 MiB before JSON encoding and training intermediates.
 
 The pinned SGLang sampler defaults to
-[`sampling_mask_max_tokens=4096`](https://github.com/modal-projects/sglang/blob/90785332b8e3e1202ae280d85ecec197473bd5a8/python/sglang/srt/arg_groups/fields/exec_.py#L182)
+[`sampling_mask_max_tokens=4096`](https://github.com/modal-projects/sglang/blob/a3e0e1725406b9330bd062520d4f99d0aa73ee4f/python/sglang/srt/arg_groups/fields/exec_.py#L101)
 per position, with
-[overflow detection](https://github.com/modal-projects/sglang/blob/90785332b8e3e1202ae280d85ecec197473bd5a8/python/sglang/srt/layers/sampler.py#L581).
+[overflow detection](https://github.com/modal-projects/sglang/blob/a3e0e1725406b9330bd062520d4f99d0aa73ee4f/python/sglang/srt/layers/sampler.py#L542).
 That bounds one support, not the total request or training microbatch. Full
 vocabulary capture (`top_k=-1`, `top_p=1`) can still create large requests, and
 the loss allocates several arrays proportional to the total support entries.

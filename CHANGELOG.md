@@ -6,13 +6,12 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
+- GLM-5.3 Flash LoRA recipes with model-specific SGLang v0.5.23 and Miles images, including single-node B300 training with RDMA and expert-routing replay.
 
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.
 
 ### Changed
 
-- Samplers run SGLang v0.5.23 with PyTorch 2.14.1 and Transformers 5.19. A server's samplers switch over when it is redeployed with a new Spindle version. DeepSeek-V4.1-Flash samplers switch at their next deploy, and they recompile their kernels once on first start.
 - `inference_target_concurrency` now defaults to `None`, which adds a sampler replica only when every replica holds `sglang_cfg.max_running_requests` requests. New `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long.
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
