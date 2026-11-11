@@ -233,6 +233,16 @@ def test_asset_paths_follow_the_model():
     assert a.asset_path != b.asset_path
 
 
+@pytest.mark.parametrize(
+    "field", ["inference_target_concurrency", "inference_scaleup_window_s"]
+)
+@pytest.mark.parametrize("value", [0, "32", True])
+def test_autoscaling_settings_are_positive_integers_or_none(field, value):
+    assert resolved(**{field: 48})
+    with pytest.raises(ValueError, match=field):
+        resolved(**{field: value})
+
+
 @pytest.mark.parametrize("field", ["trainer_disk_mib", "inference_disk_mib"])
 def test_disk_requests_below_modal_minimum_are_rejected(field):
     with pytest.raises(ValueError, match=field):
@@ -802,7 +812,7 @@ def test_config_import_error_preserves_traceback_and_restores_path(tmp_path):
 
 
 def test_no_yaml_config_ingestion(tmp_path):
-    with pytest.raises(ValueError, match="Python .py"):
+    with pytest.raises(ValueError, match=r"Python \.py"):
         load(tmp_path / "old.yaml")
 
 

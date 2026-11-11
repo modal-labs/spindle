@@ -193,7 +193,7 @@ proxy_secret = modal.Secret.from_name(
 )
 async def prepare_model_assets(definition_id: str) -> None:
     definition = await module_for(definition_id)
-    checkpoint = os.path.normpath(definition.asset_path)
+    checkpoint = os.path.normpath(definition.asset_path)  # noqa: ASYNC240 - normpath is lexical, not I/O
     if (
         os.path.commonpath((MODEL_ASSET_ROOT, checkpoint)) != MODEL_ASSET_ROOT
         or checkpoint == MODEL_ASSET_ROOT

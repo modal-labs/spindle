@@ -1,6 +1,6 @@
 """Beam training and sampling runtimes with separate Torch-compatible pins."""
 
-from .image_dependencies import CORE_PACKAGES, ignore_config_source
+from .image_dependencies import ignore_config_source
 from .miles_image import BRIDGE_IMPORT_CACHE_PATCH
 from .miles_release_image import MILES_PATH, release_image
 from .rollout_image import runtime_image_for
@@ -32,5 +32,4 @@ inference_image = runtime_image_for(
     image="lmsysorg/sglang:v0.5.23",
     branch="fred/beam-spindle",
     revision=SAMPLER_SGLANG_COMMIT,
-    core_packages=tuple(p.replace("==1.43.0", "==1.45.2") for p in CORE_PACKAGES),
 ).add_local_python_source("spindle", ignore=ignore_config_source)

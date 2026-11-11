@@ -59,6 +59,39 @@ Each parent's settings and overrides apply before its child's. Constructor field
 
 When several clients share a trainer, it trains all of their queued batches together by default, and each client waits for the whole step to finish. For RL, where clients sample at different times, set `trainer_max_clients_per_batch = 1`. The trainer then runs one client at a time, so each client can go back to sampling as soon as its own step is done.
 
+Sampler replicas scale between `inference_min_replicas` and `inference_max_replicas`. Each sampled sequence counts as one request, so `num_samples=4` counts four times. By default another replica starts once every replica holds `sglang_cfg.max_running_requests` requests. Set `inference_target_concurrency` lower to scale out earlier. Idle replicas stop after `inference_scaledown_window_s`, so replicas added in one sampling round stay up for the next.
+
+`inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
+
+## Recommended configuration for eval jobs
+
+The defaults suit training loops. An eval sends one short batch, and any replica it starts takes a few minutes to load, so it arrives after the work is done and then sits idle. For eval-only configs:
+
+- Give one replica more slots, so it can take the whole batch.
+- Wait 120 seconds before adding a replica.
+- Cap replicas at 1 or 2.
+- Stop idle replicas after 60 seconds.
+
+```python
+from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
+
+
+class Config(Parent):
+    name = "qwen35-9b-eval"
+    inference_max_replicas = 2
+    inference_scaleup_window_s = 120
+    inference_scaledown_window_s = 60
+    overrides = {
+        "sglang_cfg.max_running_requests": 128,
+        "sglang_cfg.max_queued_requests": 128,
+    }
+
+
+config = Config()
+```
+
+On a running server, add this as its own config with `spindle add` and pass its name as `base_model`.
+
 ## Backend options
 
 | Setting | Consumed by |
@@ -147,6 +180,8 @@ class Config(Parent):
 
 config = Config()
 ```
+
+Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Modal accepts the option only on clustered functions, so other trainers and inference pools are unaffected.
 
 The frontend's URL is `https://<workspace>-<environment>--<frontend>-server.modal.run`. To choose the part after `--`, set `"platform.url_label"`; for example `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. Changing the label changes the URL clients use.
 

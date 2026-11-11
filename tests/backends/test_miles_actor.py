@@ -365,7 +365,7 @@ def test_a_checkpoint_missing_a_peer_shard_is_not_published(
         _FakeVolume, "listdir", lambda self, path: []
     )  # the peer's commit never landed
 
-    with pytest.raises(RuntimeError, match="__8_0.distcp"):
+    with pytest.raises(RuntimeError, match=r"__8_0\.distcp"):
         actor.checkpoint_io.write_checkpoint_dir(
             tmp_path / "000000" / "miles",
             lambda directory: (directory / "__0_0.distcp").write_text("shard"),

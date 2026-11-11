@@ -91,7 +91,7 @@ class Config(BaseConfig):
         "SGLANG_OPT_USE_MULTI_STREAM_OVERLAP": "0",
         # Its MHC kernels take five minutes to compile, so keep them on the
         # shared kernel-cache volume. Smaller models start faster with local caches.
-        "SGLANG_CACHE_DIR": "/root/.cache/kernel-cache/sglang",
+        "SGLANG_CACHE_DIR": "/root/.cache/kernel-cache/sglang-0.5.23",
     }
     sglang_cfg = {
         "tp_size": 8,

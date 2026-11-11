@@ -136,12 +136,10 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     )
     settings, _ = app.servers["Server"]
     assert app.name == pool.app_name
-    assert (
-        settings["gpu"]
-        == f"{row.recipe.inference_gpu}:{row.recipe.inference_gpus_per_node}"
-    )
+    assert settings["gpu"] == (["B200:1", "H200:1"] if kind == "lora" else "H100:1")
     assert settings["min_containers"] == 0
-    assert settings["target_concurrency"] == 16
+    assert settings["target_concurrency"] == (128 if kind == "lora" else 32)
+    assert settings.get("scaleup_window") is None
     assert "compute_region" not in settings
     assert "routing_region" not in settings
 
@@ -226,7 +224,9 @@ def test_startup_failure_is_visible_and_blocks_new_spawns(monkeypatch):
                 "failed_at": app.time.time(),
             },
         )
-        with pytest.raises(ValueError, match="Trainer startup failed.*failed-instance"):
+        with pytest.raises(
+            ValueError, match=r"Trainer startup failed.*failed-instance"
+        ):
             await app._spawn_engine(row.definition_id, "new-instance")
         assert await app.deployment_error("legacy") is None
 
@@ -512,6 +512,16 @@ def test_deepseek_v41_lora_trainer_image_is_registered():
     )
 
 
+@pytest.mark.parametrize(
+    "backend,field", [("miles", "trainer_image"), ("sglang", "inference_image")]
+)
+def test_beam_runtime_images_resolve(backend, field):
+    recipe = load(config_path("beam-501b-a23b-lora-5k"))
+    assert isinstance(
+        deployment_apps.image_for(backend, getattr(recipe, field)), modal.Image
+    )
+
+
 def test_gpu_type_lists_become_modal_fallbacks(builders):
     row = deployment("qwen36-35b-a3b-lora-32k")
     row.recipe.trainer_gpu = ["H200", "B300"]
@@ -586,6 +596,19 @@ def test_single_node_trainer_rdma_allocation(builders, monkeypatch, rdma):
     restored = DeploymentConfig.model_validate_json(row.model_dump_json())
     assert restored.recipe.trainer_rdma == rdma
     assert restored.trainer_identity() == row.trainer_identity()
+
+
+@pytest.mark.parametrize("rdma", [False, True])
+def test_trainer_can_exclude_reserved_capacity(builders, monkeypatch, rdma):
+    row = deployment()
+    row.recipe.trainer_rdma = rdma
+    monkeypatch.setitem(row.recipe.platform["modal"], "exclude_reserved_capacity", True)
+    monkeypatch.setattr(modal, "clustered", lambda **_: lambda fn: fn)
+    app, _ = deployment_apps.build_trainer_app(row, image="test")
+    settings, _ = app.functions["trainer"]
+    assert settings["experimental_options"] == (
+        {"efa_enabled": True, "exclude_reserved_capacity": True} if rdma else {}
+    )
 
 
 def test_multinode_trainer_uses_cluster_launcher(builders, monkeypatch):

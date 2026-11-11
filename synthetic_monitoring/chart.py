@@ -1,7 +1,7 @@
 import io
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 LOOKBACK_S = 90 * 24 * 3600
 
@@ -47,8 +47,7 @@ def render_timing_history_chart(
     from matplotlib import pyplot
 
     tick_labels = [
-        datetime.fromtimestamp(p.ts, tz=timezone.utc).strftime("%m-%d\n%H:%M")
-        for p in points
+        datetime.fromtimestamp(p.ts, tz=UTC).strftime("%m-%d\n%H:%M") for p in points
     ]
     xs = list(range(len(points)))
     fig, axes = pyplot.subplots(

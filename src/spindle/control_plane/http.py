@@ -283,8 +283,8 @@ def create_control_plane_app(
                     content={"error": error, "message": str(exc)},
                 )
         error_id = uuid.uuid4().hex
-        logging.getLogger(__name__).exception(
-            "unhandled error %s on %s", error_id, request.url.path
+        logging.getLogger(__name__).error(
+            "unhandled error %s on %s", error_id, request.url.path, exc_info=exc
         )
         return JSONResponse(
             status_code=500,
