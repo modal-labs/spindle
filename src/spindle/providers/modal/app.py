@@ -193,25 +193,40 @@ proxy_secret = modal.Secret.from_name(
 )
 async def prepare_model_assets(definition_id: str) -> None:
     definition = await module_for(definition_id)
-    checkpoint = os.path.normpath(definition.asset_path)  # noqa: ASYNC240 - normpath is lexical, not I/O
-    if (
-        os.path.commonpath((MODEL_ASSET_ROOT, checkpoint)) != MODEL_ASSET_ROOT
-        or checkpoint == MODEL_ASSET_ROOT
-    ):
-        raise ValueError(f"invalid model asset path: {checkpoint}")
     started = time.time()
-    await asyncio.to_thread(
-        snapshot_download,
-        repo_id=definition.weights_repo,
-        revision=definition.recipe.weights_revision or None,
-        local_dir=checkpoint,
-    )
+    assets = [
+        (
+            definition.weights_repo,
+            definition.recipe.weights_revision,
+            definition.asset_path,
+        ),
+    ]
+    if definition.recipe.inference_draft_model:
+        assets.append(
+            (
+                definition.recipe.inference_draft_model,
+                definition.recipe.inference_draft_model_revision,
+                definition.draft_asset_path,
+            )
+        )
+    for repo_id, revision, checkpoint in assets:
+        checkpoint = os.path.normpath(checkpoint)
+        if (
+            os.path.commonpath((MODEL_ASSET_ROOT, checkpoint)) != MODEL_ASSET_ROOT
+            or checkpoint == MODEL_ASSET_ROOT
+        ):
+            raise ValueError(f"invalid model asset path: {checkpoint}")
+        await asyncio.to_thread(
+            snapshot_download,
+            repo_id=repo_id,
+            revision=revision or None,
+            local_dir=checkpoint,
+        )
     await model_assets.commit.aio()
     StartupTimeline("model-assets", origin=started, labels={"path": checkpoint}).mark(
         "assets_ready"
     )
     await shared_kv().put(await _weights_ready_key(definition_id), time.time())
-
 
 @app.function(image=image)
 async def start_weights_download(definition_id: str) -> bool:
@@ -269,7 +284,10 @@ class WeightsDownloadFailed(ValueError):
 
 
 def _weights_of(definition) -> str:
-    return f"{definition.asset_path}@{definition.recipe.weights_revision}"
+    draft = definition.recipe.inference_draft_model
+    draft_revision = definition.recipe.inference_draft_model_revision
+    suffix = f"|draft:{draft}@{draft_revision}" if draft else ""
+    return f"{definition.asset_path}@{definition.recipe.weights_revision}{suffix}"
 
 
 async def _weights_id(definition_id: str) -> str:
@@ -281,9 +299,16 @@ async def _weights_ready_key(definition_id: str) -> str:
 
 
 async def _weights_call_key(definition_id: str) -> str:
-    # Revisions of one repo download into the same folder, so one runs at a time.
-    return f"model_assets_call:{(await module_for(definition_id)).asset_path}"
-
+    definition = await module_for(definition_id)
+    # Base-only revisions share a directory and must serialize exactly as before.
+    # Draft-enabled definitions also include the draft identity to avoid joining a
+    # download that targets a different second directory.
+    key = (
+        await _weights_id(definition_id)
+        if definition.recipe.inference_draft_model
+        else definition.asset_path
+    )
+    return f"model_assets_call:{key}"
 
 async def _legacy_weights_ready(store, weights: str) -> bool:
     for d in await DEPLOYMENTS.definitions():
