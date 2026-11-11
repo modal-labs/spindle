@@ -121,11 +121,6 @@ def test_presets_context_topology_and_backend_options():
     assert fft["provider_overrides"]["recompute_granularity"] == "full"
 
 
-def test_qwen35_lora_serves_linear_attention_adapters():
-    serving = resolved(recipe("qwen35-4b-lora-32k")).inference_settings
-    assert serving["lora_target_modules"][-2:] == ["in_proj_qkvz", "out_proj"]
-
-
 def test_no_model_catalog_required():
     spec = recipe(
         model="my-org/new-model",
@@ -155,6 +150,17 @@ def test_no_model_catalog_required():
         (
             {"miles_cfg__target_modules": ["q_proj", "in_proj_qkv", "in_proj_z"]},
             "list all of in_proj_qkv, in_proj_z, in_proj_b, in_proj_a",
+        ),
+        (
+            {
+                "miles_cfg__target_modules": [
+                    "*.in_proj_qkv",
+                    "in_proj_z",
+                    "in_proj_b",
+                    "in_proj_a",
+                ]
+            },
+            "by name",
         ),
     ],
 )

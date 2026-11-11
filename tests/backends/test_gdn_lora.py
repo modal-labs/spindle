@@ -27,17 +27,24 @@ def write_adapter(path, gate_value=0.0):
     }
     for gate in ("in_proj_b", "in_proj_a"):
         tensors[f"{LAYER}.linear_attn.{gate}.lora_A.weight"] = a.clone()
-        tensors[f"{LAYER}.linear_attn.{gate}.lora_B.weight"] = torch.full((HEADS, RANK), gate_value)
+        tensors[f"{LAYER}.linear_attn.{gate}.lora_B.weight"] = torch.full(
+            (HEADS, RANK), gate_value
+        )
     save_file(tensors, str(path / "adapter_model.safetensors"))
-    modules = [f"model.language_model.layers.0.{name}" for name in (
-        "self_attn.q_proj",
-        "linear_attn.in_proj_qkv",
-        "linear_attn.in_proj_z",
-        "linear_attn.in_proj_b",
-        "linear_attn.in_proj_a",
-        "linear_attn.out_proj",
-    )]
-    (path / "adapter_config.json").write_text(json.dumps({"r": RANK, "target_modules": modules}))
+    modules = [
+        f"model.language_model.layers.0.{name}"
+        for name in (
+            "self_attn.q_proj",
+            "linear_attn.in_proj_qkv",
+            "linear_attn.in_proj_z",
+            "linear_attn.in_proj_b",
+            "linear_attn.in_proj_a",
+            "linear_attn.out_proj",
+        )
+    ]
+    (path / "adapter_config.json").write_text(
+        json.dumps({"r": RANK, "target_modules": modules})
+    )
     return tensors
 
 
@@ -54,10 +61,18 @@ def test_export_serves_linear_attention_as_one_qkvz_adapter(tmp_path):
         "self_attn.q_proj.lora_A.weight",
         "self_attn.q_proj.lora_B.weight",
     ]
-    assert torch.equal(merged[f"{attn}.in_proj_qkvz.lora_A.weight"], original[f"{attn}.in_proj_qkv.lora_A.weight"])
+    assert torch.equal(
+        merged[f"{attn}.in_proj_qkvz.lora_A.weight"],
+        original[f"{attn}.in_proj_qkv.lora_A.weight"],
+    )
     assert torch.equal(
         merged[f"{attn}.in_proj_qkvz.lora_B.weight"],
-        torch.cat([original[f"{attn}.in_proj_qkv.lora_B.weight"], original[f"{attn}.in_proj_z.lora_B.weight"]]),
+        torch.cat(
+            [
+                original[f"{attn}.in_proj_qkv.lora_B.weight"],
+                original[f"{attn}.in_proj_z.lora_B.weight"],
+            ]
+        ),
     )
     config = json.loads((tmp_path / "adapter_config.json").read_text())
     assert config["target_modules"] == [
@@ -78,10 +93,10 @@ class MultiLoRALinear(torch.nn.Module):
     def __init__(self, name, out_features, num_value_heads, slots=2):
         super().__init__()
         self.base_linear_name = name
-        self.to_wrap = types.SimpleNamespace(config=types.SimpleNamespace(linear_num_value_heads=num_value_heads))
-        self.adapters = torch.nn.ModuleList(
-            torch.nn.Module() for _ in range(slots)
+        self.to_wrap = types.SimpleNamespace(
+            config=types.SimpleNamespace(linear_num_value_heads=num_value_heads)
         )
+        self.adapters = torch.nn.ModuleList(torch.nn.Module() for _ in range(slots))
         for adapter in self.adapters:
             adapter.linear_out = torch.nn.Linear(RANK, out_features, bias=False)
 
@@ -90,8 +105,12 @@ class MultiLoRALinear(torch.nn.Module):
 def test_trainer_keeps_linear_attention_gates_frozen(tensor_parallel_size):
     num_value_heads, local_rows = 4, 16
     gate_rows = 2 * num_value_heads // tensor_parallel_size
-    gdn = MultiLoRALinear("decoder.layers.0.self_attention.in_proj", local_rows, num_value_heads)
-    mamba = MultiLoRALinear("decoder.layers.1.mixer.in_proj", local_rows, num_value_heads)
+    gdn = MultiLoRALinear(
+        "decoder.layers.0.self_attention.in_proj", local_rows, num_value_heads
+    )
+    mamba = MultiLoRALinear(
+        "decoder.layers.1.mixer.in_proj", local_rows, num_value_heads
+    )
     chunk = torch.nn.ModuleList([gdn, mamba])
 
     assert freeze_gdn_gate_adapters([chunk], tensor_parallel_size) == 1

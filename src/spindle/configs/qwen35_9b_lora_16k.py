@@ -24,8 +24,7 @@ class Config(BaseConfig):
             "up_proj",
             "down_proj",
             "lm_head",
-            # Linear-attention layers, three of every four. Listing all four input
-            # projections trains q, k, v and z; the b and a gates stay frozen.
+            # Linear-attention layers; the in_proj_b and in_proj_a gates stay frozen.
             "in_proj_qkv",
             "in_proj_z",
             "in_proj_b",

@@ -12,6 +12,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- Qwen3.5 2B, 4B and 9B LoRA recipes also train the linear-attention layers (three of every four layers), as Tinker does. List `in_proj_qkv`, `in_proj_z`, `in_proj_b`, `in_proj_a` and `out_proj` in `target_modules` to add them to other Qwen3.5 recipes. The `in_proj_b` and `in_proj_a` gates stay frozen because the sampler has no adapter for them. Checkpoints saved by these recipes before this change don't load into them.
 - Samplers run SGLang v0.5.23 with PyTorch 2.14.1 and Transformers 5.19. A server's samplers switch over when it is redeployed with a new Spindle version. DeepSeek-V4.1-Flash samplers switch at their next deploy, and they recompile their kernels once on first start.
 - `inference_target_concurrency` now defaults to `None`, which adds a sampler replica only when every replica holds `sglang_cfg.max_running_requests` requests. New `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long.
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.

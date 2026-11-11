@@ -142,7 +142,12 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
         return result
 
     def _finish_init(self, args) -> None:
-        freeze_gdn_gate_adapters(self.model, args.tensor_model_parallel_size)
+        if "in_proj_b" in args.target_modules.split(
+            ","
+        ) and not freeze_gdn_gate_adapters(self.model, args.tensor_model_parallel_size):
+            raise RuntimeError(
+                "found no linear-attention in_proj adapters to keep the gates frozen"
+            )
         _mark_actor_initialized()
 
     def torch_profile_start(self) -> None:
