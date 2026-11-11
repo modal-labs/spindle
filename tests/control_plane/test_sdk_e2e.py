@@ -1,5 +1,4 @@
 import asyncio
-import dataclasses
 import importlib
 import itertools
 import json
@@ -121,9 +120,15 @@ def test_real_sdk_training_loop(base_url: str) -> None:
     service = tinker.ServiceClient(base_url=base_url, api_key=API_KEY)
 
     capabilities = service.get_server_capabilities()
-    assert [
-        (m.model_name, m.max_context_length) for m in capabilities.supported_models
-    ] == [(BASE_MODEL, MAX_CONTEXT_LENGTH)]
+    # Every field the SDK parses, so a new SDK field shows up here when CI tests it.
+    assert [m.model_dump() for m in capabilities.supported_models] == [
+        {
+            "model_name": BASE_MODEL,
+            "max_context_length": MAX_CONTEXT_LENGTH,
+            "trainable": True,
+            "sampleable": True,
+        }
+    ]
 
     training = service.create_lora_training_client(base_model=BASE_MODEL, rank=32)
 
@@ -202,11 +207,6 @@ def test_real_sdk_sampling_loop(base_url: str) -> None:
 
 
 def test_real_sdk_sequences_carry_distinct_sequence_ids(base_url: str) -> None:
-    sequence_fields = {
-        field.name for field in dataclasses.fields(types.SampledSequence)
-    }
-    if "sequence_id" not in sequence_fields:
-        pytest.skip("Tinker SDK before 0.26 has no SampledSequence.sequence_id")
     service = tinker.ServiceClient(base_url=base_url, api_key=API_KEY)
     sampling = service.create_sampling_client(base_model=BASE_MODEL)
 

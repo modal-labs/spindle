@@ -198,10 +198,10 @@ for row in rows:
 
 Any Tinker-compatible script can be run out of the box against a Spindle server just by changing the base URL and API key. For proxy-protected servers, also supply the [proxy credentials](docs/deployment-configs.md).
 
-For new Python code, use `spindle.ServiceClient(...)` in place of `tinker.ServiceClient(...)`.
-It adds native proxy authentication and [startup progress](docs/observability.md#client-progress) while preserving the Tinker API.
+For new Python code, `spindle.create_service_client(...)` returns a stock
+`tinker.ServiceClient` with proxy authentication and [timely waiting logs](docs/observability.md#client-progress).
 
-Supported Tinker SDK versions: `>=0.24.1`. CI tests the minimum version, the version
+Supported Tinker SDK versions: `>=0.26.0`. CI tests the minimum version, the version
 the server images pin, and the latest release. Deploy the current Spindle server before
 upgrading clients: SDK 0.25 requires protobuf training and sampling responses, and SDK
 0.26 requires per-sequence ids on sampling submissions.

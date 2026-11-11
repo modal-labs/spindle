@@ -250,7 +250,12 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
         steps.append(
             (f"Weights    {deployment.name}", partial(start_weights, deployment))
         )
-    build_image = partial(build_sampler_image, platform["frontend"], environment)
+    build_image = partial(
+        build_sampler_image,
+        platform["frontend"],
+        environment,
+        tuple(deployment.recipe.inference_image for deployment in configs),
+    )
     if run_steps is not None:
         run_steps(steps, [("Sampler image", in_background(build_image))])
         return
@@ -543,7 +548,7 @@ def install_skills(project_dir: Path | None, force: bool) -> None:
         )
         if project_dir is None:
             raise ValueError("Run inside a Git repository or pass --project-dir.")
-    skills_dir = Path(resources.files("spindle") / "skills")
+    skills_dir = Path(resources.files("spindle") / "skills")  # ty: ignore[invalid-argument-type]
     for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
         source = skill_md.parent
         destination = project_dir / ".agents" / "skills" / source.name
@@ -610,7 +615,7 @@ def main(argv=None):
             elif args.all:
                 paths = deploy_wizard.bundled_config_paths()
             elif interactive():
-                chosen = deploy_wizard.choose(console, frontend, environment)
+                chosen = deploy_wizard.choose(console, frontend, environment)  # ty: ignore[invalid-argument-type]
                 paths = [preset.path for preset in chosen]
             else:
                 raise ValueError(NO_CONFIGS)
@@ -636,7 +641,7 @@ def main(argv=None):
                 else None,
             )
             if chosen:
-                deploy_wizard.show_next_steps(console, chosen, frontend, environment)
+                deploy_wizard.show_next_steps(console, chosen, frontend, environment)  # ty: ignore[invalid-argument-type]
         elif args.command == "stop":
             stop(
                 args.app or BaseConfig.platform["frontend"],

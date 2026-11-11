@@ -6,19 +6,27 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- `spindle.ServiceClient` preserves the Tinker client API, adds Modal proxy authentication from environment variables or constructor arguments, and reports waiting reasons without the SDK's startup logging grace period.
+- `spindle.create_service_client` returns a stock Tinker client with Modal proxy authentication from environment variables or explicit arguments. It disables Tinker's waiting-log grace period for all clients in the process.
+
+- GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
 
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.
 
 ### Changed
 
+- Samplers run SGLang v0.5.23 with PyTorch 2.14.1 and Transformers 5.19. A server's samplers switch over when it is redeployed with a new Spindle version. DeepSeek-V4.1-Flash samplers switch at their next deploy, and they recompile their kernels once on first start.
+- `inference_target_concurrency` now defaults to `None`, which adds a sampler replica only when every replica holds `sglang_cfg.max_running_requests` requests. New `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long.
+- Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
 
 ### Fixed
 
+- Local sampling task runners can return an asyncio future as well as a coroutine.
+- Retrieving a null or list result returns JSON when the client requests protobuf.
 - Frontend containers reread the recipe list as soon as it changes, so a config just added or removed through another container is seen at once by name, by model ID, and in `GET /api/v1/spindle/deployments` and `get_server_capabilities`.
 - `spindle stop` no longer aborts on apps that `spindle remove` is already stopping, and removing a config while its apps are still deploying no longer leaves those apps running.
 - Sampling requests rejected with HTTP 429 or 503 can retry with the same request ID as soon as capacity is available, instead of replaying the rejection for 30 seconds.
+- `get_server_capabilities` now sets `trainable` and `sampleable` on each model, which Tinker SDK 0.26 and later read. Before, both were `null`.
 - Sampling recovers when SGLang loads an adapter but its acknowledgement is lost. A later load error is accepted only when SGLang's registry confirms the same adapter name and checkpoint path.
 
 ## 0.1.6 - 2026-11-06

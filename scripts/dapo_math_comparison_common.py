@@ -5,7 +5,7 @@ import contextlib
 import json
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from unittest.mock import patch
@@ -40,7 +40,7 @@ LOSS_FN_CONFIG = {
 
 def timestamped_output(base: str) -> Path:
     path = Path(base)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
     return path.with_name(f"{path.stem}.{timestamp}{path.suffix or '.json'}")
 
 

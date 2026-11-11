@@ -112,7 +112,7 @@ def sample_trace(task, stats):
         "attempts": 0,
         "retries": 0,
     }
-    token = _sample.set(state)
+    token = _sample.set(state)  # ty: ignore[invalid-argument-type]
     try:
         yield
     except BaseException as exc:

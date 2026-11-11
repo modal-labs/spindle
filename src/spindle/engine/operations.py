@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any, TypeAlias
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from tinker import AdamParams, LoraConfig
@@ -49,7 +49,7 @@ class SkipPayload(OperationPayloadModel):
     error: str
 
 
-OperationPayload: TypeAlias = (
+type OperationPayload = (
     ForwardBackwardInput
     | AdamParams
     | LoadCheckpointPayload
@@ -95,8 +95,8 @@ def parse_operation_payload(
             }
         )
         return ForwardBackwardInput(
-            data=list(parsed.data),
-            loss_fn=parsed.loss_fn,
+            data=list(parsed.data),  # ty: ignore[invalid-argument-type]
+            loss_fn=parsed.loss_fn,  # ty: ignore[invalid-argument-type]
             loss_fn_config=parsed.loss_fn_config,
         )
     if kind == OperationKind.OPTIM_STEP:
@@ -114,7 +114,7 @@ def parse_operation_payload(
             raw.get("restore_optimizer", raw.get("optimizer", False))
         )
         return LoadCheckpointPayload(
-            uri=raw.get("path") or raw.get("uri"),
+            uri=raw.get("path") or raw.get("uri"),  # ty: ignore[invalid-argument-type]
             restore_optimizer=restore_optimizer,
             extensions=_extensions(raw, known),
         )
@@ -155,7 +155,7 @@ def parse_operation_payload(
     if kind == OperationKind.SAVE_WEIGHTS_FOR_SAMPLER:
         known = {"publish_version", "extensions"}
         return SaveWeightsForSamplerPayload(
-            publish_version=raw.get("publish_version"),
+            publish_version=raw.get("publish_version"),  # ty: ignore[invalid-argument-type]
             extensions=_extensions(raw, known),
         )
     raise ValueError(f"unsupported operation: {kind.value}")

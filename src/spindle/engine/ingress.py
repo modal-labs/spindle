@@ -34,7 +34,7 @@ def decode_forward_backward(
             else OperationKind.FORWARD_BACKWARD
         )
         payload = ForwardBackwardInput(
-            data=[_decode_proto_datum(item) for item in message.data],
+            data=[_decode_proto_datum(item) for item in message.data],  # ty: ignore[invalid-argument-type]
             loss_fn=message.loss_fn,
             loss_fn_config=_read_loss_fn_config(message),
         )
@@ -155,13 +155,15 @@ def _decode_proto_tensor(value) -> TensorData:
         sparse = value.sparse_csr
         return TensorData(
             data=_decode_values(sparse.values, item_format),
-            dtype=dtype,
+            dtype=dtype,  # ty: ignore[invalid-argument-type]
             shape=shape,
             sparse_crow_indices=_decode_values(sparse.crow_indices, "q"),
             sparse_col_indices=_decode_values(sparse.col_indices, "q"),
         )
     return TensorData(
-        data=_decode_values(value.dense, item_format), dtype=dtype, shape=shape
+        data=_decode_values(value.dense, item_format),
+        dtype=dtype,  # ty: ignore[invalid-argument-type]
+        shape=shape,
     )
 
 

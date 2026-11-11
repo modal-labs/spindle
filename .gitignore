@@ -5,6 +5,7 @@
 __pycache__/
 *.pyc
 build/
+target/
 dist/
 .env
 scripts/results/

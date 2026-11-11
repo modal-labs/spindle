@@ -1,10 +1,10 @@
 import asyncio
-import inspect
 
 import pytest
 import tinker
 from starlette.responses import JSONResponse
 from tinker import types
+from tinker.lib import queue_state_logger
 from tinker.lib.api_future_impl import QueueState
 
 import spindle
@@ -14,7 +14,6 @@ from spindle.providers.local import (
     LocalEnginePlatform,
     LocalSamplingTaskPlatform,
 )
-from spindle.service_client import _Progress
 from tests.control_plane.test_sdk_e2e import (
     API_KEY,
     BASE_MODEL,
@@ -26,8 +25,20 @@ from tests.support import TinkerStubExecutor, TinkerStubSampler, serve
 pytestmark = pytest.mark.usefixtures("sdk_garbage_collected_off_loop")
 
 
-@pytest.mark.parametrize("client_kind", ["spindle", "quiet", "stock"])
-def test_real_sdk_auth_progress_and_training(client_kind, monkeypatch, caplog):
+@pytest.fixture(autouse=True)
+def restore_sdk_grace_period(monkeypatch):
+    if hasattr(queue_state_logger, "PAUSE_GRACE_PERIOD"):
+        monkeypatch.setattr(
+            queue_state_logger,
+            "PAUSE_GRACE_PERIOD",
+            queue_state_logger.PAUSE_GRACE_PERIOD,
+        )
+
+
+@pytest.mark.parametrize(
+    "auth_kind", ["env", "explicit", "default_headers", "default_headers_overrides"]
+)
+def test_real_sdk_auth_progress_and_training(auth_kind, monkeypatch, caplog):
     monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "wk-test")
     monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "ws-test")
     plane = ControlPlane(
@@ -43,6 +54,10 @@ def test_real_sdk_auth_progress_and_training(client_kind, monkeypatch, caplog):
         if (
             request.headers.get("modal-key") != "wk-test"
             or request.headers.get("modal-secret") != "ws-test"
+            or (
+                auth_kind.startswith("default_headers")
+                and request.headers.get("x-custom") != "custom"
+            )
         ):
             return JSONResponse(
                 status_code=403, content={"error": "proxy auth missing"}
@@ -65,19 +80,21 @@ def test_real_sdk_auth_progress_and_training(client_kind, monkeypatch, caplog):
 
     with serve(app) as url:
         kwargs = dict(base_url=url, api_key=API_KEY)
-        if client_kind == "stock":
-            header_arg = (
-                "default_headers_overrides"
-                if "default_headers_overrides"
-                in inspect.signature(tinker.ServiceClient.__init__).parameters
-                else "default_headers"
+        if auth_kind != "env":
+            monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "unused-key")
+            monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "unused-secret")
+            kwargs.update(proxy_token_id="wk-test", proxy_token_secret="ws-test")
+        if auth_kind.startswith("default_headers"):
+            kwargs.update(
+                proxy_token_id="explicit-key", proxy_token_secret="explicit-secret"
             )
-            service = tinker.ServiceClient(
-                **kwargs,
-                **{header_arg: {"Modal-Key": "wk-test", "Modal-Secret": "ws-test"}},
-            )
-        else:
-            service = spindle.ServiceClient(**kwargs, progress=client_kind == "spindle")
+            kwargs[auth_kind] = {
+                "modal-key": "wk-test",
+                "mODAL-sECRET": "ws-test",
+                "X-Custom": "custom",
+            }
+        service = spindle.create_service_client(**kwargs)
+        assert type(service) is tinker.ServiceClient
         assert service.get_server_capabilities().supported_models
         training = service.create_lora_training_client(base_model=BASE_MODEL, rank=8)
         if not isinstance(training, tinker.TrainingClient) or hasattr(
@@ -107,33 +124,31 @@ def test_real_sdk_auth_progress_and_training(client_kind, monkeypatch, caplog):
         assert list(sampled.sequences[0].tokens) == [0, 1]
         if hasattr(service, "close"):
             service.close(status="success")
-    progress = [r.message for r in caplog.records if r.name == "spindle.service_client"]
-    assert bool(progress) == (client_kind == "spindle")
-    if progress:
-        assert any("CreateModel" in m and "starting a trainer" in m for m in progress)
-        assert any("ForwardBackward" in m for m in progress)
+    progress = [
+        r.message for r in caplog.records if r.name == "tinker.lib.queue_state_logger"
+    ]
+    assert any("Model creation" in m and "starting a trainer" in m for m in progress)
+    assert any("Training" in m for m in progress)
 
 
-@pytest.mark.parametrize(
-    "reason",
-    [
-        "starting a trainer ({elapsed} so far)",
-        "all trainer slots in use (2nd in line, {elapsed})",
-    ],
-)
-def test_progress_stage_changes_and_heartbeat(monkeypatch, caplog, reason):
-    now = [0.0]
-    monkeypatch.setattr("spindle.service_client.time.monotonic", lambda: now[0])
-    progress = _Progress("request-1", "CreateModel", 60)
+def test_factory_enables_existing_sdk_observer_without_changing_throttle(
+    monkeypatch, caplog
+):
+    if hasattr(queue_state_logger, "PAUSE_GRACE_PERIOD"):
+        monkeypatch.setattr(queue_state_logger, "PAUSE_GRACE_PERIOD", 900)
+    now = [1000.0]
+    monkeypatch.setattr(queue_state_logger.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(queue_state_logger.time, "time", lambda: now[0])
+    observer = queue_state_logger.QueueStateLogger("model-1", "Training")
+    spindle.create_service_client()
     for second in (0, 1, 59, 60):
-        now[0] = second
-        progress.on_queue_state_change(
-            QueueState.UNKNOWN, reason.format(elapsed=f"{second}s")
+        now[0] = 1000.0 + second
+        observer.on_queue_state_change(
+            QueueState.PAUSED_CAPACITY, f"waiting for GPUs ({second}s so far)"
         )
-    progress.on_queue_state_change(QueueState.PAUSED_CAPACITY, "waiting for GPUs")
-    assert len(caplog.records) == 3
-    assert "60s" in caplog.records[1].message
-    assert "waiting for GPUs" in caplog.records[2].message
+    assert len(caplog.records) == 2
+    assert "0s so far" in caplog.records[0].message
+    assert "60s so far" in caplog.records[1].message
 
 
 @pytest.mark.parametrize("explicit", [False, True])
@@ -144,26 +159,5 @@ def test_proxy_pair_validation_does_not_expose_credentials(monkeypatch, explicit
     if not explicit:
         monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "private-value")
     with pytest.raises(ValueError) as error:
-        spindle.ServiceClient(**kwargs)
+        spindle.create_service_client(**kwargs)
     assert "private-value" not in str(error.value)
-
-
-def test_explicit_auth_and_case_insensitive_header_override(monkeypatch):
-    monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "env-key")
-    monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "env-secret")
-    captured = {}
-
-    def init(self, *args, **kwargs):
-        captured.update(kwargs)
-
-    monkeypatch.setattr(tinker.ServiceClient, "__init__", init)
-    spindle.ServiceClient(
-        proxy_token_id="explicit-key",
-        proxy_token_secret="explicit-secret",
-        default_headers={"modal-key": "override-key", "X-Custom": "custom"},
-    )
-    assert captured["default_headers"] == {
-        "modal-key": "override-key",
-        "modal-secret": "explicit-secret",
-        "x-custom": "custom",
-    }

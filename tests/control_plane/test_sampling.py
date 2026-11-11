@@ -58,9 +58,16 @@ def sample_request(sampling_session_id: str, seq_id: int = 0) -> dict:
     }
 
 
-def test_sampling_sessions_and_submissions_are_idempotent() -> None:
+@pytest.mark.parametrize("future_runner", [False, True])
+def test_sampling_sessions_and_submissions_are_idempotent(future_runner) -> None:
     async def run() -> None:
-        plane, tasks, session_id, sampling_session_id = await sampling_plane()
+        sampler = TinkerStubSampler()
+        runner = (
+            (lambda task: asyncio.ensure_future(sampler(task)))
+            if future_runner
+            else sampler
+        )
+        plane, tasks, session_id, sampling_session_id = await sampling_plane(runner)
         duplicate = await plane.create_sampling_session(
             session_id=session_id,
             sampling_session_seq_id=0,

@@ -6,6 +6,7 @@ created on demand with the existing LoRA/FFT pool lifecycle.
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -60,6 +61,9 @@ def image_for(backend, name=""):
     if not modal.is_local():
         return modal.Image.debian_slim()
     if name:
+        if ":" in name:
+            module, attribute = name.rsplit(":", 1)
+            return getattr(importlib.import_module(module), attribute)
         if name not in TRAINER_IMAGES:
             raise ValueError(
                 f"unknown trainer image {name!r}; choose from {sorted(TRAINER_IMAGES)}"
@@ -70,12 +74,13 @@ def image_for(backend, name=""):
     ]
 
 
-def build_sampler_image(frontend, environment):
+def build_sampler_image(frontend, environment, images=("",)):
     """Build the pool image ahead of the first request; pools reuse the cached build."""
     app = modal.App.lookup(
         frontend, environment_name=environment, create_if_missing=True
     )
-    image_for("sglang").build(app)
+    for name in dict.fromkeys(images):
+        image_for("sglang", name).build(app)
 
 
 def volumes_for(platform):
@@ -105,6 +110,16 @@ def secrets_for(platform, *, training=False):
         if names["huggingface"]:
             result.append(modal.Secret.from_name(names["huggingface"]))
     return result
+
+
+def trainer_experimental_options(rdma, platform):
+    if not rdma:
+        return {}
+    options = {"efa_enabled": True}
+    # Modal accepts this option only on clustered functions.
+    if platform["modal"].get("exclude_reserved_capacity"):
+        options["exclude_reserved_capacity"] = True
+    return options
 
 
 def server_placement(region):
@@ -168,7 +183,8 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         log_scheduled_gpus("trainer")
         run_trainer(saved, instance_id, platform)
 
-    if recipe.trainer_nodes > 1:
+    rdma = recipe.trainer_nodes > 1 or recipe.trainer_rdma
+    if rdma:
         trainer = modal.clustered(size=recipe.trainer_nodes, rdma=True)(trainer)
     trainer = app.function(
         name="trainer",
@@ -179,7 +195,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
             else image_for(recipe.backend, recipe.trainer_image)
         ),
         gpu=gpu_request(recipe.trainer_gpu, recipe.trainer_gpus_per_node),
-        region=platform["modal"]["region"],
+        region=platform["modal"]["region"],  # ty: ignore[invalid-argument-type]
         cpu=recipe.trainer_cpu,
         memory=recipe.trainer_memory_mib,
         ephemeral_disk=recipe.trainer_disk_mib or None,
@@ -189,8 +205,8 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         single_use_containers=True,
         volumes=volumes_for(platform),
         secrets=secrets_for(platform, training=True),
-        env=env,
-        experimental_options={"efa_enabled": True} if recipe.trainer_nodes > 1 else {},
+        env=env,  # ty: ignore[invalid-argument-type]
+        experimental_options=trainer_experimental_options(rdma, platform),
     )(trainer)
 
     return app, trainer
@@ -246,7 +262,7 @@ def run_trainer(deployment, instance_id, platform=None):
         )
 
     run_engine_with_backend(
-        shared_kv(),
+        shared_kv(),  # ty: ignore[invalid-argument-type]
         executor,
         definition_id=deployment.definition_id,
         revision=config["image_id"],
@@ -294,7 +310,9 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
     @app.server(
         name="Server",
         serialized=True,
-        image=image if image is not None else image_for("sglang"),
+        image=image
+        if image is not None
+        else image_for("sglang", recipe.inference_image),
         gpu=gpu_request(recipe.inference_gpu, recipe.inference_gpus_per_node),
         cpu=recipe.inference_cpu,
         memory=recipe.inference_memory_mib,
@@ -315,7 +333,9 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         ),
         min_containers=minimum,
         max_containers=maximum,
-        target_concurrency=recipe.inference_target_concurrency,
+        target_concurrency=recipe.inference_target_concurrency
+        or options["max_running_requests"],
+        scaleup_window=recipe.inference_scaleup_window_s,
         scaledown_window=window,
         startup_timeout=recipe.inference_startup_timeout_s,
         exit_grace_period=300,
@@ -355,10 +375,10 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                     bulletin_volume=platform["storage"]["bulletin"],
                 )
                 self.sidecar = (
-                    start_lora_sidecar(**kwargs)
+                    start_lora_sidecar(**kwargs)  # ty: ignore[invalid-argument-type]
                     if lora
                     else start_fft_sidecar(
-                        **kwargs,
+                        **kwargs,  # ty: ignore[invalid-argument-type]
                         run_id=pool.model_id,
                         pinned_version=None if pool.latest else pool.version,
                     )

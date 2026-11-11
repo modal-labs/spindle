@@ -76,7 +76,7 @@ class Observer(Protocol):
 
 
 def _failure(exc: BaseException, what: str) -> str:
-    logging.getLogger(__name__).exception("engine %s failed", what)
+    logging.getLogger(__name__).error("engine %s failed", what, exc_info=exc)
     return f"{type(exc).__name__}: {exc}"
 
 
@@ -193,7 +193,7 @@ class Engine:
                 return False
             else:
                 registration = model.registration
-        return await asyncio.shield(registration)
+        return await asyncio.shield(registration)  # ty: ignore[invalid-argument-type]
 
     async def model_ids(self) -> tuple[str, ...]:
         async with self._lock:
@@ -339,7 +339,7 @@ class Engine:
                         self._work.notify_all()
                         self._completed.notify_all()
             if ready is None:
-                await asyncio.shield(done)
+                await asyncio.shield(done)  # ty: ignore[invalid-argument-type]
                 return
             await ready.wait()
 
@@ -465,7 +465,7 @@ class Engine:
                     await self._work.wait()
                 if self._closing:
                     return
-                self._consume_ready(operations)
+                self._consume_ready(operations)  # ty: ignore[invalid-argument-type]
             busy = True
             operation = operations[0]
             if isinstance(operation, _AcceptOperation):
@@ -497,7 +497,7 @@ class Engine:
             started = time.time()
             try:
                 if operation.kind in BATCHED_OPERATIONS:
-                    results = await self._execute_batch(operations)
+                    results = await self._execute_batch(operations)  # ty: ignore[invalid-argument-type]
                 else:
                     results = (
                         await self.executor.execute(
@@ -517,12 +517,12 @@ class Engine:
                     ok=True,
                 )
             except Exception as exc:  # noqa: BLE001
-                error = _failure(exc, f"{operation.kind.value} x{len(operations)}")
-                if operation.kind == OperationKind.FORWARD and len(operations) > 1:
+                error = _failure(exc, f"{operation.kind.value} x{len(operations)}")  # ty: ignore[invalid-argument-type]
+                if operation.kind == OperationKind.FORWARD and len(operations) > 1:  # ty: ignore[invalid-argument-type]
                     # Forwards change no state: retry alone so one client's bad
                     # input does not fail the others it was batched with.
                     states = tuple(
-                        [await self._execute_alone(item) for item in operations]
+                        [await self._execute_alone(item) for item in operations]  # ty: ignore[invalid-argument-type]
                     )
                 else:
                     states = tuple(
@@ -541,12 +541,12 @@ class Engine:
                 "gpu",
                 started,
                 seq_ids=[item.seq_id for item in operations],
-                n=len(operations),
+                n=len(operations),  # ty: ignore[invalid-argument-type]
                 ok=all(state.status == FutureStatus.COMPLETE for state in states),
             )
             async with self._lock:
-                for item, state in zip(operations, states, strict=True):
-                    self._finish(item, state)
+                for item, state in zip(operations, states, strict=True):  # ty: ignore[invalid-argument-type]
+                    self._finish(item, state)  # ty: ignore[invalid-argument-type]
             mark(
                 "engine.op.finished",
                 kind=operation.kind.value,

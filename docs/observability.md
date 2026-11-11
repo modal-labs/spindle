@@ -16,10 +16,13 @@ Spindle sends these measurements via OTLP (export off by default), from which Da
 
 ## Client progress
 
-`spindle.ServiceClient` logs server-provided startup and capacity messages through
-`spindle.service_client`. It reports stage changes immediately and repeats waiting
-messages every 60 seconds. Set `progress_interval=30` to change that interval, or
-`progress=False` to retain Tinker's logging behavior.
+`spindle.create_service_client(...)` returns a stock `tinker.ServiceClient` and
+sets Tinker's waiting-log grace period to zero. Creation and training messages can
+then appear on the first waiting response, rather than after 15 minutes. This
+setting affects all Tinker clients in the process, including existing clients.
+Tinker's own observers, loggers, and 60-second repeat interval stay unchanged;
+stage changes can wait for that interval. Older SDKs without a grace period need
+no adjustment. Sampling keeps the installed SDK's reporting behavior.
 
 ## Setup
 

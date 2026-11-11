@@ -17,7 +17,7 @@ class LocalSamplingTaskPlatform:
     def __init__(self, runner: SamplingTaskRunner) -> None:
         self.runner = runner
         self._ids: dict[str, str] = {}
-        self._tasks: dict[str, asyncio.Task[object]] = {}
+        self._tasks: dict[str, asyncio.Future[object]] = {}
         self._lock = asyncio.Lock()
 
     async def submit(self, task: SamplingTask) -> str:
@@ -27,7 +27,7 @@ class LocalSamplingTaskPlatform:
                 return existing
             task_id = f"task-{uuid.uuid4().hex}"
             self._ids[task.request_id] = task_id
-            self._tasks[task_id] = asyncio.create_task(self.runner(task))
+            self._tasks[task_id] = asyncio.ensure_future(self.runner(task))
             return task_id
 
     async def retrieve(

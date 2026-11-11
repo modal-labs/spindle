@@ -41,6 +41,8 @@ class BaseConfig:
     trainer_gpu = "H100"
     trainer_gpus_per_node = 1
     trainer_nodes = 1
+    # Request an RDMA allocation even for a single trainer node.
+    trainer_rdma = False
     trainer_cpu = 8
     trainer_memory_mib = 32768
     trainer_disk_mib = 0
@@ -50,8 +52,10 @@ class BaseConfig:
     trainer_max_clients_per_batch = None
     trainer_timeout_s = 86400
     trainer_env = {}
-    # A name from TRAINER_IMAGES in spindle.providers.modal.deployment_apps; empty uses the default.
+    # A built-in trainer image name or module:attribute; empty uses the default.
     trainer_image = ""
+    # Optional module:attribute for a model-specific sampler image.
+    inference_image = ""
     sampler_persistence_concurrency = 8
 
     inference_gpu = "H100"
@@ -61,7 +65,8 @@ class BaseConfig:
     inference_disk_mib = 0
     inference_min_replicas = 0
     inference_max_replicas = 8
-    inference_target_concurrency = 16
+    # None scales out when a replica's max_running_requests slots are full.
+    inference_target_concurrency = None
     # None measures the rate from the pool's own prefills.
     inference_routing_prefill_tokens_per_second = None
     # None allows a gap of 40% of max_running_requests, at least 4.
@@ -71,6 +76,8 @@ class BaseConfig:
     # None picks cache_wait for LoRA pools with one SGLang data-parallel rank,
     # and affinity otherwise.
     inference_lora_routing = None
+    # None uses Modal's default, which adds replicas as soon as load passes the target.
+    inference_scaleup_window_s = None
     inference_scaledown_window_s = 300
     inference_startup_timeout_s = 1200
     inference_env = {}

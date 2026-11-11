@@ -215,7 +215,7 @@ class HttpEngineClient:
                     }
                 except (ValueError, AttributeError):
                     tags = {}
-                accepted_root.set(set_value("spindle.command.tags", tags, context))
+                accepted_root.set(set_value("spindle.command.tags", tags, context))  # ty: ignore[invalid-argument-type]
 
         self.http = httpx.AsyncClient(
             event_hooks={"request": [inject_context], "response": [read_context]},

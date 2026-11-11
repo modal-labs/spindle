@@ -44,12 +44,21 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
     for name in (REPLAY_FIELDS - {"sampling_mask_logprobs"}) & inputs.keys():
         tensor = inputs[name]
         shape = list(tensor.shape or ())
-        # TensorData.data materializes a fresh Python list on every access.
+        # TensorData.data materializes a Python list on every access. Keep the
+        # SDK array throughout admission; older/list-backed inputs still work.
         if tensor.dtype != "int64" or tensor.sparse_crow_indices is not None:
             raise ValueError(
                 f"{name} must be a dense int64 tensor with a matching shape"
             )
-        values = np.asarray(tensor.to_numpy()).reshape(-1)
+        if hasattr(tensor, "to_numpy"):
+            values = np.asarray(tensor.to_numpy()).reshape(-1)
+        else:
+            data = tensor.data
+            if any(type(value) is not int for value in data):
+                raise ValueError(
+                    f"{name} must be a dense int64 tensor with a matching shape"
+                )
+            values = np.asarray(data).reshape(-1)
         integral = not values.size or values.dtype.kind in "iu"
         if not integral or prod(shape) != values.size:
             raise ValueError(
@@ -82,7 +91,7 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
         if (
             len(offsets) != n + 1
             or offsets[0] != 0
-            or offsets[-1] != len(ids)
+            or offsets[-1] != len(ids)  # ty: ignore[invalid-argument-type]
             or np.any(offsets[1:] < offsets[:-1])
         ):
             raise ValueError(
@@ -141,7 +150,7 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
 
 
 def validate_routed_experts(
-    slot_rows, *, num_layers: int, num_experts: int | None, topk: int
+    slot_rows, *, num_layers: int, num_experts: int | None, topk: int, moe_layer_freq=1
 ) -> None:
     """Check model-specific route constraints before dispatching to any GPU rank.
 
@@ -158,7 +167,23 @@ def validate_routed_experts(
             raise ValueError(
                 f"routed_experts must have {num_layers} layers and {topk} experts per token"
             )
+        if moe_layer_freq is None:
+            moe_layer_freq = 1
+        if isinstance(moe_layer_freq, int):
+            if moe_layer_freq < 1:
+                raise ValueError("moe_layer_freq must be positive")
+            active_layers = np.arange(num_layers) % moe_layer_freq == 0
+        else:
+            active_layers = np.asarray(moe_layer_freq, dtype=bool)
+            if active_layers.shape != (num_layers,):
+                raise ValueError("moe_layer_freq must have num_layers entries")
+        if not active_layers.any():
+            raise ValueError("routed_experts requires an MoE model")
+        # SGLang leaves dense-layer slots zero-filled. They are not routes, and
+        # Miles selects only MoE streams using this same model layer layout.
+        # Validate one datum at a time to bound temporary memory on long batches.
         values = np.asarray(routes["values"]).reshape(routes["shape"])
+        values = values[:, active_layers, :]
         if np.any(values >= num_experts):
             raise ValueError(
                 f"routed_experts IDs must be below the model's expert count ({num_experts})"

@@ -2,7 +2,7 @@
 
 One Spindle deployment that a whole team points tinker-cookbook at, instead of each person deploying their own. It is what the Spindle maintainers run for themselves: recipes on a frontend named `prod` in a Modal environment named `spindle`, which holds nothing else.
 
-Each file in `recipes/` subclasses a bundled recipe and changes its name to start with `prod-`, so its apps are easy to tell apart, and points it at the `prod` frontend in the `spindle` environment. The frontend sets `platform.url_label` to `prod`, so its URL is `https://<workspace>-spindle--prod.modal.run`. It also sets `platform.requires_proxy_auth`, so Modal turns away any request without a proxy token before it reaches Spindle.
+Each file in `recipes/` subclasses a bundled recipe and changes its name to start with `prod-`, so its apps are easy to tell apart, and points it at the `prod` frontend in the `spindle` environment. The frontend sets `platform.url_label` to `prod`, so its URL is `https://<workspace>-spindle--prod.modal.run`. It also sets `platform.requires_proxy_auth`, so Modal turns away any request without a proxy token before it reaches Spindle. It sets `platform.modal.exclude_reserved_capacity` as well, so multi-node trainers stay off GPUs reserved for the workspace and leave them for other jobs.
 
 `recipes/` holds one LoRA recipe per base model, 22 in all, from Qwen3.5-2B to Nemotron-3-Ultra-550B.
 
@@ -41,13 +41,13 @@ python examples/shared-server/with_proxy_auth.py -m tinker_cookbook.recipes.chat
     model_name=Qwen/Qwen3.8-27B base_url=$TINKER_BASE_URL
 ```
 
-For your own scripts, `spindle.ServiceClient` reads the URL, API key, and proxy
+For your own scripts, `spindle.create_service_client` reads the URL, API key, and proxy
 token variables above:
 
 ```python
 import spindle
 
-service = spindle.ServiceClient()
+service = spindle.create_service_client()
 ```
 
 The server picks the recipe from the client's `base_model`.

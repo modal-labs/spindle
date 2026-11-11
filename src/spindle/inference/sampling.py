@@ -319,8 +319,8 @@ async def _sample_one(
             constrain_request(
                 body,
                 headers,
-                latest=int(version) if latest else None,
-                exact=None if latest else int(version),
+                latest=int(version) if latest else None,  # ty: ignore[invalid-argument-type]
+                exact=None if latest else int(version),  # ty: ignore[invalid-argument-type]
             )
         physical_attempt += 1
         observation = SampleAttempt(
@@ -339,7 +339,7 @@ async def _sample_one(
         try:
             if router is not None:
                 dispatched = await router.dispatch(
-                    VersionRef(str(model_id), int(version)).identity,
+                    VersionRef(str(model_id), int(version)).identity,  # ty: ignore[invalid-argument-type]
                     routing_session_id,
                     request_id=observation.id,
                     body=body,

@@ -8,7 +8,7 @@ when_to_use: Deploying, connecting, configuring engines or sampler capacity, pub
 
 ## Connect or deploy
 
-- Connect: `spindle.ServiceClient(base_url=url, api_key=key)`; stock `tinker.ServiceClient` also works.
+- Connect: `spindle.create_service_client(base_url=url, api_key=key)`; stock `tinker.ServiceClient` also works.
 - Deploy: `uv run spindle deploy <config-name>`; bare `spindle deploy` is interactive and exits without a terminal.
 
 ## Shared vs scoped

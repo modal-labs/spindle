@@ -2,7 +2,7 @@
 
 ## Connect
 
-`spindle.ServiceClient(base_url=url, api_key=key)` or env `TINKER_BASE_URL`/`TINKER_API_KEY`. Proxy-protected frontends also need `MODAL_PROXY_TOKEN_ID`/`MODAL_PROXY_TOKEN_SECRET`, which this client reads automatically.
+`spindle.create_service_client(base_url=url, api_key=key)` or env `TINKER_BASE_URL`/`TINKER_API_KEY`. Proxy-protected frontends also need `MODAL_PROXY_TOKEN_ID`/`MODAL_PROXY_TOKEN_SECRET`, which this client reads automatically.
 
 ## Install
 

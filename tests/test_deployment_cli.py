@@ -114,7 +114,9 @@ def deployed(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_sampler_image",
-        lambda frontend, environment: state.images.append((frontend, environment)),
+        lambda frontend, environment, images: state.images.append(
+            (frontend, environment)
+        ),
     )
 
     def start_weights(frontend, environment, definition_id):
@@ -232,7 +234,7 @@ def test_progress_run_names_every_app_and_the_retry_command(monkeypatch, deploye
 def test_sampler_image_failure_still_deploys_the_frontend(
     monkeypatch, deployed, capsys
 ):
-    def broken(frontend, environment):
+    def broken(frontend, environment, images):
         raise RuntimeError("image build failed")
 
     monkeypatch.setattr(cli, "build_sampler_image", broken)
@@ -245,7 +247,7 @@ def test_frontend_deploys_while_the_sampler_image_builds(monkeypatch, deployed):
     frontend_deployed = threading.Event()
     deploy_frontend = subprocess.run
 
-    def build(frontend, environment):
+    def build(frontend, environment, images):
         assert frontend_deployed.wait(timeout=5)
         deployed.images.append(frontend)
 
@@ -451,7 +453,7 @@ def test_deploy_rejects_python_mismatch_before_remote_changes(monkeypatch):
         "from_name",
         lambda *a, **k: pytest.fail("must reject before touching Modal"),
     )
-    with pytest.raises(ValueError, match="requires Python 3.12"):
+    with pytest.raises(ValueError, match=r"requires Python 3\.12"):
         cli.deploy([deployment()])
 
 
@@ -851,7 +853,7 @@ def test_add_reports_a_failed_deploy_and_how_to_retry(monkeypatch):
     )
     mock_frontend_client(monkeypatch, handle)
     monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
-    with pytest.raises(ValueError, match="no H200 quota.*same spindle add again"):
+    with pytest.raises(ValueError, match=r"no H200 quota.*same spindle add again"):
         cli.add_deployment("variant", base="qwen35-9b-lora-16k", overrides={})
 
 

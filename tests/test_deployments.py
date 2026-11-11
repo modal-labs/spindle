@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from tinker.types import SupportedModel
 
 from spindle.backends.deployment import backend_config, serving_options
 from spindle.backends.megatron_config import parse_backend_config
@@ -232,6 +233,16 @@ def test_asset_paths_follow_the_model():
     assert a.asset_path != b.asset_path
 
 
+@pytest.mark.parametrize(
+    "field", ["inference_target_concurrency", "inference_scaleup_window_s"]
+)
+@pytest.mark.parametrize("value", [0, "32", True])
+def test_autoscaling_settings_are_positive_integers_or_none(field, value):
+    assert resolved(**{field: 48})
+    with pytest.raises(ValueError, match=field):
+        resolved(**{field: value})
+
+
 @pytest.mark.parametrize("field", ["trainer_disk_mib", "inference_disk_mib"])
 def test_disk_requests_below_modal_minimum_are_rejected(field):
     with pytest.raises(ValueError, match=field):
@@ -320,10 +331,12 @@ async def test_routing_prefers_longest_context():
     routes, _ = routes_for(small, large)
     assert (await routes.select(small.model, "lora")).definition_id == large.name
     assert (await routes.select(small.name)).definition_id == small.name
-    assert (await routes.capabilities())[0] == {
-        "model_name": small.model,
-        "max_context_length": 32768,
-    }
+    assert (await routes.capabilities())[0] == SupportedModel(
+        model_name=small.model,
+        max_context_length=32768,
+        trainable=True,
+        sampleable=True,
+    )
     validate_frontend([small.recipe, large.recipe])
 
     twin = resolved(recipe("deepseek-v41-flash-lora-8k", name="twin"))
@@ -564,9 +577,24 @@ async def test_every_recipe_routes_by_name_and_plain_models_pick_the_longest():
     assert (await routes.select(base.model)).definition_id == "longer"
     assert (await routes.select(base.name)).definition_id == base.definition_id
     assert await routes.capabilities() == [
-        {"model_name": base.model, "max_context_length": 65536},
-        {"model_name": "longer", "max_context_length": 65536},
-        {"model_name": base.name, "max_context_length": base.max_context_length},
+        SupportedModel(
+            model_name=base.model,
+            max_context_length=65536,
+            trainable=True,
+            sampleable=True,
+        ),
+        SupportedModel(
+            model_name="longer",
+            max_context_length=65536,
+            trainable=True,
+            sampleable=True,
+        ),
+        SupportedModel(
+            model_name=base.name,
+            max_context_length=base.max_context_length,
+            trainable=True,
+            sampleable=True,
+        ),
     ]
     async with client_for(routes, kv) as client:
         session_id = (await client.post("/api/v1/create_session", json={})).json()[
@@ -784,7 +812,7 @@ def test_config_import_error_preserves_traceback_and_restores_path(tmp_path):
 
 
 def test_no_yaml_config_ingestion(tmp_path):
-    with pytest.raises(ValueError, match="Python .py"):
+    with pytest.raises(ValueError, match=r"Python \.py"):
         load(tmp_path / "old.yaml")
 
 
