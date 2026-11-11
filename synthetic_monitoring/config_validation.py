@@ -223,6 +223,15 @@ def slack_report_blocks(rows: list[dict]) -> list[dict]:
 def _record(config: str, point: RunPoint) -> list[RunPoint]:
     history = _history_dict()
     points = [RunPoint(**item) for item in history.get(config, [])]
+    if point.status == "success":
+        # preempted runs restart and re-record; keep only the latest success per night
+        day = datetime.fromtimestamp(point.ts, tz=timezone.utc).date()
+        points = [
+            p
+            for p in points
+            if p.status != "success"
+            or datetime.fromtimestamp(p.ts, tz=timezone.utc).date() != day
+        ]
     points.append(point)
     history[config] = [asdict(p) for p in points]
     return points
