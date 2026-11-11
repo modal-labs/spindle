@@ -17,7 +17,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
-- Miles LoRA trainers keep gradients unchanged between `forward_backward` calls. Before, each extra `forward_backward` before an `optim_step`, including one from another client on the same trainer, scaled the waiting routed-expert gradients by `tensor_model_parallel_size / expert_model_parallel_size`. It also scaled the waiting gradients of adapters on the MLA down-projections (`q_a_proj`, `kv_a_proj_with_mqa`) by `tensor_model_parallel_size`. Recipes where those factors are 1 were not affected.
+- Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer.
 - Local sampling task runners can return an asyncio future as well as a coroutine.
 - Retrieving a null or list result returns JSON when the client requests protobuf.
 - Frontend containers reread the recipe list as soon as it changes, so a config just added or removed through another container is seen at once by name, by model ID, and in `GET /api/v1/spindle/deployments` and `get_server_capabilities`.

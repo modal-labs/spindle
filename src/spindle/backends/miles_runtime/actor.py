@@ -106,10 +106,10 @@ def _use_distributed_timeout_for_gloo(minutes: int) -> None:
     train_actor.init_gloo_group = init_gloo_group
 
 
-def _mark_actor_initialized() -> None:
+def _mark_on_rank_zero(mark: str) -> None:
     rank = dist.get_rank() if dist.is_initialized() else 0
     if rank == 0:
-        timeline("trainer-rank0").mark("actor_model_loaded")
+        timeline("trainer-rank0").mark(mark)
 
 
 class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
@@ -117,13 +117,24 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
 
     def init(self, args, role, **kwargs):
         _use_distributed_timeout_for_gloo(args.distributed_timeout_minutes)
+        result = self._init_model(args, role, **kwargs)
+        _mark_on_rank_zero("actor_model_loaded")
+        # The reduce a backward pass ends with, as Miles sets it up for each pass.
+        config = megatron_model.setup_train_iteration_config(
+            self.args, self.model, None, disable_optimizer=True
+        )
+        grad_accumulation.check_reduce_keeps_grads(
+            self.model, config.finalize_model_grads_func
+        )
+        _mark_on_rank_zero("gradient_reduce_checked")
+        return result
+
+    def _init_model(self, args, role, **kwargs):
         # Miles's LoRA builder inherits checkpoint MTP heads without honoring
         # enable_mtp_training. Qwen3.5 then injects an auxiliary backward loss
         # even for a client datum whose weights are all zero.
         if args.enable_mtp_training:
-            result = super().init(args, role, **kwargs)
-            _mark_actor_initialized()
-            return result
+            return super().init(args, role, **kwargs)
         original = AutoBridge.to_megatron_provider
 
         def provider_without_mtp(bridge, *provider_args, **provider_kwargs):
@@ -134,11 +145,9 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
 
         AutoBridge.to_megatron_provider = provider_without_mtp
         try:
-            result = super().init(args, role, **kwargs)
+            return super().init(args, role, **kwargs)
         finally:
             AutoBridge.to_megatron_provider = original
-        _mark_actor_initialized()
-        return result
 
     def torch_profile_start(self) -> None:
         if not TorchProfileConfig.from_env().profiles_rank(dist.get_rank()):
