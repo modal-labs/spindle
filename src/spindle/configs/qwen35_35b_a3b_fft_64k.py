@@ -48,7 +48,7 @@ class Config(BaseConfig):
         "mem_fraction_static": 0.9,
         "max_running_requests": 32,
         "max_queued_requests": 4,
-        "weight_update_max_compile_group_gb": 32,
+        "weight_update_max_compile_group_gb": 4,
         "dp_size": 4,
         "enable_dp_attention": True,
     }
