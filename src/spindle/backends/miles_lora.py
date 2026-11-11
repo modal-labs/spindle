@@ -644,7 +644,13 @@ class MilesCommandBackend(Backend):
             raise ValueError("unsupported Miles checkpoint schema")
         if metadata.get("backend") != "miles":
             raise ValueError("checkpoint was not created by the Miles backend")
-        if metadata.get("miles_revision") != self.runtime.revision:
+        compatible_revisions = self.config.checkpoint_compatible_revisions.get(
+            self.runtime.revision, ()
+        )
+        if metadata.get("miles_revision") not in (
+            self.runtime.revision,
+            *compatible_revisions,
+        ):
             raise ValueError("checkpoint Miles revision does not match the deployment")
         if metadata.get("checkpoint_format") != "miles_torch_dist":
             raise ValueError("unsupported Miles checkpoint format")

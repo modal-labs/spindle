@@ -2,6 +2,7 @@ import asyncio
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -500,6 +501,63 @@ def test_checkpoint_capture_persist_and_restore(tmp_path, monkeypatch) -> None:
         True,
     )
     assert backend.jobs["model-a"].optimizer_step == 3
+
+
+@pytest.mark.parametrize(
+    "compatibility,target_revision,accepted",
+    [
+        ({}, "b" * 40, False),
+        ({"b" * 40: ["a" * 40]}, "b" * 40, True),
+        ({"b" * 40: ["a" * 40]}, "c" * 40, False),
+        ({"a" * 40: ["b" * 40]}, "b" * 40, False),
+    ],
+)
+def test_checkpoint_revision_upgrade_is_explicit_and_directional(
+    tmp_path, compatibility, target_revision, accepted
+):
+    source = _backend(tmp_path / "source")
+    source.accept_model("model-a", _spec())
+    source.jobs["model-a"].optimizer_step = 7
+    source.capture_checkpoint(
+        "model-a", "original", destination="step-7", include_optimizer=True
+    )
+    checkpoint = Path(source.persist_checkpoint("original", "step-7"))
+    original_metadata = (checkpoint / "metadata.json").read_bytes()
+    runtime = FakeMilesRuntime()
+    runtime.revision = target_revision
+    target = _backend(tmp_path / "target", runtime)
+    target.config = replace(
+        target.config, checkpoint_compatible_revisions=compatibility
+    )
+    target.accept_model("model-b", _spec())
+    if not accepted:
+        with pytest.raises(ValueError, match="Miles revision"):
+            target.load_checkpoint("model-b", str(checkpoint), restore_optimizer=True)
+        return
+    target.load_checkpoint("model-b", str(checkpoint), restore_optimizer=True)
+    assert target.jobs["model-b"].optimizer_step == 7
+    assert (checkpoint / "metadata.json").read_bytes() == original_metadata
+    target.capture_checkpoint(
+        "model-b", "upgraded", destination="upgraded", include_optimizer=True
+    )
+    upgraded = Path(target.persist_checkpoint("upgraded", "upgraded"))
+    metadata = json.loads((upgraded / "metadata.json").read_text())
+    assert metadata["miles_revision"] == target_revision
+    assert metadata["optimizer_step"] == 7
+    assert metadata["has_optimizer"] is True
+    metadata["miles_revision"] = FakeMilesRuntime.revision
+    metadata["checkpoint_format"] = "unsupported"
+    with pytest.raises(ValueError, match="checkpoint format"):
+        target._validate_checkpoint(metadata, target.jobs["model-b"], True)
+
+
+@pytest.mark.parametrize(
+    "compatibility",
+    [None, {"b" * 40: "a" * 40}, {"main": ["a" * 40]}, {"b" * 40: ["unknown"]}],
+)
+def test_checkpoint_compatibility_requires_full_commit_lists(compatibility):
+    with pytest.raises(ValueError, match="checkpoint_compatible_revisions"):
+        _config(checkpoint_compatible_revisions=compatibility).validate()
 
 
 def test_checkpoint_restore_refreshes_files_saved_by_another_container(

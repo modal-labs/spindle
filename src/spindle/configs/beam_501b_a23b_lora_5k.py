@@ -29,6 +29,12 @@ class Config(BaseConfig):
         "max_lora_slots": 2,
         "max_lora_rank": 16,
         "default_lora_alpha": 32,
+        # These revisions differ only by a lint suppression on the Beam import.
+        "checkpoint_compatible_revisions": {
+            "bbb90744c87e2e2d0c8feef92b76af89a4ce7385": [
+                "a1a4ae31dbbd01a00fc6396a5a8b9fb954101505"
+            ],
+        },
         "target_modules": [
             "*.q_proj",
             "*.k_proj",

@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Miles LoRA configs can declare checkpoint-compatible runtime revisions for validated upgrades.
+
 - Beam-1.0-501B-A23B BF16 LoRA recipe with sixteen H200 training GPUs and an eight-B300 sampler.
 
 - GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
