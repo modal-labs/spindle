@@ -139,7 +139,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     assert settings["gpu"] == (["B200:1", "H200:1"] if kind == "lora" else "H100:1")
     assert settings["min_containers"] == 0
     assert settings["target_concurrency"] == (128 if kind == "lora" else 32)
-    assert settings.get("scaleup_window") is None
+    assert settings["scaleup_window"] == 30
     assert "compute_region" not in settings
     assert "routing_region" not in settings
 
