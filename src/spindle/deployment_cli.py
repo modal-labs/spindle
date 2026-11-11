@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 import json
 import os
 import shutil
@@ -11,6 +12,8 @@ import subprocess
 import sys
 import threading
 import time
+from collections import defaultdict
+from collections.abc import Iterable
 from concurrent.futures import Future
 from functools import partial
 from importlib import resources
@@ -47,12 +50,14 @@ from spindle.providers.modal.deployment_configs import (
 )
 from spindle.providers.modal.fft_pool import FFTPoolSpec
 from spindle.providers.modal.lora_pool import LoraPoolSpec
+from spindle.usage import attribute_cost, row_from, usage_window
 from spindle.version import __version__, deployment_tag, source_commit
 
 
 RECIPE_FIELDS = frozenset(key for key in vars(BaseConfig) if not key.startswith("_"))
 ADD_POLL_S = 10
 ADD_TIMEOUT_S = 60 * 60
+OVERHEAD_LINES = ("idle", "cold_start", "unattributed")
 NO_CONFIGS = (
     "No configs given. Run `spindle deploy` in a terminal to pick models interactively, "
     "pass config files or bundled config names (e.g. `spindle deploy qwen35-9b-lora-16k`), "
@@ -521,6 +526,36 @@ def parser():
     retry.add_argument("--frontend", required=True)
     retry.add_argument("--env")
     retry.add_argument("definition_id")
+    usage = commands.add_parser(
+        "usage",
+        help="Split Modal cost for a window across runs or teams by tokens processed",
+    )
+    usage.add_argument(
+        "--frontend", required=True, help="Frontend app name, such as spindle"
+    )
+    usage.add_argument(
+        "--since", required=True, help="Window start, e.g. 2026-11-01T00:00:00Z"
+    )
+    usage.add_argument(
+        "--until", required=True, help="Window end, e.g. 2026-11-08T00:00:00Z"
+    )
+    usage.add_argument(
+        "--costs",
+        type=Path,
+        help="JSON object of Modal app name to USD for the window; by default, read from Modal's billing report",
+    )
+    usage.add_argument("--env", help="Modal environment the apps run in")
+    usage.add_argument(
+        "--group-by",
+        default="run_id",
+        help="Label key to group sessions by, such as run_id or team_id",
+    )
+    usage.add_argument("--format", choices=("table", "csv"), default="table")
+    usage.add_argument(
+        "--hide-overhead",
+        action="store_true",
+        help="Hide idle, cold_start and unattributed cost, which no run is charged for",
+    )
     skills = commands.add_parser(
         "skills", help="Manage the bundled agent skills"
     ).add_subparsers(dest="action", required=True)
@@ -538,6 +573,122 @@ def parser():
         help="Replace existing skills and Claude links",
     )
     return result
+
+
+def billed_app_costs(
+    report: Iterable, environment: str, frontends: set[str]
+) -> tuple[dict[str, float], datetime | None]:
+    """Each app's billed cost, and when the last hour billed for any of them ends.
+
+    An app has one row per deploy and hour.
+    """
+    costs: dict[str, float] = defaultdict(float)
+    billed_until = None
+    for item in report:
+        name = item.description
+        created = any(
+            name == frontend or name.startswith(f"{frontend}-{role}-")
+            for frontend in frontends
+            for role in APP_ROLES
+        )
+        if created and item.environment_name == environment:
+            costs[name] += float(item.cost)
+            hour_end = item.interval_start + timedelta(hours=1)
+            billed_until = max(billed_until or hour_end, hour_end)
+    return dict(costs), billed_until
+
+
+def print_usage_costs(args) -> None:
+    """Print each group's share of the window's Modal cost, for example:
+
+    team_id              USD
+    t-ads               0.41
+    t-ranking           0.22
+    ------------------------
+    idle                0.53
+    cold_start          0.33
+    unattributed        0.05
+    total               1.54
+    """
+    start, end = usage_window(args.since, args.until)
+    if end > datetime.now(UTC):
+        # Cost isn't known for an hour that hasn't ended, so the split would be wrong.
+        raise SystemExit("--until must not be in the future.")
+    environment = args.env or os.environ.get("MODAL_ENVIRONMENT")
+    try:
+        read_usage = modal.Function.from_name(
+            args.frontend, "usage_rows", environment_name=environment
+        )
+        usage = read_usage.remote(args.since, args.until)
+    except modal.exception.NotFoundError as exc:
+        raise SystemExit(
+            f"Couldn't find {args.frontend}'s usage_rows function ({exc}). Deploy "
+            f"{args.frontend} with this version of Spindle, and check --env."
+        ) from exc
+    rows = [row_from(row) for row in usage["rows"]]
+    if args.costs is not None:
+        app_costs = {
+            str(app): float(usd)
+            for app, usd in json.loads(args.costs.read_text()).items()
+        }
+    else:
+        if not environment:
+            raise SystemExit("Pass --env, or --costs with each app's cost.")
+        try:
+            report = modal.Workspace.from_context().billing.report(
+                start=start, end=end, resolution="h"
+            )
+        except Exception as exc:
+            raise SystemExit(
+                f"Couldn't read Modal's billing report: {exc}\n"
+                "Pass --costs with each app's cost instead."
+            ) from exc
+        app_costs, billed_until = billed_app_costs(report, environment, {args.frontend})
+        if billed_until is None:
+            raise SystemExit(
+                f"Modal's billing report has no costs for {args.frontend} in this "
+                "window yet; it can lag a few hours. Try an earlier --until, or pass "
+                "--costs."
+            )
+        if billed_until < end:
+            # Cost for later hours isn't billed yet, so their tokens would take a share of it.
+            print(
+                f"Modal's billing report covers this window only until "
+                f"{billed_until:%Y-%m-%dT%H:%M}Z; splitting usage before then.",
+                file=sys.stderr,
+            )
+            rows = [row for row in rows if row.timestamp < billed_until.timestamp()]
+    if uncosted := sorted({row.app_name for row in rows} - app_costs.keys()):
+        print(
+            f"No cost for {', '.join(uncosted)}; its usage isn't counted.",
+            file=sys.stderr,
+        )
+    costs = attribute_cost(
+        rows, app_costs, sessions=usage["sessions"], group_by=args.group_by
+    )
+    groups = sorted(
+        ((name, usd) for name, usd in costs.items() if name not in OVERHEAD_LINES),
+        key=lambda item: -item[1],
+    )
+    overhead = [
+        (name, costs[name])
+        for name in OVERHEAD_LINES
+        if name in costs and not args.hide_overhead
+    ]
+    if args.format == "csv":
+        print(f"{args.group_by},usd")
+        for name, usd in groups + overhead:
+            print(f"{name},{usd:.2f}")
+        return
+    width = max([len(args.group_by), *(len(name) for name, _ in groups + overhead)])
+    print(f"{args.group_by:<{width}}  {'USD':>10}")
+    for name, usd in groups:
+        print(f"{name:<{width}}  {usd:>10.2f}")
+    if overhead:
+        print("-" * (width + 12))
+    for name, usd in overhead:
+        print(f"{name:<{width}}  {usd:>10.2f}")
+    print(f"{'total':<{width}}  {sum(usd for _, usd in groups + overhead):>10.2f}")
 
 
 def install_skills(project_dir: Path | None, force: bool) -> None:
@@ -591,6 +742,8 @@ def main(argv=None):
                     else None
                 ),
             )
+        elif args.command == "usage":
+            print_usage_costs(args)
         elif args.command == "config":
             if args.action == "init":
                 module = config_path(args.preset).stem

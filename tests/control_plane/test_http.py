@@ -981,3 +981,32 @@ def test_billing_reads_of_one_window_are_shared(error, status, reads) -> None:
 
     assert asyncio.run(run()) == [status] * 4
     assert sink.reads == reads
+
+
+@pytest.mark.parametrize(
+    ("usage_sink", "start", "status"),
+    [
+        (SlowSink(), "2026-11-06T14:30:00Z", 400),  # ValueError
+        (None, "2026-11-06T14:00:00Z", 404),  # HTTPException
+    ],
+)
+def test_error_responses_are_not_compressed_by_the_proxy(
+    usage_sink, start, status
+) -> None:
+    # Compressed, a 400 loses Content-Length, and the Tinker SDK retries it for minutes.
+    async def run() -> httpx.Response:
+        app = create_control_plane_app(
+            object(), DEFINITIONS, api_key=None, usage_sink=usage_sink
+        )
+        async with httpx.AsyncClient(
+            base_url="http://control-plane", transport=httpx.ASGITransport(app=app)
+        ) as client:
+            return await client.get(
+                "/api/v1/billing/usage/events",
+                params={"starting_on": start, "ending_before": "2026-11-06T15:00:00Z"},
+            )
+
+    response = asyncio.run(run())
+    assert response.status_code == status
+    assert response.headers["content-encoding"] == "identity"
+    assert int(response.headers["content-length"]) == len(response.content)

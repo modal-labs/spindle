@@ -4,6 +4,9 @@ import subprocess
 import threading
 from contextlib import nullcontext
 from copy import deepcopy
+from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +19,7 @@ from rich.console import Console
 
 from spindle import deploy_wizard
 from spindle import deployment_cli as cli
+from spindle.usage import UsageRow
 from spindle.control_plane.deployments import REGISTRY_VERSION_KEY
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.local import InMemoryKeyValueStore
@@ -929,3 +933,166 @@ def test_write_registry_tells_every_frontend_container_to_reread(monkeypatch):
         "spindle", "dev", [deployment().model_dump(mode="json")]
     )
     assert asyncio.run(shared.get(REGISTRY_VERSION_KEY))
+
+
+HOUR = datetime(2026, 11, 10, 22, tzinfo=UTC)
+
+
+def report_item(app, cost, environment="main", hour=HOUR):
+    return SimpleNamespace(
+        description=app,
+        environment_name=environment,
+        cost=Decimal(cost),
+        interval_start=hour,
+    )
+
+
+def test_billed_app_costs_sums_every_app_the_deployment_created() -> None:
+    later = HOUR + timedelta(hours=1)
+    report = [
+        report_item("dd-trainer-qwen", "1.25"),
+        report_item("dd-trainer-qwen", "0.75", hour=later),  # After a redeploy.
+        report_item(
+            "dd-trainer-qwen",
+            "9.00",
+            environment="staging",
+            hour=later + timedelta(hours=1),
+        ),
+        report_item("dd-lora-qwen", "0.50"),  # An idle pool with no usage rows.
+        report_item("dd", "0.10"),
+        report_item("dd-dev-trainer-qwen", "4.00"),  # Another deployment's app.
+        report_item("unrelated-app", "4.00"),
+    ]
+
+    assert cli.billed_app_costs(report, "main", {"dd"}) == (
+        {"dd-trainer-qwen": 2.0, "dd-lora-qwen": 0.5, "dd": 0.1},
+        later + timedelta(hours=1),
+    )
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        (
+            [],
+            (
+                "run_id               USD\n"
+                "A                   2.50\n"
+                "unknown             0.50\n"
+                "------------------------\n"
+                "unattributed        1.00\n"
+                "total               4.00\n"
+            ),
+        ),
+        # Cost no run is charged for can be hidden.
+        (
+            ["--hide-overhead"],
+            "run_id          USD\nA              2.50\nunknown        0.50\ntotal          3.00\n",
+        ),
+        (
+            ["--format", "csv"],
+            "run_id,usd\nA,2.50\nunknown,0.50\nunattributed,1.00\n",
+        ),
+    ],
+)
+def test_usage_prints_each_runs_share_of_the_bill(
+    tmp_path, capsys, monkeypatch, options, expected
+) -> None:
+    def row(uid, **values):
+        return UsageRow(
+            timestamp=HOUR.timestamp(),
+            model_id="m",
+            request_uuid=uid,
+            app_name="dd-trainer-m",
+            **values,
+        )
+
+    usage = {
+        "rows": [
+            # A newer frontend may send fields this version doesn't know.
+            {
+                **asdict(row("r1", session_id="s1", train_tokens=5)),
+                "app_kind": "trainer",
+            },
+            asdict(row("r2", train_tokens=1)),
+        ],
+        "sessions": {"s1": {"run_id": "A"}},
+    }
+    read_usage = SimpleNamespace(remote=lambda since, until: usage)
+    monkeypatch.setattr(cli.modal.Function, "from_name", lambda *a, **k: read_usage)
+    costs = tmp_path / "costs.json"
+    costs.write_text(json.dumps({"dd-trainer-m": 3.0, "dd-lora-m": 1.0}))
+
+    cli.main(
+        [
+            "usage",
+            "--frontend",
+            "dd",
+            "--costs",
+            str(costs),
+            "--since",
+            "2026-11-10T22:00:00Z",
+            "--until",
+            "2026-11-10T23:00:00Z",
+            *options,
+        ]
+    )
+
+    assert capsys.readouterr().out == expected
+
+
+@pytest.mark.parametrize(
+    ("report", "expected", "message"),
+    [
+        # The report covers only the first hour, so the second hour's tokens are left out.
+        (
+            [report_item("dd-trainer-m", "3.00")],
+            "run_id         USD\nA             3.00\ntotal         3.00\n",
+            "only until 2026-11-10T23:00Z",
+        ),
+        ([], None, "no costs for dd in this window yet"),
+    ],
+)
+def test_usage_splits_only_the_hours_the_billing_report_covers(
+    capsys, monkeypatch, report, expected, message
+) -> None:
+    rows = [
+        UsageRow(
+            timestamp=(HOUR + timedelta(hours=h)).timestamp(),
+            model_id="m",
+            request_uuid=f"r{h}",
+            app_name="dd-trainer-m",
+            session_id=session,
+            train_tokens=5,
+        )
+        for h, session in ((0, "s1"), (1, "s2"))
+    ]
+    usage = {
+        "rows": [asdict(r) for r in rows],
+        "sessions": {"s1": {"run_id": "A"}, "s2": {"run_id": "B"}},
+    }
+    read_usage = SimpleNamespace(remote=lambda since, until: usage)
+    monkeypatch.setattr(cli.modal.Function, "from_name", lambda *a, **k: read_usage)
+    workspace = SimpleNamespace(billing=SimpleNamespace(report=lambda **_: report))
+    monkeypatch.setattr(cli.modal.Workspace, "from_context", lambda: workspace)
+    argv = [
+        "usage",
+        "--frontend",
+        "dd",
+        "--env",
+        "main",
+        "--since",
+        "2026-11-10T22:00:00Z",
+        "--until",
+        "2026-11-11T00:00:00Z",
+    ]
+
+    if expected is None:
+        with pytest.raises(SystemExit, match=message):
+            cli.main(argv)
+        return
+    cli.main(argv)
+
+    captured = capsys.readouterr()
+    assert captured.out == expected
+    assert message in captured.err

@@ -67,6 +67,16 @@ ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
 BILLING_READ_KEPT_S = 600
 
 
+def error_response(status_code: int, content: dict[str, object]) -> JSONResponse:
+    # Modal's proxy compresses responses unless they set an encoding, dropping
+    # Content-Length, and the Tinker SDK retries a 400 without one for minutes.
+    return JSONResponse(
+        status_code=status_code,
+        content=content,
+        headers={"Content-Encoding": "identity"},
+    )
+
+
 class BillingReadFailed(Exception):
     pass
 
@@ -290,17 +300,15 @@ def create_control_plane_app(
                         logging.getLogger(__name__).exception(
                             "skip rejected operation on %s", request.url.path
                         )
-                return JSONResponse(
-                    status_code=status_code,
-                    content={"error": error, "message": str(exc)},
+                return error_response(
+                    status_code, {"error": error, "message": str(exc)}
                 )
         error_id = uuid.uuid4().hex
         logging.getLogger(__name__).error(
             "unhandled error %s on %s", error_id, request.url.path, exc_info=exc
         )
-        return JSONResponse(
-            status_code=500,
-            content={"error": "internal", "message": str(exc), "error_id": error_id},
+        return error_response(
+            500, {"error": "internal", "message": str(exc), "error_id": error_id}
         )
 
     for kind in (*(entry[0] for entry in ERROR_STATUSES), Exception):
@@ -313,9 +321,8 @@ def create_control_plane_app(
         error = {401: "unauthorized", 405: "unsupported"}.get(
             exc.status_code, "invalid_request"
         )
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"error": error, "message": str(exc.detail)},
+        return error_response(
+            exc.status_code, {"error": error, "message": str(exc.detail)}
         )
 
     @app.get("/api/v1/healthz")

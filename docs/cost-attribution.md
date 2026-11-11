@@ -92,3 +92,37 @@ bucket_start,bucket_end,base_model,user_id,user_name,session_id,project_id,type,
 ```
 
 This is Tinker SDK 0.26; newer versions add cost columns, which Spindle leaves empty. Add `--sessions-csv -` for each session's labels.
+
+## Split cost by run or team
+
+`spindle usage` splits each app's Modal cost by the tokens each session made the GPU process: train tokens on trainers, and uncached prompt tokens and sampled tokens on samplers. Every token counts the same, so this is an estimate; a sampled token takes more GPU time than a prompt token.
+
+Run it for a window that has already ended, naming your frontend and its Modal environment:
+
+```bash
+spindle usage --frontend spindle --env main \
+  --since 2026-11-10T22:00:00Z --until 2026-11-10T23:00:00Z --group-by team_id
+```
+
+```text
+team_id              USD
+t-ads               0.41
+t-ranking           0.22
+------------------------
+idle                0.53
+cold_start          0.33
+unattributed        0.05
+total               1.54
+```
+
+It reads usage through the frontend, so it needs a frontend deployed with this version. It reads the window's cost of every app the deployment created from Modal's billing report. The report can lag a few hours behind; if it doesn't cover the whole window yet, `spindle usage` splits only the usage up to the last hour billed and says so. To use other costs, pass `--costs` with a JSON file of app name to USD, such as `{"spindle-trainer-qwen35-9b-lora-2k": 1.00}`.
+
+The lines add up to those costs:
+
+- `idle` and `cold_start`: time trainers spent waiting for work or starting up. No run is charged for it, but you still pay Modal for it. Samplers record only tokens, so a sampler pool's whole cost, including time it sat warm, is split across the runs that sampled from it.
+- `unattributed`: cost with no tokens to split it by, such as the frontend, a pool that served nothing, or a trainer that only saved weights.
+- `unknown`: usage from sessions without that label.
+
+Add `--hide-overhead` to show only the groups; `total` is then their sum.
+
+Add `--format csv` for CSV.
