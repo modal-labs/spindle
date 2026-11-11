@@ -19,6 +19,7 @@ import time
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import modal
 
@@ -27,6 +28,7 @@ from synthetic_monitoring.chart import RunPoint, render_timing_history_chart
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODAL_ENV = "spindle-ci"
 HISTORY_DICT_NAME = "spindle-synmon-prod-timings"
+NIGHTLY_TZ = "America/Los_Angeles"
 TRAINER_APPS = {
     "dapo-math": "prod-trainer-prod-qwen38-27b-lora-64k",
     "swe-gym": "prod-trainer-prod-qwen35-9b-lora-128k",
@@ -224,12 +226,12 @@ def _record(config: str, point: RunPoint) -> list[RunPoint]:
     history = _history_dict()
     points = [RunPoint(**item) for item in history.get(config, [])]
     if point.status == "success":
-        day = datetime.fromtimestamp(point.ts, tz=timezone.utc).date()
+        day = datetime.fromtimestamp(point.ts, tz=ZoneInfo(NIGHTLY_TZ)).date()
         points = [
             p
             for p in points
             if p.status != "success"
-            or datetime.fromtimestamp(p.ts, tz=timezone.utc).date() != day
+            or datetime.fromtimestamp(p.ts, tz=ZoneInfo(NIGHTLY_TZ)).date() != day
         ]
     points.append(point)
     history[config] = [asdict(p) for p in points]
@@ -359,7 +361,7 @@ def _failed_row(script: str, started: float, error: str) -> dict:
 @app.function(
     image=probe_image,
     timeout=LAUNCH_TIMEOUT_S,
-    schedule=modal.Cron("0 2 * * *", timezone="America/Los_Angeles"),
+    schedule=modal.Cron("0 2 * * *", timezone=NIGHTLY_TZ),
     secrets=[slack_secret],
 )
 def launch_nightly() -> list[dict]:
