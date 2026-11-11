@@ -111,7 +111,7 @@ Miles argument conversion lives in [miles_arguments.py](../src/spindle/backends/
 
 Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, the default, or `raw`: the converter Miles uses to export weights, for models without a Megatron-Bridge mapping) and `dynamic_batch_size`.
 
-Miles checkpoints require the same runtime commit by default. After verifying checkpoint compatibility between two commits, set `miles_cfg["checkpoint_compatible_revisions"] = {"<runtime commit>": ["<checkpoint commit>"]}` using full commit hashes. This applies only to that direction; model, adapter, topology, format, and optimizer-state checks still apply. Restoring preserves the source checkpoint metadata, and subsequent saves record the actual runtime commit.
+Miles checkpoints require the same runtime commit by default. For debugging only, set `miles_cfg["dangerously_allow_checkpoint_revision_mismatch"] = True` to bypass this check for every restore on the deployment. This can load incompatible training state; leave it disabled for normal use. Model, adapter, topology, format, and optimizer-state checks still apply. Restoring preserves the source checkpoint metadata, and subsequent saves record the actual runtime commit.
 
 ### Images
 

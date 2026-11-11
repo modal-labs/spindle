@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -106,7 +105,7 @@ class MilesBackendConfig:
     align_sequences_to_parallel_layout: bool = False
     extra_args: tuple[str, ...] = ()
     cli_options: dict[str, Any] = field(default_factory=dict)
-    checkpoint_compatible_revisions: dict[str, list[str]] = field(default_factory=dict)
+    dangerously_allow_checkpoint_revision_mismatch: bool = False
 
     @property
     def world_size(self) -> int:
@@ -134,22 +133,9 @@ class MilesBackendConfig:
         return tuple(targets)
 
     def validate(self) -> None:
-        compatibility = self.checkpoint_compatible_revisions
-        if not isinstance(compatibility, dict) or any(
-            not isinstance(target, str)
-            or re.fullmatch(r"[0-9a-f]{40}", target) is None
-            or not isinstance(sources, (list, tuple))
-            or not sources
-            or any(
-                not isinstance(source, str)
-                or re.fullmatch(r"[0-9a-f]{40}", source) is None
-                for source in sources
-            )
-            for target, sources in compatibility.items()
-        ):
+        if not isinstance(self.dangerously_allow_checkpoint_revision_mismatch, bool):
             raise ValueError(
-                "checkpoint_compatible_revisions must map runtime commit hashes "
-                "to nonempty lists of checkpoint commit hashes"
+                "dangerously_allow_checkpoint_revision_mismatch must be a bool"
             )
         if self.megatron_to_hf_mode not in ("bridge", "raw"):
             raise ValueError("megatron_to_hf_mode must be bridge or raw")

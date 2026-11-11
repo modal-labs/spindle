@@ -504,16 +504,16 @@ def test_checkpoint_capture_persist_and_restore(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "compatibility,target_revision,accepted",
+    "allow_mismatch,target_revision,accepted",
     [
-        ({}, "b" * 40, False),
-        ({"b" * 40: ["a" * 40]}, "b" * 40, True),
-        ({"b" * 40: ["a" * 40]}, "c" * 40, False),
-        ({"a" * 40: ["b" * 40]}, "b" * 40, False),
+        (False, "b" * 40, False),
+        (True, "b" * 40, True),
+        (True, "c" * 40, True),
+        (False, "a" * 40, True),
     ],
 )
-def test_checkpoint_revision_upgrade_is_explicit_and_directional(
-    tmp_path, compatibility, target_revision, accepted
+def test_checkpoint_revision_mismatch_requires_dangerous_opt_in(
+    tmp_path, allow_mismatch, target_revision, accepted
 ):
     source = _backend(tmp_path / "source")
     source.accept_model("model-a", _spec())
@@ -527,7 +527,7 @@ def test_checkpoint_revision_upgrade_is_explicit_and_directional(
     runtime.revision = target_revision
     target = _backend(tmp_path / "target", runtime)
     target.config = replace(
-        target.config, checkpoint_compatible_revisions=compatibility
+        target.config, dangerously_allow_checkpoint_revision_mismatch=allow_mismatch
     )
     target.accept_model("model-b", _spec())
     if not accepted:
@@ -551,13 +551,44 @@ def test_checkpoint_revision_upgrade_is_explicit_and_directional(
         target._validate_checkpoint(metadata, target.jobs["model-b"], True)
 
 
+@pytest.mark.parametrize("allow_mismatch", [None, "true", 1, {}])
+def test_checkpoint_revision_override_requires_bool(allow_mismatch):
+    with pytest.raises(
+        ValueError, match="dangerously_allow_checkpoint_revision_mismatch"
+    ):
+        _config(
+            dangerously_allow_checkpoint_revision_mismatch=allow_mismatch
+        ).validate()
+
+
 @pytest.mark.parametrize(
-    "compatibility",
-    [None, {"b" * 40: "a" * 40}, {"main": ["a" * 40]}, {"b" * 40: ["unknown"]}],
+    "field,value,error",
+    [
+        ("schema_version", 2, "schema"),
+        ("backend", "other", "Miles backend"),
+        ("base_model", "other", "base model"),
+        ("lora_config", {"rank": 1}, "LoRA configuration"),
+        ("topology", {}, "topology"),
+        ("has_optimizer", False, "optimizer state"),
+    ],
 )
-def test_checkpoint_compatibility_requires_full_commit_lists(compatibility):
-    with pytest.raises(ValueError, match="checkpoint_compatible_revisions"):
-        _config(checkpoint_compatible_revisions=compatibility).validate()
+def test_revision_override_preserves_other_checkpoint_guards(
+    tmp_path, field, value, error
+):
+    backend = _backend(tmp_path)
+    backend.config = replace(
+        backend.config, dangerously_allow_checkpoint_revision_mismatch=True
+    )
+    backend.accept_model("model-a", _spec())
+    backend.capture_checkpoint(
+        "model-a", "original", destination="original", include_optimizer=True
+    )
+    checkpoint = Path(backend.persist_checkpoint("original", "original"))
+    metadata = json.loads((checkpoint / "metadata.json").read_text())
+    metadata["miles_revision"] = "b" * 40
+    metadata[field] = value
+    with pytest.raises(ValueError, match=error):
+        backend._validate_checkpoint(metadata, backend.jobs["model-a"], True)
 
 
 def test_checkpoint_restore_refreshes_files_saved_by_another_container(
