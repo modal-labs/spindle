@@ -1,9 +1,17 @@
-"""Nightly synthetic monitoring for spindle configs.
+"""Nightly synthetic monitoring for spindle configs, and on-demand regression runs.
 
 Test it out with:
 
 ```shell
     uv run modal run -e spindle-ci -m synthetic_monitoring.config_validation::launch_nightly
+```
+
+Run tinker-cookbook's multi-turn guess-the-number GRPO recipe on one model, or on every
+model the server serves, and compare with that model's last successful run:
+
+```shell
+    uv run modal run -e spindle-ci -m synthetic_monitoring.config_validation::regress --model Qwen/Qwen3-8B
+    uv run modal run -e spindle-ci -m synthetic_monitoring.config_validation::regress --all-models
 ```
 """
 
@@ -11,11 +19,13 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -50,6 +60,13 @@ SCRIPTS = {
         "timeout_s": 6 * 60 * 60,
     },
 }
+GUESS_NUMBER = {
+    "recipe": "tinker_cookbook.recipes.multiplayer_rl.guess_number.train",
+    "steps": 3,
+    "batch_size": 8,
+    "group_size": 4,
+    "timeout_s": 3 * 60 * 60,
+}
 MONITOR_TIMEOUT_S = max(script["timeout_s"] for script in SCRIPTS.values()) + 15 * 60
 LAUNCH_TIMEOUT_S = MONITOR_TIMEOUT_S + 30 * 60
 
@@ -67,6 +84,7 @@ probe_image = (
         "slack-sdk==3.27.1",
         "matplotlib==3.10.1",
         "transformers[chat-template]==5.17.0",
+        "tinker-cookbook==0.6.1",
         "swegym @ git+https://github.com/SWE-Gym/SWE-Bench-Package.git@16dd480cce9b27bf111a362d280881c6def5d2a7",
     )
     .env({"MODAL_ENVIRONMENT": MODAL_ENV})
@@ -90,6 +108,75 @@ api_secret = modal.Secret.from_name("spindle-prod-api", environment_name=MODAL_E
 hf_secret = modal.Secret.from_name("huggingface-secret", environment_name=MODAL_ENV)
 
 app = modal.App("spindle-synmon-launcher")
+
+
+def client_env(base_url: str) -> dict[str, str]:
+    env = os.environ.copy()
+    env["TINKER_BASE_URL"] = base_url
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, ["/opt/proxy-auth", env.get("PYTHONPATH")])
+    )
+    return env
+
+
+def guess_number_renderer(model: str) -> str | None:
+    # tinker-cookbook is installed only in the Modal image.
+    from tinker_cookbook.model_info import get_recommended_renderer_names
+
+    try:
+        names = get_recommended_renderer_names(model)
+    except (KeyError, ValueError):
+        return None
+    for preferred in ("disable_thinking", "low_reasoning"):
+        for name in names:
+            if preferred in name:
+                return name
+    return names[0]
+
+
+def run_guess_number(
+    model: str, renderer: str, base_url: str
+) -> tuple[dict[str, float], dict[str, float]]:
+    spec = GUESS_NUMBER
+    log_path = Path(tempfile.mkdtemp(prefix="synmon-guess-number-"))
+    command = [
+        sys.executable,
+        "-m",
+        spec["recipe"],
+        f"model_name={model}",
+        f"renderer_name={renderer}",
+        f"max_steps={spec['steps']}",
+        f"batch_size={spec['batch_size']}",
+        f"group_size={spec['group_size']}",
+        f"log_path={log_path}",
+        "behavior_if_log_dir_exists=delete",
+        "eval_every=0",
+        "save_every=0",
+    ]
+    print("running", " ".join(command))
+    started = time.time()
+    subprocess.run(
+        command, check=True, env=client_env(base_url), timeout=spec["timeout_s"]
+    )
+    lines = (log_path / "metrics.jsonl").read_text().splitlines()
+    steps = [json.loads(line) for line in lines if line.strip()]
+    steps = [step for step in steps if "env/all/reward/total" in step]
+    if len(steps) != spec["steps"]:
+        raise ValueError(f"Expected {spec['steps']} steps, got {len(steps)}")
+    step_s = [step["time/total"] for step in steps]
+    timings = {
+        "startup": time.time() - started - sum(step_s),
+        "first step": step_s[0],
+        "warm steps": sum(step_s[1:]),
+    }
+    metrics = {
+        "kl_sample_train_v2": statistics.mean(
+            step["optim/kl_sample_train_v2"] for step in steps
+        ),
+        "reward_first": steps[0]["env/all/reward/total"],
+        "reward_last": steps[-1]["env/all/reward/total"],
+    }
+    return timings, metrics
 
 
 def run_script(name: str, base_url: str) -> dict[str, float]:
@@ -139,14 +226,11 @@ def run_script(name: str, base_url: str) -> dict[str, float]:
             "--output",
             str(output),
         ]
-    env = os.environ.copy()
-    env["TINKER_BASE_URL"] = base_url
-    env["PYTHONPATH"] = os.pathsep.join(
-        filter(None, ["/opt/proxy-auth", env.get("PYTHONPATH")])
-    )
     print("running", " ".join(command))
     started = time.time()
-    subprocess.run(command, check=True, env=env, timeout=spec["timeout_s"])
+    subprocess.run(
+        command, check=True, env=client_env(base_url), timeout=spec["timeout_s"]
+    )
     clients: dict[int | str, list[dict]] = {}
     for path in output.rglob("events.jsonl"):
         for line in path.read_text().splitlines():
@@ -222,10 +306,12 @@ def slack_report_blocks(rows: list[dict]) -> list[dict]:
     ]
 
 
-def _record(config: str, point: RunPoint) -> list[RunPoint]:
+def _record(
+    config: str, point: RunPoint, one_success_per_day: bool = True
+) -> list[RunPoint]:
     history = _history_dict()
     points = [RunPoint(**item) for item in history.get(config, [])]
-    if point.status == "success":
+    if one_success_per_day and point.status == "success":
         day = datetime.fromtimestamp(point.ts, tz=ZoneInfo(NIGHTLY_TZ)).date()
         points = [
             p
@@ -255,6 +341,8 @@ def _row(
         "total_duration_s": point.total_duration_s if ok else None,
         "delta": delta,
         "timings": point.timings,
+        "metrics": point.metrics,
+        "prior_metrics": prior.metrics if ok and prior else {},
         "modal_app_url": point.modal_app_url,
         "error": error,
     }
@@ -379,3 +467,101 @@ def launch_nightly() -> list[dict]:
     if any(row["status"] != "success" for row in rows):
         raise RuntimeError("synmon finished with failures")
     return rows
+
+
+@app.function(image=probe_image, secrets=[api_secret], timeout=10 * 60)
+def served_models() -> dict[str, str | None]:
+    """Each base model the server serves, with its guess-number renderer or None."""
+    headers = {"x-api-key": os.environ["TINKER_API_KEY"]}
+    if os.environ.get("MODAL_PROXY_TOKEN_ID"):
+        headers["Modal-Key"] = os.environ["MODAL_PROXY_TOKEN_ID"]
+        headers["Modal-Secret"] = os.environ["MODAL_PROXY_TOKEN_SECRET"]
+    base_url = os.environ["TINKER_BASE_URL"].rstrip("/").removesuffix("/api/v1")
+    request = urllib.request.Request(
+        base_url + "/api/v1/get_server_capabilities", headers=headers
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        models = json.load(response)["supported_models"]
+    return {
+        m["model_name"]: guess_number_renderer(m["model_name"])
+        for m in models
+        if "/" in m["model_name"]
+    }
+
+
+@app.function(
+    image=probe_image,
+    timeout=GUESS_NUMBER["timeout_s"] + 15 * 60,
+    secrets=[api_secret],
+    single_use_containers=True,
+)
+def regression(model: str, renderer: str) -> dict:
+    config = f"guess-number/{model}"
+    started = time.time()
+    error: str | None = None
+    timings: dict[str, float] = {}
+    metrics: dict[str, float] = {}
+    try:
+        timings, metrics = run_guess_number(
+            model, renderer, os.environ["TINKER_BASE_URL"]
+        )
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        print(f"error: {config} failed: {error}")
+    point = RunPoint(
+        ts=started,
+        timings=timings,
+        total_duration_s=time.time() - started,
+        status="failed" if error else "success",
+        metrics=metrics,
+    )
+    return _row(config, point, _record(config, point, one_success_per_day=False), error)
+
+
+def select_runs(
+    renderers: dict[str, str | None], models: list[str] | None
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Split the requested models, or every served model, into runs and skips."""
+    runnable, skipped = [], []
+    for name in renderers if models is None else models:
+        renderer = renderers.get(name)
+        if renderer is not None:
+            runnable.append((name, renderer))
+        elif name in renderers:
+            skipped.append((name, "no cookbook renderer"))
+        else:
+            skipped.append((name, "not served"))
+    return runnable, skipped
+
+
+def _print_regression(row: dict) -> None:
+    if row["status"] != "success":
+        print(f"FAILED {row['config']}: {row['error']}")
+        return
+    prior = row["prior_metrics"]
+    metrics = ", ".join(
+        f"{key} {prior[key]:.4g} -> {value:.4g}"
+        if key in prior
+        else f"{key} {value:.4g}"
+        for key, value in row["metrics"].items()
+    )
+    print(f"ok     {row['config']}: {metrics}; timing delta {row['delta']}")
+
+
+@app.local_entrypoint()
+def regress(model: str = "", all_models: bool = False, parallel: int = 4) -> None:
+    if bool(model) == all_models:
+        raise SystemExit("Pass --model <base model>[,<base model>...] or --all-models.")
+    runnable, skipped = select_runs(
+        served_models.remote(), None if all_models else model.split(",")
+    )
+    for name, reason in skipped:
+        print(f"skip   {name}: {reason}")
+    runs = regression.with_options(max_containers=parallel).starmap(
+        runnable, order_outputs=False, return_exceptions=True
+    )
+    for row in runs:
+        if isinstance(row, Exception):
+            print(f"FAILED {type(row).__name__}: {row}")
+        else:
+            _print_regression(row)
