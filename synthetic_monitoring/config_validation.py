@@ -224,7 +224,6 @@ def _record(config: str, point: RunPoint) -> list[RunPoint]:
     history = _history_dict()
     points = [RunPoint(**item) for item in history.get(config, [])]
     if point.status == "success":
-        # preempted runs restart and re-record; keep only the latest success per night
         day = datetime.fromtimestamp(point.ts, tz=timezone.utc).date()
         points = [
             p
