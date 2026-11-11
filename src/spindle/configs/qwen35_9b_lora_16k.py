@@ -24,6 +24,13 @@ class Config(BaseConfig):
             "up_proj",
             "down_proj",
             "lm_head",
+            # Linear-attention layers, three of every four. Listing all four input
+            # projections trains q, k, v and z; the b and a gates stay frozen.
+            "in_proj_qkv",
+            "in_proj_z",
+            "in_proj_b",
+            "in_proj_a",
+            "out_proj",
         ],
         "max_tokens_per_gpu": 16384,
         "cli_options": {

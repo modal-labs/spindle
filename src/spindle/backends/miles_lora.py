@@ -34,6 +34,7 @@ from .miles_config import (
     parse_backend_config,
 )
 from .miles_runtime.data import build_outputs, pad_slot_rows, prepare_batch
+from .miles_runtime.gdn_lora import merge_gdn_input_adapters
 from .miles_runtime.profiling import RankProfiler, StepPhaseTimer, TorchProfileConfig
 from .miles_runtime.runtime import MilesRuntime
 
@@ -448,6 +449,8 @@ class MilesCommandBackend(Backend):
                 target_modules=self.config.peft_target_modules,
                 lora_dropout=self.config.lora_dropout,
             )
+            if "in_proj_qkvz" in self.config.peft_target_modules:
+                merge_gdn_input_adapters(path)
         self._first("first_sampler_export_done", step=state.optimizer_step)
         self._sampler_captures[capture_id] = {
             "model_id": model_id,
