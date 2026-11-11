@@ -70,7 +70,7 @@ GUESS_NUMBER = {
 MONITOR_TIMEOUT_S = max(script["timeout_s"] for script in SCRIPTS.values()) + 15 * 60
 LAUNCH_TIMEOUT_S = MONITOR_TIMEOUT_S + 30 * 60
 
-probe_image = (
+base_image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .run_commands(
@@ -84,23 +84,34 @@ probe_image = (
         "slack-sdk==3.27.1",
         "matplotlib==3.10.1",
         "transformers[chat-template]==5.17.0",
-        "tinker-cookbook==0.6.1",
         "swegym @ git+https://github.com/SWE-Gym/SWE-Bench-Package.git@16dd480cce9b27bf111a362d280881c6def5d2a7",
     )
     .env({"MODAL_ENVIRONMENT": MODAL_ENV})
-    .add_local_python_source("spindle", "synthetic_monitoring")
-    .add_local_dir(
-        str(REPO_ROOT / "examples/dapo-27b-4h200-12b200"),
-        remote_path=DAPO_DIR,
+)
+
+
+def with_local_sources(image: modal.Image) -> modal.Image:
+    return (
+        image.add_local_python_source("spindle", "synthetic_monitoring")
+        .add_local_dir(
+            str(REPO_ROOT / "examples/dapo-27b-4h200-12b200"),
+            remote_path=DAPO_DIR,
+        )
+        .add_local_file(
+            str(REPO_ROOT / "examples/shared-server/with_proxy_auth.py"),
+            "/opt/proxy-auth/with_proxy_auth.py",
+        )
+        .add_local_file(
+            str(REPO_ROOT / "synthetic_monitoring/sitecustomize.py"),
+            "/opt/proxy-auth/sitecustomize.py",
+        )
     )
-    .add_local_file(
-        str(REPO_ROOT / "examples/shared-server/with_proxy_auth.py"),
-        "/opt/proxy-auth/with_proxy_auth.py",
-    )
-    .add_local_file(
-        str(REPO_ROOT / "synthetic_monitoring/sitecustomize.py"),
-        "/opt/proxy-auth/sitecustomize.py",
-    )
+
+
+probe_image = with_local_sources(base_image)
+# The nightly clients keep the locked Tinker SDK; only regression runs use the cookbook.
+regression_image = with_local_sources(
+    base_image.uv_pip_install("tinker-cookbook==0.6.1", "tinker==0.39.0")
 )
 
 slack_secret = modal.Secret.from_name("spindle-bot-slack", environment_name=MODAL_ENV)
@@ -120,7 +131,7 @@ def client_env(base_url: str) -> dict[str, str]:
 
 
 def guess_number_renderer(model: str) -> str | None:
-    # tinker-cookbook is installed only in the Modal image.
+    # tinker-cookbook is installed only in the regression image.
     from tinker_cookbook.model_info import get_recommended_renderer_names
 
     try:
@@ -137,17 +148,16 @@ def guess_number_renderer(model: str) -> str | None:
 def run_guess_number(
     model: str, renderer: str, base_url: str
 ) -> tuple[dict[str, float], dict[str, float]]:
-    spec = GUESS_NUMBER
     log_path = Path(tempfile.mkdtemp(prefix="synmon-guess-number-"))
     command = [
         sys.executable,
         "-m",
-        spec["recipe"],
+        GUESS_NUMBER["recipe"],
         f"model_name={model}",
         f"renderer_name={renderer}",
-        f"max_steps={spec['steps']}",
-        f"batch_size={spec['batch_size']}",
-        f"group_size={spec['group_size']}",
+        f"max_steps={GUESS_NUMBER['steps']}",
+        f"batch_size={GUESS_NUMBER['batch_size']}",
+        f"group_size={GUESS_NUMBER['group_size']}",
         f"log_path={log_path}",
         "behavior_if_log_dir_exists=delete",
         "eval_every=0",
@@ -156,13 +166,13 @@ def run_guess_number(
     print("running", " ".join(command))
     started = time.time()
     subprocess.run(
-        command, check=True, env=client_env(base_url), timeout=spec["timeout_s"]
+        command, check=True, env=client_env(base_url), timeout=GUESS_NUMBER["timeout_s"]
     )
     lines = (log_path / "metrics.jsonl").read_text().splitlines()
     steps = [json.loads(line) for line in lines if line.strip()]
     steps = [step for step in steps if "env/all/reward/total" in step]
-    if len(steps) != spec["steps"]:
-        raise ValueError(f"Expected {spec['steps']} steps, got {len(steps)}")
+    if len(steps) != GUESS_NUMBER["steps"]:
+        raise ValueError(f"Expected {GUESS_NUMBER['steps']} steps, got {len(steps)}")
     step_s = [step["time/total"] for step in steps]
     timings = {
         "startup": time.time() - started - sum(step_s),
@@ -320,7 +330,9 @@ def _record(
             or datetime.fromtimestamp(p.ts, tz=ZoneInfo(NIGHTLY_TZ)).date() != day
         ]
     points.append(point)
-    history[config] = [asdict(p) for p in points]
+    history[config] = [
+        {k: v for k, v in asdict(p).items() if k != "metrics" or v} for p in points
+    ]
     return points
 
 
@@ -469,13 +481,14 @@ def launch_nightly() -> list[dict]:
     return rows
 
 
-@app.function(image=probe_image, secrets=[api_secret], timeout=10 * 60)
+@app.function(image=regression_image, secrets=[api_secret], timeout=10 * 60)
 def served_models() -> dict[str, str | None]:
     """Each base model the server serves, with its guess-number renderer or None."""
-    headers = {"x-api-key": os.environ["TINKER_API_KEY"]}
-    if os.environ.get("MODAL_PROXY_TOKEN_ID"):
-        headers["Modal-Key"] = os.environ["MODAL_PROXY_TOKEN_ID"]
-        headers["Modal-Secret"] = os.environ["MODAL_PROXY_TOKEN_SECRET"]
+    headers = {
+        "x-api-key": os.environ["TINKER_API_KEY"],
+        "Modal-Key": os.environ["MODAL_PROXY_TOKEN_ID"],
+        "Modal-Secret": os.environ["MODAL_PROXY_TOKEN_SECRET"],
+    }
     base_url = os.environ["TINKER_BASE_URL"].rstrip("/").removesuffix("/api/v1")
     request = urllib.request.Request(
         base_url + "/api/v1/get_server_capabilities", headers=headers
@@ -490,7 +503,7 @@ def served_models() -> dict[str, str | None]:
 
 
 @app.function(
-    image=probe_image,
+    image=regression_image,
     timeout=GUESS_NUMBER["timeout_s"] + 15 * 60,
     secrets=[api_secret],
     single_use_containers=True,
@@ -553,15 +566,21 @@ def regress(model: str = "", all_models: bool = False, parallel: int = 4) -> Non
     if bool(model) == all_models:
         raise SystemExit("Pass --model <base model>[,<base model>...] or --all-models.")
     runnable, skipped = select_runs(
-        served_models.remote(), None if all_models else model.split(",")
+        served_models.remote(),
+        None if all_models else list(dict.fromkeys(model.split(","))),
     )
     for name, reason in skipped:
         print(f"skip   {name}: {reason}")
     runs = regression.with_options(max_containers=parallel).starmap(
-        runnable, order_outputs=False, return_exceptions=True
+        runnable, return_exceptions=True
     )
-    for row in runs:
+    failed = False
+    for (name, _), row in zip(runnable, runs, strict=True):
         if isinstance(row, Exception):
-            print(f"FAILED {type(row).__name__}: {row}")
+            print(f"FAILED guess-number/{name}: {type(row).__name__}: {row}")
+            failed = True
         else:
             _print_regression(row)
+            failed |= row["status"] != "success"
+    if failed:
+        raise SystemExit(1)
