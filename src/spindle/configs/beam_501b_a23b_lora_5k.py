@@ -15,7 +15,8 @@ class Config(BaseConfig):
     trainer_nodes = 2
     trainer_cpu = 32
     trainer_memory_mib = 524288
-    trainer_max_clients_per_instance = 1
+    trainer_max_clients_per_instance = 2
+    trainer_max_clients_per_batch = 1
     trainer_timeout_s = 86400
     miles_cfg = {
         "model_type": "beam",
@@ -25,7 +26,7 @@ class Config(BaseConfig):
         "expert_tensor_parallel_size": 1,
         "max_tokens_per_gpu": 5120,
         "dynamic_batch_size": False,
-        "max_lora_slots": 1,
+        "max_lora_slots": 2,
         "max_lora_rank": 16,
         "default_lora_alpha": 32,
         "target_modules": [
@@ -79,7 +80,7 @@ class Config(BaseConfig):
         "max_running_requests": 64,
         "max_queued_requests": 256,
         "max_loaded_loras": 4,
-        "max_loras_per_batch": 1,
+        "max_loras_per_batch": 2,
         "chunked_prefill_size": 8192,
         "cuda_graph_max_bs_decode": 64,
         "model_loader_extra_config": {
