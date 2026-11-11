@@ -1,3 +1,4 @@
+import contextlib
 import importlib
 import importlib.util
 import sys
@@ -470,3 +471,64 @@ def test_sync_checkpoint_volume_fails_on_every_rank(monkeypatch) -> None:
     errors = [future.exception() for future in futures]
     assert all(isinstance(error, RuntimeError) for error in errors)
     assert all("volume commit failed" in str(error) for error in errors)
+
+
+def _trainer(monkeypatch, actor):
+    base = actor.MultiLoRATrainRayActor
+    base.forward_backward = lambda self, batch_id, data: "trained"
+    base.forward_only = lambda self, batch_id, data: "scored"
+    actor.torch.profiler = types.SimpleNamespace(record_function=contextlib.nullcontext)
+    monkeypatch.setattr(
+        actor.SpindleMilesTrainRayActor,
+        "_log_peak_memory",
+        staticmethod(lambda operation: None),
+    )
+    trainer = actor.SpindleMilesTrainRayActor()
+    trainer.model = "model"
+    return trainer
+
+
+def test_only_forward_backward_scales_kept_gradients(monkeypatch) -> None:
+    actor = _load_actor(monkeypatch)
+    trainer = _trainer(monkeypatch, actor)
+    scaled = []
+    monkeypatch.setattr(
+        actor.grad_accumulation, "keep_grads_through_reduce", scaled.append
+    )
+
+    assert trainer.forward_only(0, "batch") == "scored"
+    assert scaled == []
+    assert trainer.forward_backward(0, "batch") == "trained"
+    assert trainer.forward_backward(1, "batch") == "trained"
+    assert scaled == ["model", "model"]
+
+
+def test_startup_checks_the_reduce_miles_runs(monkeypatch) -> None:
+    actor = _load_actor(monkeypatch)
+    trainer = _trainer(monkeypatch, actor)
+    del trainer.model
+    actor.dist.is_initialized = lambda: False
+    actor.AutoBridge.to_megatron_provider = None
+
+    def init(self, args, role):
+        self.args, self.model = args, "loaded model"
+        return 7
+
+    actor.MultiLoRATrainRayActor.init = init
+    actor.megatron_model.setup_train_iteration_config = (
+        lambda args, model, optimizer, disable_optimizer: types.SimpleNamespace(
+            finalize_model_grads_func=("the reduce for", model)
+        )
+    )
+    checked = []
+    monkeypatch.setattr(
+        actor.grad_accumulation,
+        "check_reduce_keeps_grads",
+        lambda model, finalize: checked.append((model, finalize)),
+    )
+    args = types.SimpleNamespace(
+        distributed_timeout_minutes=30, enable_mtp_training=False
+    )
+
+    assert trainer.init(args, "actor") == 7
+    assert checked == [("loaded model", ("the reduce for", "loaded model"))]

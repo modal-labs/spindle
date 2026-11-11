@@ -121,6 +121,7 @@ Trainer marks, in order (`component` in parentheses):
 | `backend_imports_done` (trainer-backend) | Importing Torch, Megatron and Miles. |
 | `miles_args_parsed`, `ray_started`, `ray_workers_launched` (trainer-backend) | Ray startup and per-GPU worker actors. |
 | `actor_model_loaded` (trainer-rank0) | Rank 0 built the Megatron model and loaded the base weights from the assets volume. |
+| `gradient_reduce_checked` (trainer-rank0) | Rank 0 checked that the gradient reduce leaves gradients kept between `forward_backward` calls unchanged. |
 | `trainer_actors_initialized`, `miles_backend_ready` (trainer-backend) | All ranks finished loading. |
 | `backend_ready`, `engine_serving` (trainer) | The engine answered its health check and is reachable; `since_spawn_s` is the total from request to ready. |
 | `first_slot_loaded`, `first_forward_backward_done`, `first_optim_step_done`, `first_sampler_export_done` (trainer-backend) | The first client's work, including kernel compilation. `duration_s` is the call itself. |
