@@ -71,6 +71,7 @@ class Config(BaseConfig):
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
     }
+    inference_image = "spindle.providers.modal.deepseek_v41_image:inference_image"
     inference_gpu = ["B300", "B200", "H200"]
     inference_gpus_per_node = 8
     inference_cpu = 32
@@ -91,7 +92,7 @@ class Config(BaseConfig):
         "SGLANG_OPT_USE_MULTI_STREAM_OVERLAP": "0",
         # Its MHC kernels take five minutes to compile, so keep them on the
         # shared kernel-cache volume. Smaller models start faster with local caches.
-        "SGLANG_CACHE_DIR": "/root/.cache/kernel-cache/sglang-0.5.23",
+        "SGLANG_CACHE_DIR": "/root/.cache/kernel-cache/sglang",
     }
     sglang_cfg = {
         "tp_size": 8,
