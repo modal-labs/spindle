@@ -18,11 +18,11 @@ jobs:
         # and the newest release.
         tinker: ["0.26.0", "image-pin", "latest"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - run: cargo test --lib --locked --manifest-path rust/router/Cargo.toml
       - run: python -m pip install uv==0.9.26
       - run: uv sync --locked --python 3.12
