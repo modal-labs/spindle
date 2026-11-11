@@ -61,7 +61,7 @@ When several clients share a trainer, it trains all of their queued batches toge
 
 Sampler replicas scale between `inference_min_replicas` and `inference_max_replicas`. Each sampled sequence counts as one request, so `num_samples=4` counts four times. By default another replica starts once every replica holds `sglang_cfg.max_running_requests` requests. Set `inference_target_concurrency` lower to scale out earlier. Idle replicas stop after `inference_scaledown_window_s`, so replicas added in one sampling round stay up for the next.
 
-`inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
+A replica is added only after load has stayed above the target for `inference_scaleup_window_s`, 30 seconds by default. A new replica takes a few minutes to load, so a shorter burst would end before it could help. Set it to `None` to add replicas as soon as load passes the target. Sampling rounds that need a second replica then finish sooner, but replicas also start for bursts that end before they are ready.
 
 ## Recommended configuration for eval jobs
 
