@@ -567,12 +567,22 @@ def test_deploy_carries_over_a_pre_registry_frontends_recipes(deployed):
     }
 
 
-def test_platform_change_refuses_to_strand_unlisted_recipes(deployed):
+def test_platform_change_rebuilds_unlisted_recipes(deployed):
     deployed.configs = [served_elsewhere()]
     deployed.platform = {**deployment().recipe.platform, "url_label": "old"}
-    with pytest.raises(ValueError, match="unlisted-but-served"):
-        cli.deploy([deployment()])
-    assert deployed.calls == []
+    cli.deploy([deployment()])
+    platform = deployment().recipe.platform
+    assert {
+        "spindle-trainer-unlisted-but-served",
+        "spindle-inference-unlisted-but-served",
+    } <= deployed.apps
+    (carried,) = [
+        row
+        for row in deployed.configs
+        if row["recipe"]["name"] == "unlisted-but-served"
+    ]
+    assert carried["recipe"]["platform"] == platform
+    assert deployed.platform == platform
 
 
 def test_lifecycle_change_refuses_to_reset_unlisted_recipes(deployed):
