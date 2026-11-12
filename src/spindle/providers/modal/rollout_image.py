@@ -19,7 +19,7 @@ CORE_SAMPLER_PACKAGES = (
 )
 
 
-def runtime_image_for(*, image: str, branch: str, revision: str):
+def runtime_image_for(*, image: str, branch: str, revision: str, core_packages):
     """Build a matched SGLang image/source pair, including the fork's Rust binding."""
     return (
         modal.Image.from_registry(image)
@@ -48,7 +48,7 @@ def runtime_image_for(*, image: str, branch: str, revision: str):
             'assert hasattr(bindings.RustUnifiedTreeCoreBinding, "routing_snapshot_delta")\'',
         )
         .env({"SGLANG_RUST_BUILD_MODE": "never"})
-        .pip_install(*CORE_SAMPLER_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE)
+        .pip_install(*core_packages, STITCH_PACKAGE, TINKER_PACKAGE)
         .pip_install("huggingface-hub")
         .env(
             {
@@ -64,6 +64,9 @@ def runtime_image_for(*, image: str, branch: str, revision: str):
 
 
 runtime_image = runtime_image_for(
-    image=SGLANG_IMAGE, branch=SGLANG_BRANCH, revision=SGLANG_REVISION
+    image=SGLANG_IMAGE,
+    branch=SGLANG_BRANCH,
+    revision=SGLANG_REVISION,
+    core_packages=CORE_SAMPLER_PACKAGES,
 )
 image = runtime_image.add_local_python_source("spindle", ignore=ignore_config_source)
