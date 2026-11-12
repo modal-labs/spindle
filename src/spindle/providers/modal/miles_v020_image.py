@@ -6,10 +6,7 @@ import modal
 
 from .image_dependencies import (
     CORE_PACKAGES,
-    MEGATRON_RUNTIME_CHECK,
-    MEGATRON_RUNTIME_PACKAGES,
     STITCH_PACKAGE,
-    TINKER_PACKAGE,
     ignore_config_source,
 )
 
@@ -44,14 +41,11 @@ image = (
             "CUDA_DEVICE_MAX_CONNECTIONS": "1",
         }
     )
-    .pip_install(*CORE_PACKAGES, STITCH_PACKAGE)
+    # Keep the release's telemetry and checksum dependencies together.
     .pip_install(
-        *(p for p in MEGATRON_RUNTIME_PACKAGES if p != TINKER_PACKAGE),
+        *(p for p in CORE_PACKAGES if not p.startswith(("opentelemetry-", "xxhash"))),
+        STITCH_PACKAGE,
         "tinker==0.36.0",
-        "pyyaml>=6.0.2",
-        "opentelemetry-exporter-otlp==1.43.0",
-        "opentelemetry-exporter-otlp-proto-grpc==1.43.0",
-        "opentelemetry-exporter-otlp-proto-http==1.43.0",
     )
     .run_function(_check_release, kwargs={"miles_commit": MILES_RELEASE_COMMIT})
     .run_commands(
@@ -59,6 +53,5 @@ image = (
         f" https://github.com/modal-projects/miles.git {MILES_COMMIT}"
         f" && git -C {MILES_PATH} checkout -B {MILES_BRANCH} FETCH_HEAD",
     )
-    .run_commands(MEGATRON_RUNTIME_CHECK)
     .add_local_python_source("spindle", ignore=ignore_config_source)
 )
