@@ -1,6 +1,6 @@
 import io
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 LOOKBACK_S = 90 * 24 * 3600
@@ -26,6 +26,7 @@ class RunPoint:
     total_duration_s: float
     status: str = "success"
     modal_app_url: str | None = None
+    metrics: dict[str, float] = field(default_factory=dict)
 
 
 def render_timing_history_chart(

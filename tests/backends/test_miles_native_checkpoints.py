@@ -393,14 +393,26 @@ def test_failed_duplicate_capture_keeps_the_previous_capture(tmp_path, monkeypat
     assert not (tmp_path / ".capture.abcd").exists()
 
 
-@pytest.mark.parametrize("field,value", [("target_modules", None), ("lora_rank", "invalid")])
-def test_native_malformed_fields_are_preflight_errors(tmp_path, monkeypatch, field, value):
-    parametrization = pytest.importorskip("miles.backends.training_utils.checkpoint.adapter.parametrization")
+@pytest.mark.parametrize(
+    "field,value", [("target_modules", None), ("lora_rank", "invalid")]
+)
+def test_native_malformed_fields_are_preflight_errors(
+    tmp_path, monkeypatch, field, value
+):
+    parametrization = pytest.importorskip(
+        "miles.backends.training_utils.checkpoint.adapter.parametrization"
+    )
     io = lifecycle(Bridge())
     source = tmp_path / "source"
     source.mkdir()
-    fields = io.fields(2, 4.0) | {"format_version": 1, "target_modules": ["q_proj"], "shared_lora_a_groups": []}
-    (source / "adapter_parametrization.json").write_text(json.dumps(fields | {field: value}))
+    fields = io.fields(2, 4.0) | {
+        "format_version": 1,
+        "target_modules": ["q_proj"],
+        "shared_lora_a_groups": [],
+    }
+    (source / "adapter_parametrization.json").write_text(
+        json.dumps(fields | {field: value})
+    )
     io.read_parametrization = parametrization.read_parametrization
     with pytest.raises(native.NativeSourceError) as error:
         asyncio.run(io.load_slot(0, 2, 4.0, checkpoint=str(source)))

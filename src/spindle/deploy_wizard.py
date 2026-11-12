@@ -26,7 +26,6 @@ CONFIG_DIR = Path(__file__).with_name("configs")
 SERVED_TIMEOUT_S = 20
 CONTEXT_CHOICES = (2_048, 16_384, 32_768, 65_536, 131_072, 262_144)
 DEFAULT_CONTEXT = 32_768
-DEFAULT_MODEL = "Qwen/Qwen3.6-35B-A3B"
 PROVIDER_ORDER = (
     "Qwen",
     "openai",
@@ -280,11 +279,7 @@ def choose(console: Console, frontend: str, environment: str | None) -> list[Pre
         if index == 0 or provider(model) != provider(models[index - 1]):
             choices.append(questionary.Separator(f"── {provider(model)} ──"))
         choices.append(
-            questionary.Choice(
-                model_title(presets, model, width),
-                value=model,
-                checked=model == DEFAULT_MODEL,
-            )
+            questionary.Choice(model_title(presets, model, width), value=model)
         )
     selected = ask(
         questionary.checkbox(

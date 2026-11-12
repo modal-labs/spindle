@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _PEFT_TARGETS = {
     "linear_qkv": ("q_proj", "k_proj", "v_proj"),
@@ -76,36 +77,43 @@ def lora_target_flags(target_modules: tuple[str, ...]) -> tuple[bool, bool, bool
     )
 
 
-@dataclass(frozen=True, slots=True)
-class MilesBackendConfig:
+PositiveInteger = Annotated[int, Field(strict=True, gt=0)]
+NonEmptyString = Annotated[str, Field(min_length=1)]
+
+
+class MilesBackendConfig(BaseModel):
     """Stable Spindle configuration translated to Miles CLI arguments at startup."""
 
-    hf_checkpoint: str
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    hf_checkpoint: NonEmptyString
     model_type: str
-    actor_num_gpus_per_node: int
-    actor_num_nodes: int = 1
-    megatron_to_hf_mode: str = "bridge"
-    tensor_model_parallel_size: int = 1
-    context_parallel_size: int = 1
-    expert_model_parallel_size: int = 1
-    expert_tensor_parallel_size: int = 1
-    max_lora_slots: int = 8
-    max_lora_rank: int = 32
-    default_lora_alpha: float = 32.0
-    lora_dropout: float = 0.0
-    target_modules: tuple[str, ...] = (
+    actor_num_gpus_per_node: PositiveInteger
+    actor_num_nodes: PositiveInteger = 1
+    megatron_to_hf_mode: Literal["bridge", "raw"] = "bridge"
+    tensor_model_parallel_size: PositiveInteger = 1
+    context_parallel_size: PositiveInteger = 1
+    expert_model_parallel_size: PositiveInteger = 1
+    expert_tensor_parallel_size: PositiveInteger = 1
+    max_lora_slots: PositiveInteger = 8
+    max_lora_rank: PositiveInteger = 32
+    default_lora_alpha: float = Field(default=32.0, gt=0)
+    lora_dropout: float = Field(default=0.0, ge=0, lt=1)
+    target_modules: Annotated[tuple[NonEmptyString, ...], Field(min_length=1)] = (
         "linear_qkv",
         "linear_proj",
         "linear_fc1",
         "linear_fc2",
         "output_layer",
     )
-    max_tokens_per_gpu: int = 8192
+    max_tokens_per_gpu: PositiveInteger = 8192
     dynamic_batch_size: bool = True
     align_sequences_to_parallel_layout: bool = False
     extra_args: tuple[str, ...] = ()
-    cli_options: dict[str, Any] = field(default_factory=dict)
-    dangerously_allow_checkpoint_revision_mismatch: bool = False
+    cli_options: dict[str, Any] = Field(default_factory=dict)
+    dangerously_allow_checkpoint_revision_mismatch: bool = Field(
+        default=False, strict=True
+    )
 
     @property
     def world_size(self) -> int:
@@ -132,46 +140,19 @@ class MilesBackendConfig:
                     targets.append(name)
         return tuple(targets)
 
-    def validate(self) -> None:
-        if not isinstance(self.dangerously_allow_checkpoint_revision_mismatch, bool):
-            raise ValueError(
-                "dangerously_allow_checkpoint_revision_mismatch must be a bool"
-            )
-        if self.megatron_to_hf_mode not in ("bridge", "raw"):
-            raise ValueError("megatron_to_hf_mode must be bridge or raw")
-        positive = {
-            "actor_num_gpus_per_node": self.actor_num_gpus_per_node,
-            "actor_num_nodes": self.actor_num_nodes,
-            "tensor_model_parallel_size": self.tensor_model_parallel_size,
-            "context_parallel_size": self.context_parallel_size,
-            "expert_model_parallel_size": self.expert_model_parallel_size,
-            "expert_tensor_parallel_size": self.expert_tensor_parallel_size,
-            "max_lora_slots": self.max_lora_slots,
-            "max_lora_rank": self.max_lora_rank,
-            "max_tokens_per_gpu": self.max_tokens_per_gpu,
-        }
-        for name, value in positive.items():
-            if type(value) is not int or value < 1:
-                raise ValueError(f"{name} must be a positive integer")
-        if not self.hf_checkpoint:
-            raise ValueError("hf_checkpoint is required")
+    @field_validator("default_lora_alpha")
+    @classmethod
+    def validate_lora_alpha(cls, value: float) -> float:
+        if not value.is_integer():
+            raise ValueError("default_lora_alpha must be a positive integer")
+        return value
+
+    @model_validator(mode="after")
+    def validate_architecture_and_topology(self) -> Self:
         if not self.model_type and not self.cli_options:
             raise ValueError(
                 "model_type or explicit native architecture options are required"
             )
-        if (
-            not isinstance(self.target_modules, (list, tuple))
-            or not self.target_modules
-            or not all(isinstance(name, str) and name for name in self.target_modules)
-        ):
-            raise ValueError("target_modules must be a nonempty list of module names")
-        if (
-            self.default_lora_alpha <= 0
-            or not float(self.default_lora_alpha).is_integer()
-        ):
-            raise ValueError("default_lora_alpha must be a positive integer")
-        if not 0 <= self.lora_dropout < 1:
-            raise ValueError("lora_dropout must be in [0, 1)")
         model_parallel_size = (
             self.tensor_model_parallel_size * self.context_parallel_size
         )
@@ -188,6 +169,8 @@ class MilesBackendConfig:
                 "tensor_model_parallel_size must evenly divide "
                 "actor_num_gpus_per_node on each node"
             )
+
+        return self
 
     def miles_arguments(self) -> list[str]:
         """Arguments owned by the integration, excluding model architecture flags."""
@@ -266,11 +249,7 @@ def parse_backend_config(
     value: dict[str, Any],
 ) -> tuple[MilesBackendConfig, Path, Path]:
     miles = dict(value.get("miles") or value)
-    for name in ("target_modules", "extra_args"):
-        if name in miles:
-            miles[name] = tuple(miles[name])
     config = MilesBackendConfig(**miles)
-    config.validate()
     checkpoint_dir = Path(value.get("checkpoint_dir") or "/tmp/spindle")
     capture_dir = Path(value.get("capture_dir") or "/tmp/spindle-miles-captures")
     return config, checkpoint_dir, capture_dir
