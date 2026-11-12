@@ -308,6 +308,7 @@ class MilesCommandBackend(Backend):
                 "save_checkpoint", state.optimizer_step, model_id=model_id
             ),
             self._record("spindle/save_checkpoint"),
+            self._checkpoint_io_lock,
         ):
             self.runtime.save_slot(
                 self.job_to_slot[model_id],
@@ -316,7 +317,9 @@ class MilesCommandBackend(Backend):
             )
         metadata = {
             "schema_version": 1,
-            "checkpoint_format": "miles_torch_dist",
+            "checkpoint_format": getattr(
+                self.runtime, "checkpoint_format", "miles_torch_dist"
+            ),
             "backend": "miles",
             "miles_revision": self.runtime.revision,
             "base_model": self.base_model,
@@ -344,6 +347,9 @@ class MilesCommandBackend(Backend):
                 "pipeline_model_parallel_size": 1,
             },
         }
+        if metadata["checkpoint_format"] == "miles_adapter_state":
+            metadata["lora_config"]["target_modules"] = list(self.config.target_modules)
+            metadata["lora_config"]["dropout"] = self.config.lora_dropout
         (capture_path / "metadata.json").write_text(
             json.dumps(metadata, sort_keys=True),
             encoding="utf-8",
@@ -376,12 +382,18 @@ class MilesCommandBackend(Backend):
                     ),
                     self._record("spindle/persist_checkpoint"),
                 ):
-                    _install_capture(
-                        capture["path"],
-                        target,
-                        overwrite=overwrite,
-                        world_size=self.config.world_size,
-                    )
+                    if (
+                        getattr(self.runtime, "checkpoint_format", "miles_torch_dist")
+                        == "miles_adapter_state"
+                    ):
+                        _install_directory(capture["path"], target, overwrite=overwrite)
+                    else:
+                        _install_capture(
+                            capture["path"],
+                            target,
+                            overwrite=overwrite,
+                            world_size=self.config.world_size,
+                        )
                     _commit_volume(os.environ.get("SPINDLE_CHECKPOINT_VOLUME"))
                 return str(target)
             finally:
@@ -437,6 +449,7 @@ class MilesCommandBackend(Backend):
                 "save_sampler_weights", state.optimizer_step, model_id=model_id
             ),
             self._record("spindle/save_sampler_weights"),
+            self._checkpoint_io_lock,
         ):
             self.runtime.export_slot_peft(
                 slot=self.job_to_slot[model_id],
@@ -478,6 +491,12 @@ class MilesCommandBackend(Backend):
                     "publish_weights", publish_step, model_id=capture["model_id"]
                 ),
                 self._record("spindle/publish_weights"),
+                (
+                    self._checkpoint_io_lock
+                    if getattr(self.runtime, "checkpoint_format", "miles_torch_dist")
+                    == "miles_adapter_state"
+                    else contextlib.nullcontext()
+                ),
             ):
                 bulletin.publish(
                     VersionRef(
@@ -639,13 +658,20 @@ class MilesCommandBackend(Backend):
         state: MilesJobState,
         restore_optimizer: bool,
     ) -> None:
+        if not isinstance(metadata, dict):
+            raise ValueError("invalid Miles checkpoint metadata")
+        step = metadata.get("optimizer_step")
+        if type(step) is not int or step < 0:
+            raise ValueError("invalid Miles checkpoint optimizer step")
         if metadata.get("schema_version") != 1:
             raise ValueError("unsupported Miles checkpoint schema")
         if metadata.get("backend") != "miles":
             raise ValueError("checkpoint was not created by the Miles backend")
         if metadata.get("miles_revision") != self.runtime.revision:
             raise ValueError("checkpoint Miles revision does not match the deployment")
-        if metadata.get("checkpoint_format") != "miles_torch_dist":
+        if metadata.get("checkpoint_format") != getattr(
+            self.runtime, "checkpoint_format", "miles_torch_dist"
+        ):
             raise ValueError("unsupported Miles checkpoint format")
         if metadata.get("base_model") != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")
@@ -653,6 +679,11 @@ class MilesCommandBackend(Backend):
         if (
             int(lora.get("rank", 0)) != state.rank
             or float(lora.get("alpha", 0)) != state.alpha
+        ):
+            raise ValueError("checkpoint LoRA configuration does not match the model")
+        if metadata["checkpoint_format"] == "miles_adapter_state" and (
+            lora.get("target_modules") != list(self.config.target_modules)
+            or lora.get("dropout") != self.config.lora_dropout
         ):
             raise ValueError("checkpoint LoRA configuration does not match the model")
         expected_targets = {

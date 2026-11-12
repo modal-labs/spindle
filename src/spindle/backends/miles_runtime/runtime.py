@@ -56,12 +56,20 @@ except ImportError:
 class MilesRuntime:
     """Synchronous owner of Miles's asynchronous Ray trainer controller."""
 
+    _v020 = None
+
     def __init__(self, config: MilesBackendConfig) -> None:
         if _runtime_import_error is not None:
             raise ImportError(
                 "MilesRuntime requires Miles and Ray in the trainer image"
             ) from _runtime_import_error
         self.config = config
+        self._v020 = None
+        if os.environ.get("SPINDLE_MILES_API") == "0.2":
+            # This API module requires dependencies absent in legacy trainer images.
+            from . import v020
+
+            self._v020 = v020
         # Record the commit actually installed from the branch in this image.
         self.revision = subprocess.check_output(
             [
@@ -73,6 +81,8 @@ class MilesRuntime:
             ],
             text=True,
         ).strip()
+        if self._v020 is not None:
+            self.revision += "+" + os.environ["SPINDLE_MILES_PATCH_SHA256"]
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._run_loop,
@@ -95,6 +105,10 @@ class MilesRuntime:
                 self._call(self._close())
             self._stop_loop()
             raise
+
+    @property
+    def checkpoint_format(self):
+        return self._v020.CHECKPOINT_FORMAT if self._v020 else "miles_torch_dist"
 
     def load_slot(
         self,
@@ -155,7 +169,11 @@ class MilesRuntime:
     def save_slot(
         self, slot: int, path: str, *, include_optimizer: bool = True
     ) -> None:
-        if include_optimizer:
+        if self._v020 is not None:
+            self._run(
+                self._bridge.save_slot(slot, path, include_optimizer=include_optimizer)
+            )
+        elif include_optimizer:
             self._run(self._bridge.save_slot(slot, path))
         else:
             self._run(
@@ -238,14 +256,21 @@ class MilesRuntime:
         os.environ.setdefault("no_proxy", "127.0.0.1")
 
         install_bridge_replay(tinker_runtime)
-        _configure_actor_spec(train_specs)
+        if self._v020 is not None:
+            self._v020.configure_actor()
+        else:
+            _configure_actor_spec(train_specs)
         if create_trainer_handles is None:
             _allow_context_parallel_multi_lora(lora_arguments)
-        _allow_allgather_cp_bshd_multi_lora(lora_arguments)
+        if self._v020 is None:
+            _allow_allgather_cp_bshd_multi_lora(lora_arguments)
         architecture = (
             shlex.split(load_model_args(self.config.model_type))
             if self.config.model_type
             else []
+        )
+        parse_options = (
+            {"preprocess_args": self._v020.configure_args} if self._v020 else {}
         )
         with _temporary_argv([*architecture, *self.config.miles_arguments()]):
             if self.config.cli_options:
@@ -255,15 +280,18 @@ class MilesRuntime:
                         parser, self.config.cli_options, sys.argv
                     )
 
-                args = parse_args(add_custom_arguments=configure, entry="serve")
+                args = parse_args(
+                    add_custom_arguments=configure, entry="serve", **parse_options
+                )
             else:
-                args = parse_args(entry="serve")
-        self._args = args
+                args = parse_args(entry="serve", **parse_options)
+        self._args = self._v020.replay_args(args) if self._v020 else args
 
         # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
-        args.lora_A_init_method = "kaiming"
-        args.use_dynamic_global_batch_size = True
-        args.delay_split_train_data_by_dp = True
+        if self._v020 is None:
+            args.lora_A_init_method = "kaiming"
+            args.use_dynamic_global_batch_size = True
+            args.delay_split_train_data_by_dp = True
         configure_logger(args, source=_main_process_identity())
         startup = timeline(BACKEND_COMPONENT)
         startup.mark("miles_args_parsed")
@@ -299,7 +327,10 @@ class MilesRuntime:
         object_store.init_instance(args, contribute_segment=False)
         self._owns_object_store = True
         startup.mark("ray_workers_launched")
-        if create_trainer_handles is not None:
+        if self._v020 is not None:
+            self._trainer, request = await self._v020.initialize_trainer(args)
+            await self._trainer.init(request)
+        elif create_trainer_handles is not None:
             configs = compute_trainer_configs(args)
             (actor_config,) = [c for c in configs if c.role == ACTOR_ROLE]
             handles = create_trainer_handles(args, trainer_configs=configs)
@@ -316,7 +347,9 @@ class MilesRuntime:
             )
             await self._trainer.init()
         startup.mark("trainer_actors_initialized")
-        self._bridge = _array_bridge(self._trainer)
+        self._bridge = _array_bridge(self._trainer, native=self._v020 is not None)
+        if self._v020 is not None:
+            self._bridge = self._v020.AdapterBridge(self._bridge, args)
         startup.mark("miles_backend_ready")
 
     async def _close(self) -> None:
@@ -358,10 +391,12 @@ _WORKER_ENV_VARS = (
     "TORCHINDUCTOR_CACHE_DIR",
     "TILELANG_CACHE_DIR",
     "EXPERT_LORA_COMPAT",
+    "SPINDLE_MILES_API",
+    "SPINDLE_CHECKPOINT_ROOT",
 )
 
 
-def _array_bridge(trainer):
+def _array_bridge(trainer, *, native=False):
     """Miles's ``_execute_batch`` builds per-token Python lists and returns log
     probabilities with ``.tolist()``; this keeps rows and outputs as arrays."""
 
@@ -411,7 +446,8 @@ def _array_bridge(trainer):
                         outputs[index] = recorded
             return [outputs[index] for index in range(len(slot_datums))]
 
-    return ArrayBackend(trainer, router_url="", dp_size=1)
+    options = {"lora_layout": None} if native else {}
+    return ArrayBackend(trainer, router_url="", dp_size=1, **options)
 
 
 def _worker_env() -> dict[str, str]:
