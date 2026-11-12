@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Runtime image inventory and workflows to preserve Miles/SGLang bases in an owned registry and publish pinned source-build candidates. Deployment pins change only after verified images are published.
+
 - GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
 
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.

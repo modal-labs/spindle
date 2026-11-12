@@ -6,8 +6,9 @@ from .image_dependencies import (
     TINKER_PACKAGE,
     ignore_config_source,
 )
+from .runtime_images import BASE_IMAGES
 
-SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
+SGLANG_IMAGE = BASE_IMAGES["sglang-v0.5.23"]
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
 SGLANG_BRANCH = "spindle-sglang-v0.5.23"
 SGLANG_REVISION = "90785332b8e3e1202ae280d85ecec197473bd5a8"

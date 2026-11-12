@@ -13,15 +13,10 @@ from .image_dependencies import (
     STITCH_PACKAGE,
     ignore_config_source,
 )
+from .runtime_images import BASE_IMAGES
 
-# The release tag pins Miles together with the Megatron-LM and Megatron-Bridge
-# revisions its image was built and tested with. Update all three by moving to a
-# newer release tag, digest, and commit together, then refresh the trainer app.
-MILES_RELEASE = "v0.1.1"
-BASE_IMAGE = (
-    f"radixark/miles:{MILES_RELEASE}"
-    "@sha256:6355834f16bacd35d5d40c43f142e3758376f7b2e8d678bccfe870c092bd96bf"
-)
+# Update base and source revisions together when changing Miles releases.
+BASE_IMAGE = BASE_IMAGES["miles-v0.1.1"]
 MILES_RELEASE_COMMIT = "2806267d060d51b1d3b62f85a1f9b145047aeef9"
 MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
 MILES_BRANCH = "spindle-miles"

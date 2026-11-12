@@ -1,0 +1,46 @@
+name: Preserve runtime images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: preserve-runtime-images
+  cancel-in-progress: false
+
+jobs:
+  preserve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install registry copy tool
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Log in to the owned registry
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s' "$REGISTRY_TOKEN" | skopeo login --username "$REGISTRY_USER" --password-stdin ghcr.io
+      - name: Preserve and verify every base image
+        env:
+          IMAGE_OWNER: ${{ github.repository_owner }}
+        run: |
+          python scripts/images/preserve.py \
+            --namespace "ghcr.io/${IMAGE_OWNER,,}/spindle-runtimes" \
+            --output preserved/runtime_images.py
+      - name: Upload verified deployment pins
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: preserved-runtime-images
+          path: preserved/runtime_images.py
+          if-no-files-found: error
+      - name: Summarize promotion
+        run: |
+          {
+            echo 'Copy preserved/runtime_images.py from the artifact to src/spindle/providers/modal/runtime_images.py in a PR.'
+            echo 'The copy preserves every platform and verifies identical manifests and anonymous pulls.'
+            echo 'Retain these registry packages and versions while any supported release references them.'
+          } >> "$GITHUB_STEP_SUMMARY"
