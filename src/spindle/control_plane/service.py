@@ -50,6 +50,7 @@ from .keys import (
     trainer_slot_wait_key,
 )
 from .queues import SharedSnapshot, read_queues, record_queue_event
+from .usage import SessionUsageWriter
 from .records import (
     ModelCreationRecord,
     ModelRecord,
@@ -214,6 +215,7 @@ class ControlPlane:
         creation_error: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_gpu_wait: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_slots: Callable[[str], int | None] = lambda _: None,
+        usage: SessionUsageWriter | None = None,
     ) -> None:
         self.kv = kv
         self.engines = engines
@@ -234,6 +236,7 @@ class ControlPlane:
         self.creation_error = creation_error
         self.trainer_gpu_wait = trainer_gpu_wait
         self.trainer_slots = trainer_slots
+        self.usage = usage
         self._queue = SharedSnapshot(
             lambda _: read_queues(self.kv, self.engines),
             lambda: self.clock(),
@@ -269,6 +272,8 @@ class ControlPlane:
                 seen_at=now,
             ).model_dump(mode="json"),
         )
+        if self.usage is not None:
+            self.usage.put_session(session.session_id, user_metadata)
         return session
 
     async def heartbeat(self, session_id: str) -> SessionLastSeenRecord:
@@ -342,6 +347,8 @@ class ControlPlane:
         )
         model = ModelRecord.model_validate(model_insert.value)
         if model_insert.created:
+            if self.usage is not None:
+                self.usage.model_used(model.model_id, session_id)
             await asyncio.gather(
                 self.kv.put(
                     trainer_demand_key(model.model_id),
@@ -830,6 +837,9 @@ class ControlPlane:
             pending = asyncio.create_task(self._read_route(model_id))
             self._route_reads[model_id] = pending
         model, placement = await asyncio.shield(pending)
+        if self.usage is not None:
+            # Also covers models created before usage was recorded.
+            self.usage.model_used(model_id, model.session_id)
         if placement is None:
             await self._touch_session(model.session_id)
             if await self._lost(model_id):
@@ -1665,6 +1675,7 @@ class ControlPlane:
             "placement:",
         )
         sessions: list[str] = []
+        user_metadata: dict[str, dict[str, str] | None] = {}
         last_seen: dict[str, float] = {}
         closed_sessions: set[str] = set()
         for key, value in session_items:
@@ -1676,7 +1687,9 @@ class ControlPlane:
                     SessionClosedRecord.model_validate(value).session_id
                 )
             elif key.startswith("session:"):
-                sessions.append(SessionRecord.model_validate(value).session_id)
+                session = SessionRecord.model_validate(value)
+                sessions.append(session.session_id)
+                user_metadata[session.session_id] = session.user_metadata
 
         models_by_session: dict[str, list[ModelRecord]] = defaultdict(list)
         creations_by_session: dict[str, list[str]] = defaultdict(list)
@@ -1719,6 +1732,11 @@ class ControlPlane:
         for session_id in closed_sessions:
             models = models_by_session[session_id]
             if any(model.model_id in placed for model in models):
+                continue
+            # The session's record is the last copy of its labels.
+            if self.usage is not None and not await asyncio.wrap_future(
+                self.usage.put_session(session_id, user_metadata.get(session_id))
+            ):
                 continue
             if self.sampling_task_stores is not None:
                 await self.sampling_task_stores.delete_session(session_id)

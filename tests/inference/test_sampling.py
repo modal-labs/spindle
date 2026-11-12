@@ -114,6 +114,31 @@ def test_grouped_sampling_shares_session_and_dp_rank() -> None:
     }
 
 
+def test_sample_stats_count_prompt_tokens_once_per_sample() -> None:
+    request = task()
+    request["payload"]["num_samples"] = 4
+    request["payload"]["prompt"]["chunks"][0]["tokens"] = [1, 2, 3]
+    cached = iter([0, 2, 2, 2])  # The first sample warms the prefix cache.
+    stats: dict = {}
+
+    asyncio.run(
+        sample_task(
+            request,
+            "http://rollout",
+            transport=httpx.MockTransport(
+                lambda _: response(7, cached_tokens=next(cached))
+            ),
+            stats=stats,
+        )
+    )
+
+    assert (
+        stats["prefill_tokens"],
+        stats["cached_prompt_tokens"],
+        stats["generated_tokens"],
+    ) == (12, 6, 4)
+
+
 def test_multiturn_affinity_tracks_prefix_cache_hit_rate() -> None:
     cached_sequences: dict[tuple[str, int], list[int]] = {}
     sessions = []

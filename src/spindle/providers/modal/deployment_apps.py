@@ -27,6 +27,7 @@ from spindle.inference.serving import (
     wait_http,
 )
 from spindle.startup_timing import SAMPLER_COMPONENT, TRAINER_COMPONENT, timeline
+from spindle.usage import TrainerUsage
 
 from .app_tags import app_tags
 from .deployment import trainer_deployment_env
@@ -52,6 +53,7 @@ from .miles_image import image as miles_image
 from .ray_cluster import start_trainer_cluster
 from .rollout_image import image as rollout_image
 from .serve import run_engine_with_backend
+from .usage import USAGE_ROOT, start_usage_meter, usage_volume
 
 
 TRAINER_IMAGES = {"miles-v0.1.2": miles_v012_image}
@@ -94,6 +96,7 @@ def volumes_for(platform):
         "/bulletin": modal.Volume.from_name(
             storage["bulletin"], create_if_missing=True, version=2
         ),
+        USAGE_ROOT: usage_volume(platform["frontend"]),
     }
 
 
@@ -273,6 +276,12 @@ def run_trainer(deployment, instance_id, platform=None):
         sampler_persistence_concurrency=recipe.sampler_persistence_concurrency,
         max_forward_backward_models=recipe.trainer_max_clients_per_batch,
         on_startup_error=failed,
+        usage=lambda: TrainerUsage(
+            start_usage_meter(platform["frontend"]),
+            app_name=deployment.trainer_app_name,
+            base_model=recipe.model,
+            started_at=startup.origin,
+        ),
     )
 
 
