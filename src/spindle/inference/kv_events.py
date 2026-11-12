@@ -564,7 +564,8 @@ class KVEventSubscriber:
                         try:
                             await self.replay(context)
                         except TimeoutError:
-                            self.reset()
+                            # A busy scheduler answers late; the next replay
+                            # checks the anchor, so the cache stays.
                             await asyncio.sleep(0.5)
                             continue
                         replay = False

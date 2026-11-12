@@ -410,6 +410,47 @@ def test_replay_timeout_applies_to_each_frame(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_stalled_publisher_keeps_cache_until_replay_answers(tmp_path, monkeypatch):
+    monkeypatch.setattr(kv_events, "REPLAY_STALL_TIMEOUT_SECONDS", 0.2)
+
+    async def scenario():
+        context = zmq.asyncio.Context()
+        router = context.socket(zmq.ROUTER)
+        endpoint = f"ipc://{tmp_path}/stalled-replay"
+        router.bind(endpoint)
+        subscriber = KVEventSubscriber(
+            endpoint=f"ipc://{tmp_path}/no-publisher", replay_endpoint=endpoint
+        )
+        batch = packet([stored([1], list(range(64)))])
+        end = [b"", (-1).to_bytes(8, "big", signed=True), b""]
+
+        async def answer():
+            identity, _, start = await router.recv_multipart()
+            assert int.from_bytes(start, "big") == 0
+            await router.send_multipart([identity, b"", (0).to_bytes(8, "big"), batch])
+            await router.send_multipart([identity, *end])
+
+        task = asyncio.create_task(subscriber.run())
+        try:
+            await answer()
+            while not subscriber.ready:
+                await asyncio.sleep(0.01)
+            await router.recv_multipart()
+            await asyncio.sleep(0.5)
+            assert subscriber.ready and set(subscriber.cache.blocks) == {1}
+            while await router.poll(0):
+                await router.recv_multipart()
+            await answer()
+            assert subscriber.ready and set(subscriber.cache.blocks) == {1}
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            router.close(0)
+            context.destroy(linger=0)
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
 def test_subscriber_thread_recovers_after_unexpected_failure(tmp_path):
     async def scenario():
         context = zmq.asyncio.Context()
