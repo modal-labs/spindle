@@ -19,8 +19,9 @@ def test_reference_hardware_matches_resolved_deployment() -> None:
     assert trainer["tensor_model_parallel_size"] == 1
     assert hardware["sampler"] == {
         "gpu": recipe.inference_gpu,
-        "gpus_per_replica": deployment.inference_settings["tp_size"],
+        "gpus_per_replica": recipe.inference_gpus_per_node,
         "replicas": recipe.inference_min_replicas,
     }
+    assert deployment.inference_settings["tp_size"] == recipe.inference_gpus_per_node
     assert recipe.inference_min_replicas == recipe.inference_max_replicas
     assert recipe.trainer_max_instances == recipe.trainer_max_clients_per_instance == 1
