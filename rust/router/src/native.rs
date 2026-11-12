@@ -1,7 +1,6 @@
 //! PyO3 hands each request to this runtime as one awaitable. Admission,
 //! observations, retries and worker HTTP live in Rust.
-use crate::routing_grpc::{RoutingSnapshot, WatchRequest};
-use crate::{Admission, Decision, Outcome, Request, Router, Snapshot};
+use crate::{Admission, Decision, Outcome, Replica, Request, Router, Snapshot};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -17,7 +16,6 @@ use std::{
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::{ClientTlsConfig, Endpoint};
 
 const DELIVERIES_PER_ATTEMPT: u32 = 2;
 const MAX_TRANSPORT_FAILURES: u32 = 8;
@@ -26,15 +24,13 @@ const MAX_TRANSPORT_FAILURES: u32 = 8;
 /// Pools with no workers, or whose workers all publish no observations, use
 /// the gateway at once.
 const GATEWAY_FALLBACK: Duration = Duration::from_secs(5);
-const DISCOVERY_INTERVAL: Duration = Duration::from_millis(500);
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Gateway stickiness headers; a pinned upstream replaces them.
 const AFFINITY_HEADERS: &[&str] = &["modal-session-id", "modal-routing-affinity-key"];
 
 #[derive(Deserialize)]
 struct Config {
     gateway: String,
-    #[serde(default)]
-    observer_gateway: Option<String>,
     headers: HashMap<String, String>,
     capacity: usize,
     prefill_tokens_per_second: Option<f64>,
@@ -52,12 +48,11 @@ struct Service {
     scheduler: Arc<Mutex<Router>>,
     workers: Arc<Mutex<Vec<Worker>>>,
     discovered: Arc<AtomicBool>,
-    /// Upstreams whose latest stream message had no load observation.
+    /// Upstreams whose latest poll answered without observations.
     unobservable: Arc<Mutex<HashSet<String>>>,
     measure_prefill: bool,
     client: reqwest::Client,
     gateway: String,
-    observer_gateway: String,
     headers: HashMap<String, String>,
     notify: Arc<Notify>,
     stop: CancellationToken,
@@ -105,6 +100,10 @@ fn prefill_sample(body: &[u8]) -> Option<(usize, f64)> {
             t.prefill_finished_time - t.forward_entry_time,
         )
     })
+}
+enum Polled {
+    Row(Box<Replica>),
+    Unobservable,
 }
 fn error(status: u16, message: &str) -> (u16, String) {
     (status, message.into())
@@ -325,121 +324,88 @@ async fn forward(s: &Service, mut g: Generate) -> Reply {
         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
     }
 }
-/// Each discovered replica owns an independent gRPC stream. Stalled streams
-/// age out in the scheduler without blocking other replicas or generation.
-async fn watch(s: Service, worker: Worker, stop: CancellationToken) {
-    while !stop.is_cancelled() {
-        // Existing snapshots retain their original age and expire normally;
-        // reopening a connection never renews a previous observation.
-        let _ = watch_once(&s, &worker, &stop).await;
-        tokio::select! {
-            _ = stop.cancelled() => break,
-            _ = tokio::time::sleep(Duration::from_millis(500)) => {}
-        }
+async fn poll(s: Service, worker: Worker) -> Option<Polled> {
+    let started = Instant::now();
+    let mut req = s
+        .client
+        .get(format!("{}/routing-state", s.gateway))
+        .header("Modal-Flash-Upstream", &worker.upstream)
+        .timeout(Duration::from_secs(2));
+    for (k, v) in &s.headers {
+        req = req.header(k, v);
     }
+    let response = req.send().await.ok()?.error_for_status().ok()?;
+    let bytes = response.bytes().await.ok()?;
+    let expected = worker.replica.clone();
+    let polled = tokio::task::spawn_blocking(move || {
+        let value: Value = serde_json::from_slice(&bytes).ok()?;
+        if value.get("replica").and_then(Value::as_str) != Some(expected.as_str()) {
+            return None;
+        }
+        // The worker answered but its cache publishes nothing to route by.
+        if value.get("work").is_none_or(Value::is_null) {
+            return Some(Polled::Unobservable);
+        }
+        serde_json::from_value(value)
+            .ok()
+            .map(|row| Polled::Row(Box::new(row)))
+    })
+    .await
+    .ok()??;
+    Some(match polled {
+        Polled::Row(mut row) => {
+            row.work.age_seconds += started.elapsed().as_secs_f64();
+            row.upstream = worker.upstream;
+            Polled::Row(row)
+        }
+        unobservable => unobservable,
+    })
 }
-async fn watch_once(
-    s: &Service,
-    worker: &Worker,
-    stop: &CancellationToken,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut endpoint =
-        Endpoint::from_shared(s.observer_gateway.clone())?.connect_timeout(Duration::from_secs(2));
-    if s.observer_gateway.starts_with("https://") {
-        endpoint = endpoint.tls_config(ClientTlsConfig::new().with_native_roots())?;
-    }
-    let channel = tokio::select! {
-        _ = stop.cancelled() => return Ok(()),
-        channel = endpoint.connect() => channel?,
-    };
-    let mut client = tonic::client::Grpc::new(channel).max_decoding_message_size(64 * 1024 * 1024);
-    client.ready().await?;
-    let mut request = tonic::Request::new(WatchRequest {});
-    for (key, value) in &s.headers {
-        // Replica pinning always overrides any caller-supplied metadata.
-        if !AFFINITY_HEADERS.contains(&key.to_ascii_lowercase().as_str())
-            && !key.eq_ignore_ascii_case("modal-flash-upstream")
-        {
-            request.metadata_mut().insert(
-                tonic::metadata::MetadataKey::from_bytes(key.to_ascii_lowercase().as_bytes())?,
-                value.parse()?,
-            );
-        }
-    }
-    request
-        .metadata_mut()
-        .insert("modal-flash-upstream", worker.upstream.parse()?);
-    let path = tonic::codegen::http::uri::PathAndQuery::from_static(
-        "/spindle.routing.v1.RoutingObserver/Watch",
-    );
-    let response = tokio::select! {
-        _ = stop.cancelled() => return Ok(()),
-        response = tokio::time::timeout(Duration::from_secs(3), client.server_streaming(
-            request, path, tonic_prost::ProstCodec::<WatchRequest, RoutingSnapshot>::default()
-        )) => response??,
-    };
-    let mut stream = response.into_inner();
-    loop {
-        let row = tokio::select! {
-            _ = stop.cancelled() => return Ok(()),
-            row = tokio::time::timeout(Duration::from_secs(3), stream.message()) => row??,
-        };
-        let Some(row) = row else { return Ok(()) };
-        // A gateway must not silently substitute a different replica.
-        if row.replica != worker.replica {
-            return Err("gRPC observation came from a different replica".into());
-        }
-        if row.work.is_none() {
-            s.unobservable
-                .lock()
-                .unwrap()
-                .insert(worker.upstream.clone());
-            continue;
-        }
-        let row = row
-            .into_replica(worker.upstream.clone())
-            .ok_or("Invalid routing observation")?;
-        s.unobservable.lock().unwrap().remove(&worker.upstream);
-        s.scheduler
-            .lock()
-            .unwrap()
-            .install_snapshot(Snapshot::new(vec![row], Instant::now()));
-    }
-}
+/// Each worker is polled on its own cadence and its row installed on arrival,
+/// so a slow or unreachable worker never ages the others' observations.
 async fn observe(s: Service) {
     let mut tasks = tokio::task::JoinSet::new();
-    let mut watching: HashMap<String, (String, CancellationToken)> = HashMap::new();
-    let mut tick = tokio::time::interval(DISCOVERY_INTERVAL);
+    let mut polling: HashMap<tokio::task::Id, String> = HashMap::new();
+    let mut tick = tokio::time::interval(POLL_INTERVAL);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             _ = s.stop.cancelled() => break,
             _ = s.notify.notified() => {}
             _ = tick.tick() => {}
-        }
-        while tasks.try_join_next().is_some() {}
-        let workers = s.workers.lock().unwrap().clone();
-        watching.retain(|upstream, (replica, token)| {
-            let keep = workers
-                .iter()
-                .any(|w| w.upstream == *upstream && w.replica == *replica);
-            if !keep {
-                token.cancel();
-            }
-            keep
-        });
-        for worker in workers {
-            if watching.contains_key(&worker.upstream) {
+            Some(done) = tasks.join_next_with_id(), if !tasks.is_empty() => {
+                let (id, polled) = match done {
+                    Ok((id, polled)) => (id, polled),
+                    Err(e) => (e.id(), None),
+                };
+                let Some(upstream) = polling.remove(&id) else { continue };
+                match polled {
+                    Some(Polled::Row(row)) => {
+                        s.unobservable.lock().unwrap().remove(&upstream);
+                        let snapshot = Snapshot::new(vec![*row], Instant::now());
+                        s.scheduler.lock().unwrap().install_snapshot(snapshot);
+                    }
+                    Some(Polled::Unobservable) => {
+                        s.unobservable.lock().unwrap().insert(upstream);
+                    }
+                    None => {}
+                }
                 continue;
             }
-            let token = s.stop.child_token();
-            watching.insert(
-                worker.upstream.clone(),
-                (worker.replica.clone(), token.clone()),
-            );
-            tasks.spawn(watch(s.clone(), worker, token));
+        }
+        let workers = s.workers.lock().unwrap().clone();
+        for worker in workers {
+            if polling
+                .values()
+                .any(|upstream| *upstream == worker.upstream)
+            {
+                continue;
+            }
+            let upstream = worker.upstream.clone();
+            let handle = tasks.spawn(poll(s.clone(), worker));
+            polling.insert(handle.id(), upstream);
         }
     }
-    tasks.abort_all();
 }
 #[pyclass]
 pub struct NativeRuntime {
@@ -471,7 +437,6 @@ impl NativeRuntime {
             unobservable: Arc::new(Mutex::new(HashSet::new())),
             measure_prefill: c.prefill_tokens_per_second.is_none(),
             client,
-            observer_gateway: c.observer_gateway.unwrap_or_else(|| c.gateway.clone()),
             gateway: c.gateway.trim_end_matches('/').into(),
             headers: c.headers,
             notify: Arc::new(Notify::new()),

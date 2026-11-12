@@ -16,7 +16,6 @@ CORE_PACKAGES = (
     "xxhash>=3.8.1",
     "msgspec>=0.19",
     "pyzmq>=26",
-    "grpcio>=1.70",
     "zstandard>=0.25.0",
 )
 STITCH_PACKAGE = (

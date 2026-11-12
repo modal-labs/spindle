@@ -22,7 +22,6 @@ dependencies = [
     "xxhash>=3.8.1",
     "msgspec>=0.19",
     "pyzmq>=26",
-    "grpcio>=1.70",
     "zstandard>=0.25.0",
     "questionary>=2.1",
 ]
@@ -34,17 +33,17 @@ version = { attr = "spindle.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-spindle = ["skills/**/*", "proto/*.proto", "proto/*.pyi"]
+spindle = ["skills/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.setuptools.data-files]
 "share/spindle/router" = ["rust/router/Cargo.toml", "rust/router/Cargo.lock", "rust/router/pyproject.toml"]
-"share/spindle/router/src" = ["rust/router/src/lib.rs", "rust/router/src/native.rs", "rust/router/src/cache_wait.rs", "rust/router/src/routing_grpc.rs"]
+"share/spindle/router/src" = ["rust/router/src/lib.rs", "rust/router/src/native.rs", "rust/router/src/cache_wait.rs"]
 
 [tool.ruff]
-extend-exclude = ["*.md", "src/spindle/proto/*_pb2.py"]
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = [
@@ -75,7 +74,6 @@ ignore = [
 
 [tool.ty.src]
 include = ["src"]
-exclude = ["src/spindle/proto/*_pb2.py"]
 
 [tool.ty.analysis]
 # GPU-only packages that aren't installed in the dev environment.
@@ -108,7 +106,6 @@ unsupported-operator = "ignore"
 
 [dependency-groups]
 dev = [
-    "h2>=4.2",
     "jinja2>=3.1.6",
     "pre-commit>=4.5.1",
     "pytest>=9.1.1",

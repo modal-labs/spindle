@@ -5,12 +5,6 @@ import json
 import socket
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-
-import grpc
-
-from spindle.inference.routing_grpc import SERVICE, observation
-from spindle.proto.routing_pb2 import RoutingSnapshot, WatchRequest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import AsyncMock
 
@@ -47,6 +41,28 @@ def worker():
                 self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError):
                 pass
+
+        def do_GET(self):
+            replica = self.replica()
+            observation = state.get("observations", {}).get(replica, {})
+            time.sleep(observation.get("delay", 0))
+            work = dict(
+                age_seconds=observation.get("age", 0),
+                prefixes=[],
+                prefix_nodes=[],
+                cpu_adapters=["adapter/v1"],
+                gpu_adapters=["adapter/v1"],
+                pending_adapters=[],
+                request_ids=[],
+            )
+            self.reply(
+                dict(
+                    replica=replica,
+                    active=state["active"],
+                    work=None if observation.get("unobservable") else work,
+                ),
+                replica=replica,
+            )
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["content-length"])))
@@ -93,61 +109,10 @@ def worker():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     state["gateway"] = f"http://127.0.0.1:{server.server_port}"
-
-    def watch(request, context):
-        metadata = dict(context.invocation_metadata())
-        replica = metadata["modal-flash-upstream"].split(":")[0]
-        state.setdefault("watch_headers", []).append(metadata)
-        while context.is_active():
-            row = state.get("observations", {}).get(replica, {})
-            if row.get("disconnects", 0):
-                row["disconnects"] -= 1
-                context.abort(grpc.StatusCode.UNAVAILABLE, "restarting sidecar")
-            time.sleep(row.get("delay", 0))
-            work = dict(
-                age_seconds=row.get("age", 0),
-                prefixes=[],
-                cpu_adapters=["adapter/v1"],
-                gpu_adapters=["adapter/v1"],
-                pending_adapters=[],
-                request_ids=[],
-            )
-            yield observation(
-                dict(
-                    replica=row.get("replica", replica),
-                    active=state["active"],
-                    work=None if row.get("unobservable") else work,
-                )
-            )
-            time.sleep(0.05)
-
-    pool = ThreadPoolExecutor(max_workers=16)
-    observer = grpc.server(pool)
-    observer.add_generic_rpc_handlers(
-        (
-            grpc.method_handlers_generic_handler(
-                SERVICE,
-                {
-                    "Watch": grpc.unary_stream_rpc_method_handler(
-                        watch,
-                        request_deserializer=WatchRequest.FromString,
-                        response_serializer=RoutingSnapshot.SerializeToString,
-                    ),
-                },
-            ),
-        )
-    )
-    observer_port = observer.add_insecure_port("127.0.0.1:0")
-    observer.start()
-    state["observer_gateway"] = f"http://127.0.0.1:{observer_port}"
-    try:
-        yield state
-    finally:
-        observer.stop(0).wait()
-        pool.shutdown(wait=True)
-        server.shutdown()
-        server.server_close()
-        thread.join()
+    yield state
+    server.shutdown()
+    server.server_close()
+    thread.join()
 
 
 def with_router(worker, test, *, headers=None, prefill_tokens_per_second=1000.0):
@@ -162,7 +127,6 @@ def with_router(worker, test, *, headers=None, prefill_tokens_per_second=1000.0)
                 ]
             ),
             gateway=worker["gateway"],
-            observer_gateway=worker["observer_gateway"],
             headers=headers or {},
             capacity=24,
             prefill_tokens_per_second=prefill_tokens_per_second,
@@ -331,7 +295,7 @@ def test_cancellation_releases_queued_and_in_flight_requests(worker, active, del
 
 
 def test_a_slow_peer_does_not_stale_a_fast_replica(worker):
-    # Fast's row stays routable only if installed before the slow stream produces its first message.
+    # Fast's row stays routable only if installed before the slow poll times out.
     worker["observations"] = {"fast": {"age": 1.5}, "slow": {"delay": 2.5}}
 
     async def test(router):
@@ -388,38 +352,3 @@ def test_an_unset_prefill_rate_is_measured_from_completed_requests(
         assert second.routing["prefill_tokens_per_second"] == measured
 
     with_router(worker, test, prefill_tokens_per_second=configured)
-
-
-def test_observation_stream_reconnects_with_replica_pin_and_auth(worker):
-    worker["observations"] = {"worker": {"disconnects": 1}}
-
-    async def test(router):
-        result = await dispatch(router, worker, timeout=3)
-        assert result.replica == "worker"
-        assert len(worker["watch_headers"]) >= 2
-        for headers in worker["watch_headers"]:
-            assert headers["modal-key"] == "runtime"
-            assert headers["modal-flash-upstream"] == "worker:8000"
-            assert "modal-session-id" not in headers
-
-    with_router(
-        worker, test, headers={"Modal-Key": "runtime", "Modal-Session-ID": "discard"}
-    )
-
-
-def test_observation_stream_rejects_the_wrong_replica(worker):
-    worker["observations"] = {"worker": {"replica": "different-worker"}}
-
-    async def test(router):
-        task = asyncio.create_task(dispatch(router, worker, timeout=3))
-        async with asyncio.timeout(2):
-            while not worker.get("watch_headers"):
-                await asyncio.sleep(0.01)
-        await asyncio.sleep(0.1)
-        assert not worker["requests"]
-        # Once the pinned replica is reachable again, reconnect and route.
-        worker["observations"]["worker"].pop("replica")
-        result = await task
-        assert result.replica == "worker"
-
-    with_router(worker, test)
