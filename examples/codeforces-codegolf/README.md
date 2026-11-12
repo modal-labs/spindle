@@ -222,8 +222,8 @@ evaluate the restored policy before the first update. When overriding
 ## Setup and execution
 
 The remote CPU controller creates a [scoped deployment](../../docs/scoped-runs.md)
-with `spindle.run(...)` and the **8×H200,
-TP2 × CP2 × DP2, 65,536-token** trainer recipe. Each sampler uses one H200.
+with `spindle.run(...)` and the **8×B200,
+TP2 × CP2 × DP2, 65,536-token** trainer recipe. Each sampler uses one B200.
 The generated API URL/key stay in the controller process. Python 3.12 is required.
 Configure Modal access, the `spindle-proxy` secret, and the existing `spindle-api`
 secret containing your OTLP settings in the chosen environment.

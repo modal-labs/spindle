@@ -318,7 +318,7 @@ class Config(BaseConfig):
     backend = "miles"
 
 
-    trainer_gpu = "H100"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 4
     trainer_cpu = 16
     trainer_memory_mib = 65_536
@@ -345,7 +345,7 @@ class Config(BaseConfig):
         },
     }
 
-    inference_gpu = "H200"
+    inference_gpu = "B200"
     inference_min_replicas = 2
     inference_max_replicas = 8
     sglang_cfg = {

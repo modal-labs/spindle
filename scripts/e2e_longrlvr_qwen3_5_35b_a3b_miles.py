@@ -250,7 +250,7 @@ def build_config(*, steps: int, seed: int = SEED) -> TrainConfig:
     )
     recipe = MilesRecipe(
         name="miles-longrlvr-qwen35",
-        gpu_type="H200",
+        gpu_type="B200",
         miles_model_name="qwen3.5-35B-A3B",
         async_mode=True,
         actor_num_nodes=1,

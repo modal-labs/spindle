@@ -68,7 +68,7 @@ def test_gpt_oss_120b_uses_its_own_weights_and_mxfp4_layout(context, gpus, cp):
     assert deployment.weights_repo == "openai/gpt-oss-120b"
     assert trainer["hf_checkpoint"] == "/assets/openai/gpt-oss-120b"
     assert deployment.max_context_length == serving["context_length"] == context
-    assert spec.inference_gpu == "H200"
+    assert spec.inference_gpu == "B200"
     assert spec.inference_gpus_per_node == serving["tp_size"] == 1
     assert serving["moe_runner_backend"] == "marlin"
     assert trainer["actor_num_gpus_per_node"] == gpus

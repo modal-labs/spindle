@@ -38,7 +38,7 @@ class BaseConfig:
     parameterization = "lora"
     backend = "miles"
 
-    trainer_gpu = "H100"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 1
     trainer_nodes = 1
     # Request an RDMA allocation even for a single trainer node.
@@ -58,7 +58,7 @@ class BaseConfig:
     inference_image = ""
     sampler_persistence_concurrency = 8
 
-    inference_gpu = "H100"
+    inference_gpu = "B200"
     inference_gpus_per_node = 1
     inference_cpu = 8
     inference_memory_mib = 32768

@@ -13,9 +13,9 @@ engine = replace(
 )
 ```
 
-Bundled: `qwen3_5_4b_full_64k()` (4×H100 trainer, 1×H100 sampler), `qwen3_5_9b_full_64k()` (8×H200 TP2×CP2×DP2), `qwen3_6_27b_full_64k()` (8×H200 TP4, 4×H200 sampler).
+Bundled: `qwen3_5_4b_full_64k()` (4×B200 trainer, 1×B200 sampler), `qwen3_5_9b_full_64k()` (8×B200 TP2×CP2×DP2), `qwen3_6_27b_full_64k()` (8×B200 TP4, 4×B200 sampler).
 
-`Engine` fields: `name`, `model`, `trainer_gpu`/`sampler_gpu` (`"H100:4"` = type:count), `training` (`EngineModelConfig`), `sampling` (`SamplingConfig`), `revision`, `trainer_image`/`sampler_image` (`modal.Image`), `trainer_*`/`sampler_*` cpu+memory, `trainer_timeout` (1–86400 s), `backend_env` (`SPINDLE_*` keys reserved). Exports: `Engine`, `EngineModelConfig`, `OptimizerConfig`, `SamplingConfig`.
+`Engine` fields: `name`, `model`, `trainer_gpu`/`sampler_gpu` (`"B200:4"` = type:count), `training` (`EngineModelConfig`), `sampling` (`SamplingConfig`), `revision`, `trainer_image`/`sampler_image` (`modal.Image`), `trainer_*`/`sampler_*` cpu+memory, `trainer_timeout` (1–86400 s), `backend_env` (`SPINDLE_*` keys reserved). Exports: `Engine`, `EngineModelConfig`, `OptimizerConfig`, `SamplingConfig`.
 
 Changing GPU type: adjust count, parallelism, and context to fit model memory. `validate()` requires sampler parallelism to divide sampler GPU count.
 

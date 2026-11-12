@@ -4,7 +4,7 @@ from spindle.configs.deepseek_v31_lora_32k import Config as Parent
 class Config(Parent):
     name = "kimi-k26-lora-32k"
     model = "moonshotai/Kimi-K2.6"
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
     trainer_nodes = 3
     trainer_max_clients_per_instance = 2
     inference_gpu = "B300"

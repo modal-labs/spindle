@@ -6,7 +6,7 @@ class Config(BaseConfig):
     parameterization = "full"
     model = "Qwen/Qwen3.5-4B"
     max_context_length = 65536
-    trainer_gpu = "H100"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 4
     backend = "megatron"
     megatron_cfg = {
@@ -27,7 +27,7 @@ class Config(BaseConfig):
         "optimizer": {"lr": 0.0001, "min_lr": 0.0001, "loss_scale": 1.0},
     }
     sampler_persistence_concurrency = 1
-    inference_gpu = "H100"
+    inference_gpu = "B200"
     sglang_cfg = {
         "tp_size": 1,
         "mem_fraction_static": 0.85,

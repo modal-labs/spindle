@@ -1,4 +1,4 @@
-"""Run native scoring/backward regression on four temporary H100 GPUs.
+"""Run native scoring/backward regression on four temporary B200 GPUs.
 
     uv run --no-sync modal run scripts/check_multi_targets_gpu.py
 
@@ -20,7 +20,7 @@ worker = Path(__file__).resolve().parents[1] / "tests/gpu/multi_targets_worker.p
 
 @app.function(
     image=image.add_local_file(worker, "/root/multi_targets_worker.py"),
-    gpu="H100:4",
+    gpu="B200:4",
     timeout=900,
 )
 def check():

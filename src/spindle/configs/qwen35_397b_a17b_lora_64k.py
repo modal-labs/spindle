@@ -5,7 +5,7 @@ class Config(Parent):
     name = "qwen35-397b-a17b-lora-64k"
     model = "Qwen/Qwen3.5-397B-A17B"
     max_context_length = 65536
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
     trainer_nodes = 2
     trainer_cpu = 32
     trainer_memory_mib = 524288

@@ -900,7 +900,7 @@ def test_config_inheritance_and_constructor_overrides_copy_nested_options():
     first.miles_cfg["cli_options"]["recompute_num_layers"] = 2
     assert second.name == "second"
     assert second.max_context_length == 8192
-    assert second.trainer_gpu == "H100"
+    assert second.trainer_gpu == "B200"
     assert backend_config(second)["miles"]["max_tokens_per_gpu"] == 8192
     assert Parent().max_context_length == 16384
     for config in (second, Parent()):
@@ -1054,7 +1054,7 @@ async def test_api_add_routes_at_once_conflicts_409_and_identical_adds_are_idemp
         assert (await routes.get("variant")).recipe.trainer_gpu == "H200"
         identical = await post("variant", {"trainer_gpu": "H200"})
         conflict = await post("variant", {"trainer_gpu": "B200"})
-        base_conflict = await post(base.name, {"trainer_gpu": "B200"})
+        base_conflict = await post(base.name, {"trainer_gpu": "H200"})
         listed = (await client.get("/api/v1/spindle/deployments")).json()
     assert identical.status_code == 202
     assert conflict.status_code == base_conflict.status_code == 409
@@ -1214,7 +1214,7 @@ async def test_concurrent_first_adds_of_one_name_agree_on_a_winner(same):
     base = resolved()
     first, store = routes_for(base)
     second = DeploymentRoutes(first.kv, first.versions)
-    overrides = {} if same else {"trainer_gpu": "B200"}
+    overrides = {} if same else {"trainer_gpu": "H200"}
     requests = [
         DeploymentRequest(name="variant", base=base.name),
         DeploymentRequest(name="variant", base=base.name, overrides=overrides),

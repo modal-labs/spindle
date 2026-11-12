@@ -78,8 +78,8 @@ def qwen3_5_4b_full_64k() -> Engine:
     return Engine(
         name="qwen3_5_4b_full_64k",
         model="Qwen/Qwen3.5-4B",
-        trainer_gpu="H100:4",
-        sampler_gpu="H100:1",
+        trainer_gpu="B200:4",
+        sampler_gpu="B200:1",
         training=EngineModelConfig(
             hf_checkpoint="",
             seq_length=65_536,
@@ -107,8 +107,8 @@ def qwen3_6_27b_full_64k() -> Engine:
         original,
         name="qwen3_6_27b_full_64k",
         model="Qwen/Qwen3.6-27B",
-        trainer_gpu="H200:8",
-        sampler_gpu="H200:4",
+        trainer_gpu="B200:8",
+        sampler_gpu="B200:4",
         training=replace(
             original.training,
             tensor_model_parallel_size=4,
@@ -126,12 +126,12 @@ def qwen3_6_27b_full_64k() -> Engine:
 
 
 def qwen3_5_9b_full_64k() -> Engine:
-    """Codegolf's existing 8-H200 recipe: TP2 × CP2 × DP2, 64K packing."""
+    """Codegolf's 8-B200 recipe: TP2 × CP2 × DP2, 64K packing."""
     original = qwen3_5_4b_full_64k()
     return replace(
         original,
         name="qwen3_5_9b_full_64k",
         model="Qwen/Qwen3.5-9B",
-        trainer_gpu="H200:8",
-        sampler_gpu="H200:1",
+        trainer_gpu="B200:8",
+        sampler_gpu="B200:1",
     )
