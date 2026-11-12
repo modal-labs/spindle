@@ -43,7 +43,7 @@ testpaths = ["tests"]
 "share/spindle/router/src" = ["rust/router/src/lib.rs", "rust/router/src/native.rs", "rust/router/src/cache_wait.rs"]
 
 [tool.ruff]
-extend-exclude = ["*.md"]
+extend-exclude = ["*.md", "src/spindle/proto/*_pb2.py"]
 
 [tool.ruff.lint]
 select = [
@@ -74,6 +74,7 @@ ignore = [
 
 [tool.ty.src]
 include = ["src"]
+exclude = ["src/spindle/proto/*_pb2.py"]
 
 [tool.ty.analysis]
 # GPU-only packages that aren't installed in the dev environment.
