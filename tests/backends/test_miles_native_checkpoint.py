@@ -101,8 +101,12 @@ def test_concurrent_captures_keep_their_own_files(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("missing_peer", [False, True])
+@pytest.mark.parametrize("partial_local", [False, True])
 def test_volume_assembly_requires_metadata_referenced_peer_shard(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_peer: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_peer: bool,
+    partial_local: bool,
 ) -> None:
     source = tmp_path / ".capture.1234"
     _checkpoint(source)
@@ -125,6 +129,8 @@ def test_volume_assembly_requires_metadata_referenced_peer_shard(
         files.pop(str(peer.relative_to(tmp_path)))
     files[f"{source.name}/adapter_state/unrelated.distcp"] = b"unrelated"
     peer.unlink()
+    if partial_local:
+        original.write_bytes(b"incomplete")
 
     class Volume:
         def listdir(
@@ -132,10 +138,13 @@ def test_volume_assembly_requires_metadata_referenced_peer_shard(
         ) -> list[SimpleNamespace]:
             assert recursive
             return [
-                SimpleNamespace(path=name, type=FileEntryType.FILE) for name in files
+                SimpleNamespace(path=name, type=FileEntryType.FILE, size=len(data))
+                for name, data in files.items()
             ]
 
         def read_file(self, path: str) -> Iterator[bytes]:
+            local = tmp_path / path
+            assert not local.is_file() or local.stat().st_size != len(files[path])
             yield files[path]
 
         def commit(self) -> None:

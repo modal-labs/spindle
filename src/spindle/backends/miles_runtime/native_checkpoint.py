@@ -92,9 +92,13 @@ def materialize_adapter(source: Path, target: Path, *, checkpoint: bool) -> None
                 child = Path(entry.path.lstrip("/")).relative_to(relative)
                 destination = temporary / child
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                with destination.open("wb") as output:
-                    for data in volume.read_file(entry.path):
-                        output.write(data)
+                local = source / child
+                if local.is_file() and local.stat().st_size == entry.size:
+                    shutil.copyfile(local, destination)
+                else:
+                    with destination.open("wb") as output:
+                        for data in volume.read_file(entry.path):
+                            output.write(data)
         validate_adapter(temporary, checkpoint=checkpoint)
         if target.exists():
             raise FileExistsError(f"capture already exists: {target}")
