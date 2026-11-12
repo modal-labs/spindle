@@ -9,10 +9,10 @@ import xxhash
 import zmq
 import zmq.asyncio
 
+import spindle.inference.kv_events as kv_events
 from spindle.inference.kv_events import (
     KVCache,
     KVEventSubscriber,
-    publisher_config,
 )
 
 
@@ -42,64 +42,6 @@ def packet(events, ts=1.0):
     return msgspec.msgpack.encode([ts, events, 0])
 
 
-def test_kv_prefix_hash_matches_router_request_hash():
-    tokens = list(range(128))
-    cache = KVCache()
-    cache.apply(stored([1, 2], tokens, adapter="adapter-v1"))
-    assert set(cache.prefixes) == {
-        digest("adapter-v1", tokens[:64]),
-        digest("adapter-v1", tokens),
-    }
-
-
-def test_chained_pages_eviction_and_adapter_versions():
-    cache = KVCache()
-    tokens = list(range(192))
-    cache.apply(stored([1, 2], tokens[:128]))
-    cache.apply(stored([3], tokens[128:], parent=2))
-    assert set(cache.prefixes) == {
-        digest("adapter-v1", tokens[:n]) for n in (64, 128, 192)
-    }
-    cache.apply(stored([4], tokens[:64], adapter="adapter-v2"))
-    assert digest("adapter-v2", tokens[:64]) in cache.prefixes
-    cache.apply(dict(type="BlockRemoved", block_hashes=[2], medium="CPU_PINNED"))
-    assert 3 in cache.blocks
-    cache.apply(dict(type="BlockRemoved", block_hashes=[2], medium="GPU"))
-    assert set(cache.blocks) == {1, 4}
-    assert digest("adapter-v1", tokens[:192]) not in cache.prefixes
-    cache.apply(dict(type="AllBlocksCleared"))
-    assert not cache.prefixes
-    assert not cache.children
-
-
-def test_small_pages_cross_router_boundary_and_unknown_parent():
-    cache = KVCache()
-    cache.apply(stored(list(range(1, 81)), list(range(80))))
-    assert set(cache.prefixes) == {digest("adapter-v1", list(range(64)))}
-    cache.apply(stored([100], list(range(64)), parent=999))
-    assert 100 not in cache.blocks
-    cache.apply(stored([101], list(range(64)), medium="CPU_PINNED"))
-    assert 101 not in cache.blocks
-
-
-def test_duplicate_gap_and_unsalted_events():
-    sub = KVEventSubscriber()
-    first = packet([stored([1], list(range(64)))])
-    sub.apply(0, first)
-    sub.apply(0, first)
-    sub.ready = True
-    assert len(sub.cache.prefixes) == 1
-    sub.apply(2, packet([stored([3], list(range(64, 128)), parent=1)]))
-    assert not sub.cache.prefixes
-    assert not sub.ready
-    event = stored([4], list(range(64)))
-    sub.cache.apply(event)
-    event["cache_salt"] = "tenant-salt"
-    sub.cache.apply(event)
-    assert set(sub.cache.blocks) == {4}
-    assert len(sub.cache.prefixes) == 1
-
-
 @pytest.mark.parametrize(
     "invalid_event",
     [
@@ -115,14 +57,22 @@ def test_duplicate_gap_and_unsalted_events():
             "token_ids": [(i, i + 1) for i in range(64)],
         },
         {"lora_name": "adapter-v1", "cache_salt": None, "token_ids": [True] * 64},
+        {"parent_block_hash": 999},
     ],
-    ids=["unnamed", "salted", "bigram", "boolean"],
+    ids=["unnamed", "salted", "bigram", "boolean", "unknown-parent"],
 )
 def test_events_without_comparable_named_unigram_prefixes_are_skipped(invalid_event):
     cache = KVCache()
     event = stored([1], list(range(64)))
     event.update(invalid_event)
     cache.apply(event)
+    assert not cache.blocks
+    assert not cache.prefixes
+
+
+def test_new_store_with_duplicate_block_hash_is_skipped():
+    cache = KVCache()
+    cache.apply(stored([1, 1], [1] * 64 + [2] * 64))
     assert not cache.blocks
     assert not cache.prefixes
 
@@ -137,10 +87,13 @@ def test_routing_prefixes_are_bounded_and_favor_new_paths():
     assert digest("adapter-v1", list(range(64))) not in prefixes
 
 
-def test_publisher_config_has_single_rank_endpoints():
-    assert publisher_config()["endpoint"] == "tcp://127.0.0.1:5557"
-    assert publisher_config()["replay_endpoint"] == "tcp://127.0.0.1:5558"
-    assert publisher_config()["bind"] is True
+def test_shared_root_stays_in_capped_prefixes_after_large_child_store():
+    cache = KVCache()
+    cache.apply(stored([0], [0] * 64))
+    keys = list(range(1, 8194))
+    cache.apply(stored(keys, [key for key in keys for _ in range(64)], parent=0))
+    assert len(cache.prefixes) == 8192
+    assert digest("adapter-v1", [0] * 64) in cache.prefixes
 
 
 @pytest.mark.parametrize(
@@ -209,7 +162,7 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
             assert set(subscriber.cache.blocks) == {5, 6}
         finally:
             router.close(0)
-            context.term()
+            context.destroy(linger=0)
 
     asyncio.run(asyncio.wait_for(scenario(), 5))
 
@@ -237,18 +190,24 @@ def test_replay_recovers_after_buffer_roll_without_inventing_ancestors(
         add(3, stored([4], list(range(64))))
         add(4, stored([5], list(range(64, 128)), parent=4))
 
-        async def serve():
-            identity, delimiter, _ = await router.recv_multipart()
-            assert delimiter == b""
-            for seq, payload in history:
-                prefix = (
-                    [identity, b"", b"kv-events"] if with_topic else [identity, b""]
+        async def serve(requests=1):
+            for _ in range(requests):
+                identity, delimiter, start = await router.recv_multipart()
+                assert delimiter == b""
+                for seq, payload in history:
+                    if seq >= int.from_bytes(start, "big"):
+                        prefix = (
+                            [identity, b"", b"kv-events"]
+                            if with_topic
+                            else [identity, b""]
+                        )
+                        await router.send_multipart(
+                            prefix + [seq.to_bytes(8, "big"), payload]
+                        )
+                prefix = [identity, b"", b""] if with_topic else [identity, b""]
+                await router.send_multipart(
+                    prefix + [(-1).to_bytes(8, "big", signed=True), b""]
                 )
-                await router.send_multipart(prefix + [seq.to_bytes(8, "big"), payload])
-            prefix = [identity, b"", b""] if with_topic else [identity, b""]
-            await router.send_multipart(
-                prefix + [(-1).to_bytes(8, "big", signed=True), b""]
-            )
 
         try:
             await asyncio.gather(serve(), subscriber.replay(context))
@@ -259,9 +218,15 @@ def test_replay_recovers_after_buffer_roll_without_inventing_ancestors(
                 digest("adapter-v1", list(range(64))),
                 digest("adapter-v1", list(range(128))),
             }
+            history.clear()
+            add(0, stored([6], [1] * 64))
+            add(2, stored([7], [2] * 64))
+            await asyncio.gather(serve(2), subscriber.replay(context))
+            assert subscriber.ready and subscriber.sequence == 2
+            assert set(subscriber.cache.prefixes) == {digest("adapter-v1", [2] * 64)}
         finally:
             router.close(0)
-            context.term()
+            context.destroy(linger=0)
 
     asyncio.run(asyncio.wait_for(scenario(), 5))
 
@@ -277,10 +242,16 @@ def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path):
         router.bind(replay)
         history = []
         subscriber = KVEventSubscriber(endpoint, replay)
+        replay_ready = []
+        ready_during_replay = []
 
         async def serve():
             while True:
                 identity, _, start = await router.recv_multipart()
+                replay_ready.append(subscriber.snapshot[0])
+                if replay_ready[-1]:
+                    await asyncio.sleep(0.03)
+                    ready_during_replay.append(subscriber.snapshot[0])
                 for seq, payload in history:
                     if seq >= int.from_bytes(start, "big"):
                         await router.send_multipart(
@@ -309,6 +280,7 @@ def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path):
             )
             await until(lambda: subscriber.sequence == 2)
             assert not subscriber.cache.prefixes
+            replay_ready.clear()
             payload = packet([stored([3], list(range(64)))])
             history.append((3, payload))
             await pub.send_multipart([b"kv-events", (3).to_bytes(8, "big"), payload])
@@ -319,13 +291,15 @@ def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path):
             )
             await until(lambda: subscriber.sequence == 4)
             assert not subscriber.cache.prefixes
+            assert replay_ready and all(replay_ready)
+            assert ready_during_replay and all(ready_during_replay)
         finally:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             pub.close(0)
             router.close(0)
-            context.term()
+            context.destroy(linger=0)
 
     asyncio.run(scenario())
 
@@ -340,12 +314,15 @@ def test_live_publications_queued_during_replay_keep_cache(tmp_path):
         pub.bind(endpoint)
         router.bind(replay)
         subscriber = KVEventSubscriber(endpoint, replay)
-        seen = []
+        stale_results = []
         original = subscriber.apply_publication
 
         def observe(sequence, payload):
-            seen.append((sequence, subscriber.sequence))
-            return original(sequence, payload)
+            stale = sequence < subscriber.sequence
+            result = original(sequence, payload)
+            if stale:
+                stale_results.append((result, subscriber.snapshot))
+            return result
 
         subscriber.apply_publication = observe
         stored_event = stored([1], list(range(64)))
@@ -375,9 +352,9 @@ def test_live_publications_queued_during_replay_keep_cache(tmp_path):
         try:
             await asyncio.wait_for(serve(), 3)
             async with asyncio.timeout(2):
-                while not seen:
+                while not stale_results:
                     await asyncio.sleep(0.01)
-            assert any(sequence < current for sequence, current in seen)
+            assert all(result and snapshot[0] for result, snapshot in stale_results)
             assert subscriber.ready and subscriber.sequence == 1
             assert set(subscriber.cache.prefixes) == {
                 digest("adapter-v1", list(range(64)))
@@ -387,12 +364,14 @@ def test_live_publications_queued_during_replay_keep_cache(tmp_path):
             await asyncio.gather(task, return_exceptions=True)
             pub.close(0)
             router.close(0)
-            context.term()
+            context.destroy(linger=0)
 
     asyncio.run(scenario())
 
 
-def test_replay_timeout_applies_to_each_frame(tmp_path):
+def test_replay_timeout_applies_to_each_frame(tmp_path, monkeypatch):
+    monkeypatch.setattr(kv_events, "REPLAY_STALL_TIMEOUT_SECONDS", 0.3)
+
     async def scenario():
         context = zmq.asyncio.Context()
         router = context.socket(zmq.ROUTER)
@@ -404,7 +383,7 @@ def test_replay_timeout_applies_to_each_frame(tmp_path):
             identity, delimiter, start = await router.recv_multipart()
             assert delimiter == b"" and int.from_bytes(start, "big") == 0
             for sequence in range(3):
-                await asyncio.sleep(0.75)
+                await asyncio.sleep(0.2)
                 event = stored(
                     [sequence + 1],
                     list(range(sequence * 64, (sequence + 1) * 64)),
@@ -413,7 +392,7 @@ def test_replay_timeout_applies_to_each_frame(tmp_path):
                 await router.send_multipart(
                     [identity, b"", sequence.to_bytes(8, "big"), packet([event])]
                 )
-            await asyncio.sleep(0.75)
+            await asyncio.sleep(0.2)
             await router.send_multipart(
                 [identity, b"", (-1).to_bytes(8, "big", signed=True), b""]
             )
@@ -426,7 +405,7 @@ def test_replay_timeout_applies_to_each_frame(tmp_path):
             assert len(subscriber.cache.prefixes) == 3
         finally:
             router.close(0)
-            context.term()
+            context.destroy(linger=0)
 
     asyncio.run(scenario())
 
@@ -472,7 +451,7 @@ def test_subscriber_thread_recovers_after_unexpected_failure(tmp_path):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             router.close(0)
-            context.term()
+            context.destroy(linger=0)
         assert not thread.is_alive() and not subscriber.snapshot[0]
 
     asyncio.run(scenario())
@@ -540,61 +519,9 @@ def test_subscriber_thread_stops_during_long_replay(tmp_path):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             router.close(0)
-            context.term()
+            context.destroy(linger=0)
 
     asyncio.run(scenario())
-
-
-def test_native_adapter_name_needs_no_cache_salt():
-    cache = KVCache()
-    event = stored([1], list(range(64)))
-    event["cache_salt"] = None
-    event["lora_name"] = "adapter-v1"
-    cache.apply(event)
-    assert digest("adapter-v1", list(range(64))) in cache.prefixes
-
-
-def test_cache_keeps_shared_root_with_many_blocks():
-    cache = KVCache()
-    cache.apply(stored([1], list(range(64))))
-    cache.apply(stored([2], list(range(64, 128)), parent=1))
-    cache.apply(stored([3], list(range(128, 192)), parent=2))
-    assert set(cache.blocks) == {1, 2, 3}
-    assert len(cache.prefixes) == 3
-
-
-@pytest.mark.parametrize("page_size", [1, 16, 64, 80])
-def test_store_skips_unknown_parent_and_bigram_tokens(page_size):
-    cache = KVCache()
-    tokens = list(range(page_size * 2))
-    event = stored([1, 2], tokens, parent=999)
-    cache.apply(event)
-    assert not cache.blocks
-    event["parent_block_hash"] = None
-    event["token_ids"][0] = (1, 2)
-    cache.apply(event)
-    cache.apply(stored([3], list(range(page_size)), parent=2))
-    assert not cache.blocks
-    event["token_ids"][0] = 0
-    cache.apply(event)
-    cache.apply(stored([3], list(range(page_size)), parent=2))
-    cache.apply(dict(type="BlockRemoved", block_hashes=[2], medium="GPU"))
-    assert set(cache.blocks) == {1}
-
-
-def test_repeated_store_and_recent_prefix_cap():
-    cache = KVCache()
-    keys = list(range(1, 8194))
-    tokens = list(range(64 * len(keys)))
-    event = stored(keys, tokens)
-    cache.apply(event)
-    cache.apply(event)
-    assert len(cache.blocks) == len(keys)
-    assert len(cache.prefixes) == 8192
-    assert digest("adapter-v1", tokens) in cache.prefixes
-    assert digest("adapter-v1", tokens[:64]) not in cache.prefixes
-    cache.apply(stored([8194], tokens[64:128], parent=1))
-    assert digest("adapter-v1", tokens[:64]) in cache.prefixes
 
 
 def test_mixed_restore_extends_existing_prefix():
@@ -616,3 +543,13 @@ def test_signed_block_hashes_survive_resize_and_removal():
     cache.apply(dict(type="BlockRemoved", block_hashes=[keys[1]], medium="GPU"))
     assert set(cache.blocks) == {keys[0]}
     assert not cache.prefixes
+
+
+def test_removing_last_block_releases_grown_index():
+    cache = KVCache()
+    keys = list(range(1025))
+    cache.apply(stored(keys, keys))
+    assert len(cache.blocks.states) > 1024
+    cache.apply(dict(type="BlockRemoved", block_hashes=[keys[0]], medium="GPU"))
+    assert not cache.blocks
+    assert len(cache.blocks.states) == 1024

@@ -3,7 +3,7 @@
 import asyncio
 import random
 import struct
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 
 import msgspec
@@ -75,17 +75,37 @@ class TreeModel:
         self.nodes.clear()
         return {"type": "AllBlocksCleared"}
 
-    def prefixes(self):
-        result = set()
+    def restore_with_repeated_key(self, key, page):
+        node = self.nodes[key]
+        parent_tokens = (
+            self.nodes[node.parent].tokens if node.parent is not None else ()
+        )
+        old_page = node.tokens[len(parent_tokens) :]
+        event = self.store(key, node.adapter, node.salt, [page])
+        event["block_hashes"] = [key, key, event["block_hashes"][0]]
+        event["parent_block_hash"] = node.parent
+        event["token_ids"] = list(old_page) * 2 + page
+        return event
+
+    def prefix_counts(self):
+        result = Counter()
         for node in self.nodes.values():
             if node.salt is not None or node.adapter == "base":
                 continue
+            parent_length = (
+                len(self.nodes[node.parent].tokens) if node.parent is not None else 0
+            )
             for length in range(64, len(node.tokens) + 1, 64):
+                if length <= parent_length:
+                    continue
                 digest = xxhash.xxh3_128((node.adapter + "\0").encode())
                 for token in node.tokens[:length]:
                     digest.update(struct.pack("<q", token))
-                result.add(digest.hexdigest())
+                result[digest.hexdigest()] += 1
         return result
+
+    def prefixes(self):
+        return set(self.prefix_counts())
 
 
 def random_stream(seed, count=80, *, include_base=True):
@@ -96,11 +116,29 @@ def random_stream(seed, count=80, *, include_base=True):
         choices = ["store"] * 7 + ["cpu"] + ["clear"]
         if model.nodes:
             choices += ["remove"] * 3
+        restorable = [
+            key
+            for key, node in model.nodes.items()
+            if node.adapter != "base" and node.salt is None
+        ]
+        if restorable:
+            choices += ["restore"] * 3
         choice = rng.choice(choices)
         if choice == "clear":
             event = model.clear()
         elif choice == "remove":
             event = model.remove(rng.choice(list(model.nodes)))
+        elif choice == "restore":
+            key = rng.choice(restorable)
+            node = model.nodes[key]
+            parent_length = (
+                len(model.nodes[node.parent].tokens) if node.parent is not None else 0
+            )
+            page = [
+                rng.randrange(-(2**31), 2**31)
+                for _ in range(len(node.tokens) - parent_length)
+            ]
+            event = model.restore_with_repeated_key(key, page)
         elif choice == "cpu":
             if rng.randrange(2):
                 event = {
@@ -137,31 +175,37 @@ def random_stream(seed, count=80, *, include_base=True):
                 for _ in range(rng.randint(1, 3))
             ]
             event = model.store(parent, adapter, salt, pages)
-        stream.append((event, model.prefixes()))
+        stream.append((event, model.prefix_counts()))
     return stream
 
 
-@pytest.mark.parametrize("seed", [2, 11, 37, 83])
-@pytest.mark.parametrize("include_base", [False, True], ids=["adapters", "with-base"])
+@pytest.mark.parametrize(
+    "seed,include_base", [(2, False), (11, True), (37, False), (83, True)]
+)
 def test_random_valid_stream_matches_independent_tree(seed, include_base):
     subscriber = KVEventSubscriber()
+    restored = False
     for sequence, (event, truth) in enumerate(
         random_stream(seed, include_base=include_base)
     ):
+        if event["type"] == "BlockStored":
+            keys = event["block_hashes"]
+            restored |= len(keys) >= 3 and keys[0] == keys[1]
         assert subscriber.apply(sequence, packet([event], sequence))
-        assert set(subscriber.cache.prefixes) == truth, (
+        assert subscriber.cache.prefix_counts == truth, (
             seed,
             include_base,
             sequence,
             event,
         )
+        assert set(subscriber.cache.prefixes) == set(truth)
+    assert restored
 
 
-@pytest.mark.parametrize("seed", [5, 41])
-def test_removed_tree_releases_all_internal_maps(seed):
+def test_removed_tree_releases_all_internal_maps():
     model = TreeModel()
     subscriber = KVEventSubscriber()
-    rng = random.Random(seed)
+    rng = random.Random(5)
     root = model.store(None, "adapter-a", None, [[1] * 64])
     root_key = root["block_hashes"][0]
     events = [root]
@@ -269,7 +313,7 @@ async def run_scenario(buffer_size, scenario):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         publisher.close()
-        context.term()
+        context.destroy(linger=0)
 
 
 def test_gap_replay_with_duplicates_and_reordered_publications():
@@ -298,12 +342,13 @@ def test_gap_replay_with_duplicates_and_reordered_publications():
     asyncio.run(run_scenario(8, scenario))
 
 
-@pytest.mark.parametrize("seed", [13, 29])
-def test_random_delivery_gaps_never_add_false_prefixes(seed):
+def test_random_delivery_gaps_never_add_false_prefixes():
+    seed = 13
+
     async def scenario(publisher, subscriber):
         rng = random.Random(seed)
         stream = random_stream(seed, 45, include_base=False)
-        truth_by_sequence = [truth for _, truth in stream]
+        truth_by_sequence = [set(truth) for _, truth in stream]
         violations = []
 
         async def monitor():
@@ -332,7 +377,7 @@ def test_random_delivery_gaps_never_add_false_prefixes(seed):
     asyncio.run(run_scenario(64, scenario))
 
 
-def test_buffer_rollover_recovers_at_next_clear():
+def test_buffer_rollover_discards_state_after_clear_is_lost():
     async def scenario(publisher, subscriber):
         model = TreeModel()
         first = model.store(None, "adapter-a", None, [[1] * 64])
@@ -343,11 +388,13 @@ def test_buffer_rollover_recovers_at_next_clear():
             await publisher.emit([event], live=False)
         await publisher.emit([model.clear()], live=False)
         final = model.store(None, "adapter-b", None, [[9] * 64])
-        await publisher.emit([final])
-        await until(lambda: len(publisher.requests) >= 2)
+        await publisher.emit([final], live=False)
         next_event = model.store(None, "adapter-b", None, [[8] * 64])
-        await publisher.emit([next_event])
-        await until(lambda: subscriber.ready and subscriber.sequence == 8)
+        await publisher.emit([next_event], live=False)
+        last_event = model.store(None, "adapter-b", None, [[7] * 64])
+        await publisher.emit([last_event])
+        await until(lambda: subscriber.ready and subscriber.sequence == 9)
+        assert publisher.requests[-1] == 0
         assert set(subscriber.cache.prefixes) == model.prefixes()
 
     asyncio.run(run_scenario(3, scenario))

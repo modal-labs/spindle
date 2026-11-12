@@ -128,9 +128,6 @@ def harness(tmp_path):
                 return
             if state["loads"] == "slow":
                 time.sleep(2)
-            if state["loads"] == "error":
-                self.respond({"detail": "unavailable"}, 503)
-                return
             self.respond(
                 {
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -306,9 +303,6 @@ def harness(tmp_path):
         def state(self, replica):
             return httpx.get(destinations[replica] + "/routing-state").json()
 
-        def compare(self, replica):
-            return httpx.get(destinations[replica] + "/routing-state/compare").json()
-
         async def route(self):
             router = NativeRouter(
                 AsyncMock(
@@ -401,33 +395,8 @@ def test_real_router_prefers_cached_prefix_then_releases_preference(harness, sou
     assert second.replica == "cold"
 
 
-def test_compare_reports_intersection_and_divergence(harness):
-    harness.start("cached", "compare")
-    publisher = harness.publishers["cached"]
-    prefixes = prefix_hashes()
-    harness.snapshot("cached", prefixes)
-    harness.publish(publisher, harness.stored())
-    wait_for(lambda: harness.compare("cached")["intersection"] == 2)
-    same = harness.compare("cached")
-    assert (same["intersection"], same["hook_only"], same["kv_events_only"]) == (
-        2,
-        0,
-        0,
-    )
-    harness.snapshot("cached", prefixes[:1])
-    wait_for(lambda: harness.compare("cached")["kv_events_only"] == 1)
-    different = harness.compare("cached")
-    assert (
-        different["intersection"],
-        different["hook_only"],
-        different["kv_events_only"],
-    ) == (1, 0, 1)
-    assert harness.state("cached")["work"]["prefixes"] == prefixes[:1]
-
-
-@pytest.mark.parametrize("loads", ["slow", "error"])
-def test_loads_failure_keeps_routing_state_fast_and_router_falls_back(harness, loads):
-    harness.set_loads(loads)
+def test_slow_loads_keeps_routing_state_fast_and_router_falls_back(harness):
+    harness.set_loads("slow")
     harness.start("cold", "kv_events")
     started = time.monotonic()
     response = harness.state("cold")

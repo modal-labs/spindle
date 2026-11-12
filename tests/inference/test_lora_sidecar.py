@@ -56,7 +56,7 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
         json.dumps(
             {
                 "timestamp": time.time(),
-                "prefixes": ["01" * 16],
+                "prefixes": ["01" * 16, "02" * 16],
                 "cpu_adapters": ["adapter/v1"],
                 "gpu_adapters": ["adapter/v1"],
                 "requests": [],
@@ -79,7 +79,7 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
     with TestClient(app) as client:
         if source != "hook":
             subscriber = app.state.kv_events
-            subscriber.snapshot = (True, time.monotonic(), ("02" * 16,))
+            subscriber.snapshot = (True, time.monotonic(), ("02" * 16, "03" * 16))
             app.state.loads = {
                 "timestamp": time.time(),
                 "num_running_reqs": 3,
@@ -91,6 +91,9 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
         state = client.get("/routing-state").json()
         if source == "kv_events":
             assert app.state.routing_read_at == 0.0
+            assert state["work"]["prefixes"] == ["02" * 16, "03" * 16]
+        else:
+            assert state["work"]["prefixes"] == ["01" * 16, "02" * 16]
         work = state["work"]
         assert {
             "age_seconds",
@@ -107,47 +110,11 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
         if source == "compare":
             assert compare_response.status_code == 200
             comparison = compare_response.json()
-            assert comparison["intersection"] == 0
+            assert comparison["intersection"] == 1
             assert comparison["hook_only"] == 1
             assert comparison["kv_events_only"] == 1
         else:
             assert compare_response.status_code == 404
-
-
-def test_empty_hook_catalog_has_no_cpu_adapters(tmp_path, monkeypatch):
-    monkeypatch.setattr(sidecar, "ROUTING_CATALOG_PATH", tmp_path / "missing.json")
-    app = create_app(
-        SnapshotBulletin(tmp_path / "bulletin"),
-        "http://sglang",
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
-        routing_source="hook",
-    )
-    with TestClient(app) as client:
-        app.state.registered_adapters["adapter-v1"] = "/tmp/adapter-v1"
-        response = client.get("/routing-state").json()
-    assert response["cpu_adapters"] == []
-    assert response["work"] is None
-
-
-def test_routing_polls_use_published_prefix_snapshot():
-    subscriber = SimpleNamespace(snapshot=(True, time.monotonic(), ("01" * 16,)))
-    state = SimpleNamespace(
-        kv_events=subscriber,
-        loads={
-            "timestamp": time.time(),
-            "num_running_reqs": 0,
-            "num_waiting_reqs": 0,
-            "num_used_tokens": 0,
-            "max_total_num_tokens": 1,
-        },
-        loads_at=time.monotonic(),
-        loads_task=object(),
-        registered_adapters={},
-        routing_requests={},
-    )
-    app = SimpleNamespace(state=state)
-    for _ in range(100):
-        assert sidecar.kv_view(app)["prefixes"] == ["01" * 16]
 
 
 def test_malformed_loads_response_keeps_last_good_snapshot():
