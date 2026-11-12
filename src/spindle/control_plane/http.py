@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import uuid
@@ -228,6 +229,23 @@ def _deployment_summary(definition: Routable) -> dict[str, object]:
     }
 
 
+def parse_user_keys(value: str, api_key: str) -> dict[str, str]:
+    try:
+        keys = json.loads(value)
+    except ValueError:
+        keys = None
+    if not isinstance(keys, dict) or not all(
+        isinstance(key, str) and key and isinstance(user, str) and user
+        for key, user in keys.items()
+    ):
+        raise ValueError(
+            "SPINDLE_USER_API_KEYS must be a JSON object of API key to user name"
+        )
+    if api_key in keys:
+        raise ValueError("SPINDLE_USER_API_KEYS must not include TINKER_API_KEY")
+    return keys
+
+
 def create_control_plane_app(
     control_plane: ControlPlane,
     definitions: DeploymentRoutes | Iterable[Any],
@@ -239,6 +257,7 @@ def create_control_plane_app(
     deploy_apps: Callable[[Routable], Awaitable[None]] | None = None,
     stop_apps: Callable[[Routable], Awaitable[None]] | None = None,
     usage_sink: DirectorySink | None = None,
+    user_keys: Mapping[str, str] | None = None,
 ) -> FastAPI:
     routes = (
         definitions
@@ -249,9 +268,42 @@ def create_control_plane_app(
     async def supports_model(model_name: str) -> bool:
         return await routes.select(model_name) is not None
 
+    accepted: dict[str, str | None] = dict(user_keys or {})
+    if api_key is not None:
+        accepted[api_key] = None
+
+    def caller(request: Request) -> tuple[bool, str | None]:
+        """Whether the request's key is accepted, and the user a user key bills."""
+        if not accepted:
+            return True, None
+        key = request.headers.get("x-api-key", "").encode()
+        for candidate, user in accepted.items():
+            if key and hmac.compare_digest(key, candidate.encode()):
+                return True, user
+        return False, None
+
     async def authorize(request: Request) -> None:
-        if api_key is not None and request.headers.get("x-api-key") != api_key:
+        allowed, request.state.user_id = caller(request)
+        if not allowed:
             raise HTTPException(status_code=401, detail="unauthorized")
+
+    async def admin_only(request: Request) -> None:
+        if request.state.user_id is not None:
+            raise HTTPException(
+                status_code=403, detail="needs the deployment's API key"
+            )
+
+    async def check_session_owner(request: Request, session_id: str) -> None:
+        user_id = request.state.user_id
+        if (
+            user_id is not None
+            and await control_plane.session_user(session_id) != user_id
+        ):
+            raise HTTPException(
+                status_code=403, detail="this session was created with another API key"
+            )
+
+    admin = [Depends(admin_only)]
 
     app = FastAPI(dependencies=[Depends(authorize)])
 
@@ -259,7 +311,7 @@ def create_control_plane_app(
 
     async def skip_rejected_operation(request: Request, exc: Exception) -> None:
         path = request.url.path
-        if api_key is not None and request.headers.get("x-api-key") != api_key:
+        if not caller(request)[0]:
             return
         if path == "/api/v1/forward_backward":
             _, body = await asyncio.to_thread(
@@ -340,7 +392,7 @@ def create_control_plane_app(
             "spindle_commit": source_commit(),
         }
 
-    @app.get("/api/v1/spindle/deployments")
+    @app.get("/api/v1/spindle/deployments", dependencies=admin)
     async def list_deployments():
         definitions = await routes.definitions()
         rows = [_deployment_summary(d) for d in definitions]
@@ -350,7 +402,7 @@ def create_control_plane_app(
                 row.update(status)
         return {"deployments": rows}
 
-    @app.post("/api/v1/spindle/deployments", status_code=202)
+    @app.post("/api/v1/spindle/deployments", status_code=202, dependencies=admin)
     async def add_deployment(body: DeploymentRequest):
         deployment = await routes.build(body)
         config = await routes.add(deployment)
@@ -377,7 +429,7 @@ def create_control_plane_app(
                 )
         return placed
 
-    @app.delete("/api/v1/spindle/deployments/{name}")
+    @app.delete("/api/v1/spindle/deployments/{name}", dependencies=admin)
     async def remove_deployment(name: str, force: bool = False):
         current = await routes.get(name)
         if current is None:
@@ -427,7 +479,7 @@ def create_control_plane_app(
 
     queue_snapshot = SharedSnapshot(read_queues, lambda: control_plane.clock())
 
-    @app.get("/api/v1/spindle/queues")
+    @app.get("/api/v1/spindle/queues", dependencies=admin)
     async def queues():
         observed_at, snapshot = await queue_snapshot.get()
         return {
@@ -465,11 +517,14 @@ def create_control_plane_app(
         return {"status": "accepted"}
 
     @app.post("/api/v1/create_session")
-    async def create_session(body: CreateSessionBody) -> dict[str, object]:
+    async def create_session(
+        body: CreateSessionBody, request: Request
+    ) -> dict[str, object]:
         session = await control_plane.create_session(
             tags=body.tags,
             user_metadata=body.user_metadata,
             sdk_version=body.sdk_version,
+            user_id=request.state.user_id,
         )
         return {"type": "create_session", "session_id": session.session_id}
 
@@ -491,7 +546,7 @@ def create_control_plane_app(
 
     @app.get("/api/v1/billing/usage/events")
     async def billing_usage_events(
-        starting_on: str, ending_before: str
+        request: Request, starting_on: str, ending_before: str
     ) -> dict[str, object]:
         # Errors here are 4xx: the Tinker SDK retries any 5xx for minutes.
         if usage_sink is None:
@@ -513,11 +568,16 @@ def create_control_plane_app(
 
             read.add_done_callback(forget)
         try:
-            return await asyncio.shield(read)
+            usage = await asyncio.shield(read)
         except BillingReadFailed as exc:
             raise HTTPException(
                 status_code=424, detail="reading usage from the Volume failed"
             ) from exc
+        if (user_id := request.state.user_id) is None:
+            return usage
+        data = [event for event in usage["data"] if event["user_id"] == user_id]
+        sessions = {e["session_id"]: usage["sessions"][e["session_id"]] for e in data}
+        return {"data": data, "sessions": sessions}
 
     @app.post("/api/v1/session_heartbeat")
     async def session_heartbeat(body: SessionHeartbeatBody) -> dict[str, str]:
@@ -525,11 +585,17 @@ def create_control_plane_app(
         return {"type": "session_heartbeat"}
 
     @app.post("/api/v1/sessions/{session_id}/finish")
-    async def finish_session(session_id: str, body: FinishSessionBody) -> None:
+    async def finish_session(
+        request: Request, session_id: str, body: FinishSessionBody
+    ) -> None:
+        await check_session_owner(request, session_id)
         await control_plane.close_session(session_id, body.reason.type)
 
     @app.post("/api/v1/create_model")
-    async def create_model(body: CreateModelBody) -> dict[str, object]:
+    async def create_model(
+        request: Request, body: CreateModelBody
+    ) -> dict[str, object]:
+        await check_session_owner(request, body.session_id)
         if not await supports_model(body.base_model):
             raise HTTPException(
                 status_code=400,
@@ -591,8 +657,9 @@ def create_control_plane_app(
 
     @app.post("/api/v1/create_sampling_session")
     async def create_sampling_session(
-        body: CreateSamplingSessionBody,
+        request: Request, body: CreateSamplingSessionBody
     ) -> dict[str, str]:
+        await check_session_owner(request, body.session_id)
         if body.base_model is None and body.model_path is None:
             raise HTTPException(
                 status_code=400,
@@ -693,7 +760,7 @@ def create_control_plane_app(
             return {"request_id": request_id, "model_id": body.model_id}
 
     @app.post("/api/v1/load_weights")
-    async def load_weights(body: LoadWeightsBody) -> dict[str, str]:
+    async def load_weights(request: Request, body: LoadWeightsBody) -> dict[str, str]:
         if body.weights_access_token is not None:
             raise ValueError("weights_access_token is not supported")
         create_via_load = body.session_id is not None or body.model_seq_id is not None
@@ -707,6 +774,7 @@ def create_control_plane_app(
                 raise ValueError(
                     "session_id and model_seq_id must be provided without model_id and seq_id"
                 )
+            await check_session_owner(request, body.session_id)
             creation = await control_plane.create_model_from_checkpoint(
                 session_id=body.session_id,
                 model_seq_id=body.model_seq_id,
@@ -876,7 +944,8 @@ def create_control_plane_app(
         }
 
     @app.delete(
-        "/api/v1/training_runs/{training_run_id}/checkpoints/{checkpoint_id:path}"
+        "/api/v1/training_runs/{training_run_id}/checkpoints/{checkpoint_id:path}",
+        dependencies=admin,
     )
     async def delete_checkpoint(training_run_id: str, checkpoint_id: str) -> None:
         await control_plane.remove_checkpoint(training_run_id, checkpoint_id)

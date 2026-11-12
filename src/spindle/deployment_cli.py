@@ -50,7 +50,7 @@ from spindle.providers.modal.deployment_configs import (
 )
 from spindle.providers.modal.fft_pool import FFTPoolSpec
 from spindle.providers.modal.lora_pool import LoraPoolSpec
-from spindle.usage import attribute_cost, row_from, usage_window
+from spindle.usage import SessionUsage, attribute_cost, row_from, usage_window
 from spindle.version import __version__, deployment_tag, source_commit
 
 
@@ -548,7 +548,7 @@ def parser():
     usage.add_argument(
         "--group-by",
         default="run_id",
-        help="Label key to group sessions by, such as run_id or team_id",
+        help="user, for the API key's user, or any label key such as run_id",
     )
     usage.add_argument("--format", choices=("table", "csv"), default="table")
     usage.add_argument(
@@ -664,7 +664,13 @@ def print_usage_costs(args) -> None:
             file=sys.stderr,
         )
     costs = attribute_cost(
-        rows, app_costs, sessions=usage["sessions"], group_by=args.group_by
+        rows,
+        app_costs,
+        sessions={
+            session_id: SessionUsage(usage.get("users", {}).get(session_id), labels)
+            for session_id, labels in usage["sessions"].items()
+        },
+        group_by=args.group_by,
     )
     groups = sorted(
         ((name, usd) for name, usd in costs.items() if name not in OVERHEAD_LINES),

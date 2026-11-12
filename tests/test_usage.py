@@ -17,6 +17,7 @@ from spindle.usage import (
     DirectorySink,
     TrainerUsage,
     UsageMeter,
+    SessionUsage,
     UsageRow,
     labels_from,
     meter_sample,
@@ -28,8 +29,8 @@ from tests.support import EchoExecutor
 
 HOUR = 1_793_973_600.0  # 2026-11-06T14:00:00Z
 SESSIONS = {
-    "session-a": {"run_id": "A", "team_id": "t-1"},
-    "session-b": {"run_id": "B", "team_id": "t-2"},
+    "session-a": SessionUsage("alice", {"run_id": "A", "team_id": "t-1"}),
+    "session-b": SessionUsage("bob", {"run_id": "B", "team_id": "t-2"}),
 }
 TRAINER, SAMPLER = "shared-trainer-qwen3-8b", "shared-lora-qwen3-8b"
 
@@ -137,11 +138,11 @@ def test_meter_writes_closed_minutes_once_even_when_a_write_is_retried(
 
 def test_volume_files_are_never_rewritten(tmp_path) -> None:
     sink = DirectorySink(tmp_path)
-    sink.put_session("session-a", {"run_id": "A"})
+    sink.put_session("session-a", SessionUsage("alice", {"run_id": "A"}))
     sink.put_model("model-a", "session-a")
     files = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
 
-    sink.put_session("session-a", {"run_id": "B"})
+    sink.put_session("session-a", SessionUsage("bob", {"run_id": "B"}))
     sink.put_model("model-a", "session-b")
 
     assert {
@@ -153,7 +154,11 @@ def test_volume_files_are_never_rewritten(tmp_path) -> None:
     ("put", "args", "written"),
     [
         ("put_model", ("model-a", "session-a"), "models/model-a.json"),
-        ("put_session", ("session-a", {"run_id": "A"}), "sessions/session-a.json"),
+        (
+            "put_session",
+            ("session-a", SessionUsage("alice", {"run_id": "A"})),
+            "sessions/session-a.json",
+        ),
     ],
 )
 def test_a_record_whose_commit_failed_is_committed_on_retry(

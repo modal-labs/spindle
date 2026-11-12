@@ -24,6 +24,7 @@ class SessionRecord(DurableRecord):
     tags: tuple[str, ...] = ()
     user_metadata: dict[str, str] | None = None
     sdk_version: str | None = None
+    user_id: str | None = None
 
 
 class SessionLastSeenRecord(DurableRecord):

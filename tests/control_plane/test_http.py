@@ -1010,3 +1010,27 @@ def test_error_responses_are_not_compressed_by_the_proxy(
     assert response.status_code == status
     assert response.headers["content-encoding"] == "identity"
     assert int(response.headers["content-length"]) == len(response.content)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "key", "status"),
+    [
+        ("GET", "/api/v1/healthz", "tml-unknown", 401),
+        ("GET", "/api/v1/spindle/deployments", "tml-alice", 403),
+        ("DELETE", "/api/v1/training_runs/r/checkpoints/c", "tml-alice", 403),
+    ],
+)
+def test_user_keys_can_train_but_not_manage_the_deployment(
+    method, path, key, status
+) -> None:
+    async def run() -> int:
+        app = create_control_plane_app(
+            object(), DEFINITIONS, api_key="tml-admin", user_keys={"tml-alice": "alice"}
+        )
+        async with httpx.AsyncClient(
+            base_url="http://control-plane", transport=httpx.ASGITransport(app=app)
+        ) as client:
+            response = await client.request(method, path, headers={"x-api-key": key})
+            return response.status_code
+
+    assert asyncio.run(run()) == status

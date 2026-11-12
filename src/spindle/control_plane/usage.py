@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 
-from spindle.usage import DEFAULT_LABEL_KEYS, DirectorySink, labels_from
+from spindle.usage import DEFAULT_LABEL_KEYS, DirectorySink, SessionUsage, labels_from
+
+from .records import SessionRecord
 
 
 class SessionUsageWriter:
@@ -19,12 +21,12 @@ class SessionUsageWriter:
         self._writer = ThreadPoolExecutor(1, thread_name_prefix="usage-writer")
         self._models: set[str] = set()
 
-    def put_session(
-        self, session_id: str, user_metadata: Mapping[str, object] | None
-    ) -> Future[bool]:
-        labels = labels_from(user_metadata, self.label_keys)
+    def put_session(self, session: SessionRecord) -> Future[bool]:
+        usage = SessionUsage(
+            session.user_id, labels_from(session.user_metadata, self.label_keys)
+        )
         return self._writer.submit(
-            self._write, self.sink.put_session, session_id, labels
+            self._write, self.sink.put_session, session.session_id, usage
         )
 
     def model_used(self, model_id: str, session_id: str) -> None:

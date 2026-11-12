@@ -25,6 +25,25 @@ SPINDLE_USAGE_LABEL_KEYS=run_id,team_id,project
 
 Values must be strings of 1 to 256 characters. Spindle drops a longer or empty value and logs a warning; the session is still created, and its usage shows under `unknown`. Labels are fixed when the session is created.
 
+## Bill by user
+
+To also record who started each session, give each person their own API key. Add `SPINDLE_USER_API_KEYS` to the `spindle-api` secret, as a JSON object of key to user name:
+
+```dotenv
+SPINDLE_USER_API_KEYS={"tml-key-for-alice": "alice", "tml-key-for-bob": "bob"}
+```
+
+These keys work next to `TINKER_API_KEY`. A session created with one is billed to that user, whatever its `user_metadata` says. `get_billing_usage` events then carry `user_id` and `user_name`, both set to the user name, and `spindle usage --group-by user` groups by it, not by a label named `user`. Sessions created with `TINKER_API_KEY` have no user.
+
+A user key can:
+
+- create sessions, and models and samplers in its own sessions;
+- see only its own user's usage in `get_billing_usage`, though the 100,000-event limit counts every user's events.
+
+A user key can't add, remove or list deployments, or delete checkpoints. Those need `TINKER_API_KEY`. [Scoped deployments](scoped-runs.md) accept only `TINKER_API_KEY`.
+
+User keys separate billing, not access to models. Any key that knows a model's ID can train or sample from it, and that usage is billed to the session that created the model.
+
 ## How it works
 
 - Trainers count the input tokens of every completed `forward` and `forward_backward`, including each image's `expected_tokens`, and the time they spend busy, idle and starting up.

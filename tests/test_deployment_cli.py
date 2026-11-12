@@ -993,6 +993,10 @@ def test_billed_app_costs_sums_every_app_the_deployment_created() -> None:
             ["--format", "csv"],
             "run_id,usd\nA,2.50\nunknown,0.50\nunattributed,1.00\n",
         ),
+        (
+            ["--format", "csv", "--group-by", "user"],
+            "user,usd\nalice,2.50\nunknown,0.50\nunattributed,1.00\n",
+        ),
     ],
 )
 def test_usage_prints_each_runs_share_of_the_bill(
@@ -1017,6 +1021,7 @@ def test_usage_prints_each_runs_share_of_the_bill(
             asdict(row("r2", train_tokens=1)),
         ],
         "sessions": {"s1": {"run_id": "A"}},
+        "users": {"s1": "alice"},
     }
     read_usage = SimpleNamespace(remote=lambda since, until: usage)
     monkeypatch.setattr(cli.modal.Function, "from_name", lambda *a, **k: read_usage)
@@ -1069,6 +1074,7 @@ def test_usage_splits_only_the_hours_the_billing_report_covers(
     ]
     usage = {
         "rows": [asdict(r) for r in rows],
+        # A frontend from before user keys sends no users.
         "sessions": {"s1": {"run_id": "A"}, "s2": {"run_id": "B"}},
     }
     read_usage = SimpleNamespace(remote=lambda since, until: usage)
