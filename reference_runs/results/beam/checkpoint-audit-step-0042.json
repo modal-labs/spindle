@@ -1,0 +1,38 @@
+{
+  "step": 42,
+  "checkpoint": "tinker://076a9c4f-7216-43c2-8ca2-dc02f12a1236:train:0/weights/beam-step-0042-user-stop-187ceba5",
+  "optimizer_step": 42,
+  "has_optimizer": true,
+  "miles_revision": "6f5a4a8429e4f57a65a7251facb7d3d9faf0b3ff",
+  "topology": {
+    "context_parallel_size": 1,
+    "data_parallel_size": 2,
+    "expert_model_parallel_size": 16,
+    "expert_tensor_parallel_size": 1,
+    "pipeline_model_parallel_size": 1,
+    "tensor_model_parallel_size": 8,
+    "world_size": 16
+  },
+  "metadata_fields_match_original": [
+    "schema_version",
+    "backend",
+    "base_model",
+    "checkpoint_format",
+    "engine_definition_id",
+    "has_optimizer",
+    "lora_config",
+    "miles_revision",
+    "parameterization",
+    "topology"
+  ],
+  "dcp_shards": 16,
+  "all_shards_nonempty": true,
+  "dcp_metadata_nonempty": true,
+  "pending_rollout": {
+    "step": 43,
+    "policy": 41,
+    "sampler_path": "tinker://076a9c4f-7216-43c2-8ca2-dc02f12a1236:train:0/sampler_weights/beam-policy-0041-c61c8fcc"
+  },
+  "observed_at": 1794490935.3755705,
+  "scope": "Volume metadata and file-presence audit; numerical cold-restore equality is separately established at update 10."
+}
