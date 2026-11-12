@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import httpx
@@ -902,3 +903,81 @@ def test_pending_future_with_a_reason_reports_a_starting_queue_state() -> None:
         await client.aclose()
 
     asyncio.run(run())
+
+
+def test_billing_usage_says_when_usage_is_not_recorded() -> None:
+    async def run() -> None:
+        app = create_control_plane_app(object(), DEFINITIONS, api_key=None)
+        async with httpx.AsyncClient(
+            base_url="http://control-plane", transport=httpx.ASGITransport(app=app)
+        ) as client:
+            response = await client.get(
+                "/api/v1/billing/usage/events",
+                params={
+                    "starting_on": "2026-11-06T14:00:00Z",
+                    "ending_before": "2026-11-06T15:00:00Z",
+                },
+            )
+        assert response.status_code == 404
+        assert response.json()["message"] == "usage is not recorded here"
+
+    asyncio.run(run())
+
+
+class SlowSink:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.reads = 0
+        self.error = error
+        self.release = threading.Event()
+
+    def read(self, start: float, end: float) -> list:
+        self.reads += 1
+        self.release.wait(5)
+        if self.error is not None:
+            raise self.error
+        return []
+
+    def sessions(self, session_ids) -> dict:
+        return {}
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "reads"),
+    [
+        # A finished read also answers the later request.
+        (None, 200, 1),
+        # The SDK retries a 5xx for minutes, and a failed read isn't kept.
+        (OSError("volume unavailable"), 424, 2),
+    ],
+)
+def test_billing_reads_of_one_window_are_shared(error, status, reads) -> None:
+    sink = SlowSink(error)
+    window = {
+        "starting_on": "2026-11-06T14:00:00Z",
+        "ending_before": "2026-11-06T15:00:00Z",
+    }
+
+    async def run() -> list[int]:
+        app = create_control_plane_app(
+            object(), DEFINITIONS, api_key=None, usage_sink=sink
+        )
+        async with httpx.AsyncClient(
+            base_url="http://control-plane", transport=httpx.ASGITransport(app=app)
+        ) as client:
+            requests = [
+                asyncio.create_task(
+                    client.get("/api/v1/billing/usage/events", params=window)
+                )
+                for _ in range(3)
+            ]
+            await asyncio.sleep(0.2)
+            sink.release.set()
+            responses = [*await asyncio.gather(*requests)]
+            await asyncio.sleep(0)
+            responses.append(
+                await client.get("/api/v1/billing/usage/events", params=window)
+            )
+            return [response.status_code for response in responses]
+
+    assert asyncio.run(run()) == [status] * 4
+    assert sink.reads == reads

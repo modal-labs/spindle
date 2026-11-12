@@ -5,7 +5,9 @@ import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -30,6 +32,7 @@ from spindle.providers.contracts import Parameterization
 from spindle.request_timing import enabled as request_timing_enabled
 from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
+from spindle.usage import DirectorySink, TooMuchUsage, billing_usage, usage_window
 from spindle.version import __version__, source_commit
 
 from .deployments import (
@@ -58,6 +61,14 @@ ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
     (ValueError, 400, "invalid_request"),
     (httpx.TransportError, 503, "engine_unreachable"),
 )
+
+
+# How long a finished billing read answers requests for the same window.
+BILLING_READ_KEPT_S = 600
+
+
+class BillingReadFailed(Exception):
+    pass
 
 
 class CreateSessionBody(BaseModel):
@@ -217,6 +228,7 @@ def create_control_plane_app(
     apps_status: Callable[[Routable], Awaitable[dict[str, str]]] | None = None,
     deploy_apps: Callable[[Routable], Awaitable[None]] | None = None,
     stop_apps: Callable[[Routable], Awaitable[None]] | None = None,
+    usage_sink: DirectorySink | None = None,
 ) -> FastAPI:
     routes = (
         definitions
@@ -453,6 +465,52 @@ def create_control_plane_app(
             sdk_version=body.sdk_version,
         )
         return {"type": "create_session", "session_id": session.session_id}
+
+    # Reads hold the sink's lock and can take minutes, so they run one at a time. A
+    # request for a window already being read, or read in the last few minutes, gets
+    # that read's answer, so a client that timed out can ask again.
+    billing_reads = ThreadPoolExecutor(1, thread_name_prefix="billing-reads")
+    reads: dict[tuple[datetime, datetime], asyncio.Future] = {}
+
+    def read_billing_usage(
+        sink: DirectorySink, window: tuple[datetime, datetime]
+    ) -> dict[str, object]:
+        try:
+            return billing_usage(sink, *window)
+        except TooMuchUsage:
+            raise
+        except Exception as exc:
+            raise BillingReadFailed from exc
+
+    @app.get("/api/v1/billing/usage/events")
+    async def billing_usage_events(
+        starting_on: str, ending_before: str
+    ) -> dict[str, object]:
+        # Errors here are 4xx: the Tinker SDK retries any 5xx for minutes.
+        if usage_sink is None:
+            raise HTTPException(status_code=404, detail="usage is not recorded here")
+        window = usage_window(starting_on, ending_before)
+        read = reads.get(window)
+        if read is None:
+            loop = asyncio.get_running_loop()
+            read = loop.run_in_executor(
+                billing_reads, read_billing_usage, usage_sink, window
+            )
+            reads[window] = read
+
+            def forget(done: asyncio.Future) -> None:
+                failed = done.cancelled() or done.exception() is not None
+                loop.call_later(
+                    0 if failed else BILLING_READ_KEPT_S, reads.pop, window, None
+                )
+
+            read.add_done_callback(forget)
+        try:
+            return await asyncio.shield(read)
+        except BillingReadFailed as exc:
+            raise HTTPException(
+                status_code=424, detail="reading usage from the Volume failed"
+            ) from exc
 
     @app.post("/api/v1/session_heartbeat")
     async def session_heartbeat(body: SessionHeartbeatBody) -> dict[str, str]:

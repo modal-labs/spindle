@@ -809,6 +809,7 @@ def server():
         apps_status=_apps_status,
         deploy_apps=_start_app_deploy,
         stop_apps=_stop_apps,
+        usage_sink=usage_sink(APP_NAME),
     )
 
 
