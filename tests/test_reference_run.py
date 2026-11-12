@@ -20,7 +20,7 @@ from tests.support import TinkerStubExecutor, serve
 pytestmark = pytest.mark.usefixtures("sdk_garbage_collected_off_loop")
 
 BASE_MODEL = "Qwen/Qwen3-8B"
-CONFIG = dapo_math.Config(
+CONFIG = dapo_math.RunConfig(
     **{**dapo_math.SMOKE, "model": BASE_MODEL, "max_response_tokens": 4}
 )
 ROWS = [
@@ -117,7 +117,7 @@ def server():
                 "rank": CONFIG.lora_rank,
                 "train_mlp": True,
                 "train_attn": True,
-                "train_unembed": False,
+                "train_unembed": True,
             },
         }
 
@@ -154,7 +154,7 @@ def run(server, output, **options):
 def events(output, event):
     return [
         r
-        for r in dapo_math.surviving(dapo_math.read_records(output / "metrics.jsonl"))
+        for r in dapo_math.read_records(output / "metrics.jsonl")
         if r["event"] == event
     ]
 
@@ -200,58 +200,45 @@ def test_stop_and_resume_keeps_cursor_and_behavior_policy(server, tmp_path):
     assert events(tmp_path, "completed")
 
 
-def test_unknown_optimizer_outcome_needs_an_explicit_rollback(server, tmp_path):
-    server.optimizer_faults[3] = "lost"
-    with pytest.raises(SystemExit, match="unknown"):
+@pytest.mark.parametrize(
+    ("fault", "outcome", "resumable"),
+    [("lost", "unknown", False), ("rejected", "rejected", True)],
+)
+def test_unaccepted_optimizer_request_is_never_sent_again(
+    server, tmp_path, fault, outcome, resumable
+):
+    server.optimizer_faults[2] = fault
+    with pytest.raises(SystemExit, match=outcome):
         run(server, tmp_path)
-    assert server.optimizer_requests["total"] == 3
     records = dapo_math.read_records(tmp_path / "metrics.jsonl")
-    assert dapo_math.optimizer_outcomes(records) == {
-        1: "accepted",
-        2: "accepted",
-        3: "unknown",
-    }
+    assert dapo_math.optimizer_outcomes(records) == {1: "accepted", 2: outcome}
+    assert [u["step"] for u in events(tmp_path, "update")] == [1]
+    assert server.optimizer_requests["total"] == 2
 
-    with pytest.raises(SystemExit, match="--discard-uncheckpointed"):
-        run(server, tmp_path, resume=True)
-    assert server.training_clients == 1
-
-    sampled = len(server.sampled)
-    run(server, tmp_path, resume=True, discard_uncheckpointed=True)
-
-    assert events(tmp_path, "rollback")[0]["discarded"] == {"3": "unknown"}
-    assert [u["step"] for u in events(tmp_path, "update")] == [1, 2, 3]
-    assert len(events(tmp_path, "rollout")) == 3
-    assert len(server.sampled) - sampled == CONFIG.eval_problems
-    assert server.optimizer_requests["total"] == 4
-
-
-@pytest.mark.parametrize("resample", [False, True])
-def test_missing_pending_rollout_is_not_replaced_silently(server, tmp_path, resample):
-    server.optimizer_faults[2] = "lost"
-    with pytest.raises(SystemExit):
-        run(server, tmp_path)
-    (tmp_path / "local" / "rollout-0002.json").unlink()
-    options = {"resume": True, "discard_uncheckpointed": True}
-
-    if not resample:
-        with pytest.raises(SystemExit, match="--resample-pending"):
-            run(server, tmp_path, **options)
+    if not resumable:
+        with pytest.raises(SystemExit, match="Start a new run"):
+            run(server, tmp_path, resume=True)
+        assert server.training_clients == 1
         assert server.optimizer_requests["total"] == 2
         return
 
-    run(server, tmp_path, **options, resample_pending=True)
-    assert events(tmp_path, "pending_rollout_discarded")[0]["step"] == 2
+    sampled = len(server.sampled)
+    run(server, tmp_path, resume=True)
     assert [u["step"] for u in events(tmp_path, "update")] == [1, 2, 3]
+    assert len(events(tmp_path, "rollout")) == 3
+    assert len(server.sampled) - sampled == CONFIG.groups + 2 * CONFIG.eval_problems
 
 
-def test_rejected_update_is_not_counted(server, tmp_path):
+def test_missing_pending_batch_stops_the_resume(server, tmp_path):
     server.optimizer_faults[2] = "rejected"
-    with pytest.raises(SystemExit, match="rejected"):
+    with pytest.raises(SystemExit):
         run(server, tmp_path)
-    records = dapo_math.read_records(tmp_path / "metrics.jsonl")
-    assert dapo_math.optimizer_outcomes(records) == {1: "accepted", 2: "rejected"}
-    assert [u["step"] for u in events(tmp_path, "update")] == [1]
+    (tmp_path / "local" / "rollout-0002.json").unlink()
+
+    with pytest.raises(SystemExit, match="missing or changed"):
+        run(server, tmp_path, resume=True)
+    assert server.optimizer_requests["total"] == 2
+    assert len(events(tmp_path, "rollout")) == 2
 
 
 def test_interrupted_write_keeps_earlier_records(tmp_path):

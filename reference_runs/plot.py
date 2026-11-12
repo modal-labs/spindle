@@ -6,7 +6,7 @@ uv run --with matplotlib python reference_runs/plot.py RUN_DIR [RUN_DIR ...]
 import argparse
 from pathlib import Path
 
-from dapo_math import read_records, surviving
+from dapo_math import read_records
 from matplotlib import pyplot
 
 PANELS = [
@@ -26,7 +26,7 @@ def main() -> None:
     args = parser.parse_args()
     figure, axes = pyplot.subplots(2, 2, figsize=(11, 7), layout="constrained")
     for run in args.runs:
-        records = surviving(read_records(run / "metrics.jsonl"))
+        records = read_records(run / "metrics.jsonl")
         for axis, (event, field, title) in zip(axes.flat, PANELS):
             points = [
                 (r["step"], r[field])

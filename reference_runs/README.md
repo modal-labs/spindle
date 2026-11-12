@@ -68,15 +68,13 @@ Each optimizer request has one of three outcomes:
 A service that reports no `update_successful:mean` metric is taken to apply
 every request it answers.
 
-After an unknown outcome, or after accepted updates that no checkpoint covers,
-`--resume` stops and lists the affected updates. Pass `--discard-uncheckpointed`
-to return to the latest checkpoint. The script records a `rollback` and trains
-those updates again from the restored state.
+`--resume` continues only from a state the checkpoint fully describes. It
+refuses, and asks for a new run, when:
 
-Sampled batches are kept in `local/` inside the run directory. If a batch was
-recorded for the next update, `--resume` trains on that batch. If its file is
-missing or changed, the script stops. Pass `--resample-pending` to sample a new
-batch; the script records `pending_rollout_discarded`.
+- an optimizer request after the latest checkpoint was accepted or has an
+  unknown outcome, because the checkpoint no longer matches the trainer;
+- a batch was recorded for the next update and its file in `local/` is missing
+  or changed. When the file is intact, the resumed process trains on that batch.
 
 ### Records
 
@@ -97,8 +95,6 @@ nothing is filled in as zero.
 | `forward_backward` | `step`, `seconds`, the service's `metrics` |
 | `optimizer_submitted`, `optimizer_result` | `step`; the result adds `accepted`, `seconds` and the service's `metrics` |
 | `update` | One per accepted update, described below |
-| `rollback` | `to_step`, `discarded` (update to outcome) |
-| `pending_rollout_discarded` | `step`, `reason` |
 | `stopped`, `completed` | `step` |
 
 An `update` record has:
@@ -118,10 +114,6 @@ An `update` record has:
   trainer's log probability minus the sampler's. It is a single-sample estimate
   of the negative per-token KL divergence from sampler to trainer, not an exact
   KL. `importance_weight_mean` is the mean of the exponentiated differences.
-
-`rollback` removes earlier records for later updates from the run's history.
-The batch sampled for the first update after the checkpoint stays.
-`dapo_math.surviving` applies this rule; the chart script uses it.
 
 ### Compare runs
 

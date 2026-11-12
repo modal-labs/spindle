@@ -31,7 +31,7 @@ UNKNOWN = "unknown"
 
 
 @dataclasses.dataclass(frozen=True)
-class Config:
+class RunConfig:
     model: str = "Qwen/Qwen3.5-4B"
     tokenizer_revision: str = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
     enable_thinking: bool = False
@@ -100,26 +100,6 @@ def read_records(path: Path) -> list[dict]:
     ]
 
 
-def surviving(records: list[dict]) -> list[dict]:
-    """Records still in effect after each rollback to a checkpoint.
-
-    The rollout sampled for the update after the checkpoint stays: its behavior
-    policy is the checkpoint's published weights.
-    """
-    kept = []
-    for record in records:
-        if record["event"] == "rollback":
-            last = record["to_step"]
-            kept = [
-                r
-                for r in kept
-                if r.get("step", 0) <= last + (r["event"] == "rollout")
-                or r["event"] == "rollback"
-            ]
-        kept.append(record)
-    return kept
-
-
 def optimizer_outcomes(records: list[dict]) -> dict[int, str]:
     """Each submitted optimizer request as accepted, rejected or unknown."""
     outcomes = {}
@@ -165,7 +145,7 @@ class Journal:
         return record
 
     def records(self) -> list[dict]:
-        return surviving(read_records(self.path))
+        return read_records(self.path)
 
 
 def write_json(path: Path, value, indent=None) -> None:
@@ -174,11 +154,11 @@ def write_json(path: Path, value, indent=None) -> None:
     temporary.replace(path)
 
 
-def recorded_config(output: Path) -> Config:
+def recorded_config(output: Path) -> RunConfig:
     path = output / "config.json"
     if not path.exists():
         raise SystemExit(f"{output} has no run to resume")
-    return Config(**json.loads(path.read_text())["config"])
+    return RunConfig(**json.loads(path.read_text())["config"])
 
 
 def grade(text: str, label: str) -> float:
@@ -193,7 +173,7 @@ def grade(text: str, label: str) -> float:
     return 0.0
 
 
-def load_rows(config: Config) -> list[dict]:
+def load_rows(config: RunConfig) -> list[dict]:
     path = hf_hub_download(
         config.dataset,
         config.dataset.split("/")[-1] + ".jsonl",
@@ -203,7 +183,7 @@ def load_rows(config: Config) -> list[dict]:
     return [json.loads(line) for line in Path(path).read_text().splitlines()]
 
 
-def select(config: Config, rows: list[dict], tokenizer) -> tuple[list, list]:
+def select(config: RunConfig, rows: list[dict], tokenizer) -> tuple[list, list]:
     """Held-out evaluation problems and the ordered training problems."""
     problems = []
     for index in random.Random(config.seed).sample(range(len(rows)), len(rows)):
@@ -384,7 +364,7 @@ def client_revision() -> str:
 
 
 def run(
-    config: Config,
+    config: RunConfig,
     output: Path,
     *,
     service,
@@ -392,8 +372,6 @@ def run(
     rows: list[dict],
     resume: bool = False,
     stop_after: int | None = None,
-    discard_uncheckpointed: bool = False,
-    resample_pending: bool = False,
     deployment: dict | None = None,
 ) -> None:
     config_path = output / "config.json"
@@ -424,12 +402,10 @@ def run(
                 if step > completed and outcome != "rejected"
             }
             if lost:
-                if not discard_uncheckpointed:
-                    raise SystemExit(
-                        f"Checkpoint {completed} is older than optimizer requests "
-                        f"{lost}. Pass --discard-uncheckpointed to roll back to it."
-                    )
-                journal.event("rollback", to_step=completed, discarded=lost)
+                raise SystemExit(
+                    f"Checkpoint {completed} is older than optimizer requests {lost}, "
+                    "so this run cannot continue. Start a new run."
+                )
         else:
             write_json(
                 config_path,
@@ -475,9 +451,7 @@ def run(
             )
         else:
             training = service.create_lora_training_client(
-                base_model=config.model,
-                rank=config.lora_rank,
-                train_unembed=False,
+                base_model=config.model, rank=config.lora_rank
             )
             journal.event(
                 "created",
@@ -558,27 +532,19 @@ def run(
             recorded = [
                 r
                 for r in journal.records()
-                if r["event"] in {"rollout", "pending_rollout_discarded"}
-                and r["step"] == step
+                if r["event"] == "rollout" and r["step"] == step
             ]
-            if recorded and recorded[-1]["event"] == "rollout":
-                problem = None
-                if recorded[-1]["sampler_path"] != sampler_path:
-                    problem = "was sampled from other weights"
-                elif (
+            if recorded:
+                if (
                     not path.exists()
                     or hashlib.sha256(path.read_bytes()).hexdigest()
                     != recorded[-1]["sha256"]
                 ):
-                    problem = f"is missing or changed at {path}"
-                if problem is None:
-                    return json.loads(path.read_text()), recorded[-1]
-                if not resample_pending:
                     raise SystemExit(
-                        f"The recorded rollout for update {step} {problem}. Restore "
-                        "it, or pass --resample-pending to train on a new sample."
+                        f"The batch recorded for update {step} is missing or changed "
+                        f"at {path}. Restore it or start a new run."
                     )
-                journal.event("pending_rollout_discarded", step=step, reason=problem)
+                return json.loads(path.read_text()), recorded[-1]
             started = time.monotonic()
             groups = sample(
                 sampler,
@@ -631,8 +597,8 @@ def run(
             except BaseException as error:
                 raise SystemExit(
                     f"The outcome of optimizer request {step} is unknown "
-                    f"({type(error).__name__}). It was not sent again. Resume with "
-                    "--discard-uncheckpointed to return to the latest checkpoint."
+                    f"({type(error).__name__}). It was not sent again, and this run "
+                    "cannot continue. Start a new run."
                 ) from error
             optimizer_seconds = time.monotonic() - started
             # Services that report no acceptance metric apply every successful request.
@@ -697,9 +663,7 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--smoke", action="store_true", help=f"use {SMOKE}")
     parser.add_argument("--stop-after", type=int, metavar="UPDATE")
-    parser.add_argument("--discard-uncheckpointed", action="store_true")
-    parser.add_argument("--resample-pending", action="store_true")
-    for field in dataclasses.fields(Config):
+    for field in dataclasses.fields(RunConfig):
         parser.add_argument(
             "--" + field.name.replace("_", "-"),
             type=json.loads if field.type is bool else field.type,
@@ -710,7 +674,7 @@ def main() -> None:
         **(SMOKE if args.smoke else {}),
         **{
             f.name: getattr(args, f.name)
-            for f in dataclasses.fields(Config)
+            for f in dataclasses.fields(RunConfig)
             if getattr(args, f.name) is not None
         },
     }
@@ -719,7 +683,7 @@ def main() -> None:
             parser.error("--resume uses the recorded configuration")
         config = recorded_config(args.output)
     else:
-        config = Config(**overrides)
+        config = RunConfig(**overrides)
     run(
         config,
         args.output,
@@ -730,8 +694,6 @@ def main() -> None:
         rows=load_rows(config),
         resume=args.resume,
         stop_after=args.stop_after,
-        discard_uncheckpointed=args.discard_uncheckpointed,
-        resample_pending=args.resample_pending,
         deployment=served_revisions(),
     )
 
