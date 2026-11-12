@@ -186,6 +186,7 @@ def create_app(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     routing_source: str = "hook",
+    kv_subscriber: KVEventSubscriber | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -206,7 +207,9 @@ def create_app(
         app.state.routing_catalog = {} if routing_source != "kv_events" else None
         app.state.routing_read_at = 0.0
         app.state.request_replay = RequestReplay()
-        app.state.kv_events = KVEventSubscriber() if routing_source != "hook" else None
+        app.state.kv_events = (
+            (kv_subscriber or KVEventSubscriber()) if routing_source != "hook" else None
+        )
         app.state.kv_task = (
             asyncio.create_task(app.state.kv_events.run())
             if app.state.kv_events
