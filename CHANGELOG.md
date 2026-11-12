@@ -9,13 +9,13 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
 
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.
+- Cache-aware LoRA sampling can select native KV events with `inference_lora_routing_source = "kv_events"` (default: unchanged, `"hook"`) or compare both producers at `/routing-state/compare`. Native events do not name GPU adapters, so `gpu_adapters` is empty in that mode.
 
 ### Changed
 
 - Samplers run SGLang v0.5.23 with PyTorch 2.14.1 and Transformers 5.19. A server's samplers switch over when it is redeployed with a new Spindle version. DeepSeek-V4.1-Flash samplers switch at their next deploy, and they recompile their kernels once on first start.
 - `inference_target_concurrency` now defaults to `None`, which adds a sampler replica only when every replica holds `sglang_cfg.max_running_requests` requests. New `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long.
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
-- Cache-aware LoRA sampling uses the SGLang scheduler hook for routing snapshots by default. Set `inference_lora_routing_source = "kv_events"` to use native KV events, or `"compare"` to inspect both producers at `/routing-state/compare`. Native KV events do not name GPU adapters, so `gpu_adapters` is empty in that mode.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
 
 ### Fixed
@@ -103,7 +103,7 @@ Faster training for LoRA classifiers that score several candidate labels per pos
 
 - `qwen3_4b_lora_32k`: Qwen3-4B LoRA on 4× H100 with 32K context, one model replica per GPU (#142).
 - Qwen3.8-27B LoRA recipe with B200 samplers, `qwen38_27b_lora_16k_b200`, which serves with the TensorRT-LLM attention backend and 64-token pages (#145).
-- LoRA samplers can route requests to replicas with matching cached prefixes using `inference_lora_routing = "cache_wait"`. The scheduler hook remains the default snapshot producer. Set `inference_lora_routing_source = "kv_events"` to use native KV events, or `"compare"` to serve the hook view and inspect both at `/routing-state/compare`. Native KV events report no named GPU adapters, so `gpu_adapters` is empty in that mode. The router runs in Rust inside each sampling container and falls back to Modal routing when no replica snapshot is usable (#121, #122, #123).
+- LoRA samplers can route each request to the replica with its longest cached prefix with `inference_lora_routing = "cache_wait"`, while keeping request load and pinned KV memory within bounds. The router runs in Rust inside each sampling container. It measures the pool's prefill rate from completed requests unless `inference_routing_prefill_tokens_per_second` sets it, and `inference_routing_balance_absolute`, `inference_routing_balance_relative` and `inference_routing_cache_threshold` tune it. Pools without routable replicas, including pools scaled to zero and pools whose SGLang cache publishes no observations, fall back to Modal's gateway routing (#121, #122, #123).
 
 ### Changed
 

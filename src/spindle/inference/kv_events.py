@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import bisect
-import json
 import logging
 import mmap
 import struct
 import sys
+import threading
 import time
 from array import array
 from itertools import islice
@@ -25,9 +25,9 @@ import zmq.asyncio
 
 logger = logging.getLogger(__name__)
 
-
 TOPIC = b"kv-events"
-SALT_PREFIX = "spindle-kv:"
+MAX_PREFIXES = 8192
+REPLAY_STALL_TIMEOUT_SECONDS = 2.0
 KV_EVENTS_CONFIG = {
     "publisher": "zmq",
     "endpoint": "tcp://*:5557",
@@ -36,20 +36,8 @@ KV_EVENTS_CONFIG = {
 }
 
 
-def publisher_config(dp_size: int = 1) -> dict:
-    config = dict(KV_EVENTS_CONFIG)
-    if dp_size != 1:
-        raise ValueError("KV cache routing requires one data-parallel rank")
-    return config
-
-
-def cache_salt(
-    adapter: str, original: str | list[str] | None = None
-) -> str | list[str]:
-    if isinstance(original, list):
-        return [cache_salt(adapter, item) for item in original]
-    # Native lora_id is None; cache salt preserves adapter identity across replay.
-    return SALT_PREFIX + json.dumps([adapter, original], separators=(",", ":"))
+def publisher_config() -> dict:
+    return dict(KV_EVENTS_CONFIG)
 
 
 class _BlockIndex:
@@ -419,55 +407,105 @@ class KVEventSubscriber:
         self.anchor = None
         self.ready = False
         self.checked_at = 0.0
+        self.snapshot: tuple[bool, float, tuple[str, ...]] = (False, 0.0, ())
+        self._thread: threading.Thread | None = None
+        self._thread_started = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._run_task: asyncio.Task | None = None
+
+    def _publish_snapshot(self):
+        prefixes = tuple(self.cache.prefixes) if self.ready else ()
+        self.snapshot = (self.ready, self.checked_at, prefixes)
+
+    def start_thread(self):
+        self._thread = threading.Thread(target=self._run_thread, daemon=True)
+        self._thread.start()
+        if not self._thread_started.wait(2) or self._loop is None:
+            raise RuntimeError("KV event subscriber thread did not start")
+
+    def _run_thread(self):
+        async def worker():
+            self._loop = asyncio.get_running_loop()
+            self._run_task = asyncio.current_task()
+            self._thread_started.set()
+            while True:
+                try:
+                    await self.run()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("KV event subscriber failed; restarting")
+                self.reset()
+                await asyncio.sleep(0.5)
+
+        try:
+            asyncio.run(worker())
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("KV event subscriber thread stopped")
+        finally:
+            self.ready = False
+            self.snapshot = (False, 0.0, ())
+            self._loop = None
+            self._thread_started.set()
+
+    def stop_thread(self, timeout: float = 2):
+        if self._thread is None:
+            return
+        if self._loop is not None and self._run_task is not None:
+            self._loop.call_soon_threadsafe(self._run_task.cancel)
+        self._thread.join(timeout)
+        if self._thread.is_alive():
+            logger.error(
+                "KV event subscriber thread did not stop within %.1fs", timeout
+            )
+        else:
+            self._thread = None
 
     def reset(self):
         self.cache.clear()
         self.sequence = -1
         self.anchor = None
         self.ready = False
+        self._publish_snapshot()
 
     def apply(self, sequence: int, payload: bytes):
         if sequence <= self.sequence:
             return
         if sequence != self.sequence + 1:
-            self.cache.clear()
-            self.ready = False
+            self.reset()
             return False
         batch = msgspec.msgpack.decode(payload)
-        try:
-            for event in batch[1]:
-                self.cache.apply(event)
-        except (KeyError, TypeError, ValueError, IndexError):
-            self.cache.clear()
-            raise
+        for event in batch[1]:
+            self.cache.apply(event)
         self.sequence = sequence
         self.anchor = payload
         self.checked_at = time.monotonic()
+        self._publish_snapshot()
         return True
 
     def apply_publication(self, sequence: int, payload: bytes) -> bool:
         if sequence < self.sequence:
-            self.reset()
-            return False
-        if sequence == self.sequence:
-            if payload != self.anchor:
-                self.reset()
-                return False
             return True
+        if sequence == self.sequence:
+            return payload == self.anchor
         return self.apply(sequence, payload)
 
     async def replay(self, context):
         socket = context.socket(zmq.DEALER)
-        socket.setsockopt(zmq.LINGER, 0)
-        socket.connect(self.replay_endpoint)
         try:
-            await socket.send_multipart(
-                [b"", max(self.sequence + 1, 0).to_bytes(8, "big")]
-            )
-            batches = []
-            async with asyncio.timeout(2):
+            socket.setsockopt(zmq.LINGER, 0)
+            socket.connect(self.replay_endpoint)
+            self.ready = False
+            self._publish_snapshot()
+
+            async def fetch(start: int):
+                await socket.send_multipart([b"", start.to_bytes(8, "big")])
+                batches = []
                 while True:
-                    frames = await socket.recv_multipart()
+                    async with asyncio.timeout(REPLAY_STALL_TIMEOUT_SECONDS):
+                        frames = await socket.recv_multipart()
                     topic = TOPIC
                     if len(frames) == 3:
                         delimiter, seq, payload = frames
@@ -479,40 +517,58 @@ class KVEventSubscriber:
                         raise ValueError("Invalid KV replay frames")
                     sequence = int.from_bytes(seq, "big", signed=True)
                     if sequence == -1:
-                        break
+                        return batches
                     if topic != TOPIC:
                         raise ValueError("Invalid KV replay topic")
                     batches.append((sequence, payload))
-            if (
-                batches
-                and self.sequence >= 0
-                and batches[0][0] == 0
-                and self.sequence > 0
+
+            batches = await fetch(max(self.sequence, 0))
+            if self.sequence > 0 and not any(
+                sequence == self.sequence for sequence, _ in batches
+            ):
+                batches = await fetch(0)
+            anchor_index = next(
+                (
+                    i
+                    for i, (sequence, _) in enumerate(batches)
+                    if sequence == self.sequence
+                ),
+                None,
+            )
+            if self.sequence >= 0 and (
+                anchor_index is None or batches[anchor_index][1] != self.anchor
             ):
                 self.reset()
-            if batches and batches[0][0] > self.sequence + 1:
+                anchor_index = None
+            start = anchor_index + 1 if anchor_index is not None else 0
+            previous = self.sequence
+            for sequence, payload in batches[start:]:
+                if sequence != previous + 1:
+                    self.cache.clear()
+                    self.sequence = sequence - 1
+                    self.anchor = None
+                    self.ready = False
+                    self._publish_snapshot()
+                self.apply(sequence, payload)
+                previous = sequence
+            if not batches and self.sequence >= 0:
                 self.reset()
-                return
-            for sequence, payload in batches:
-                if sequence <= self.sequence:
-                    continue
-                if not self.apply(sequence, payload):
-                    self.reset()
-                    return
             self.ready = True
             self.checked_at = time.monotonic()
+            self._publish_snapshot()
         finally:
-            socket.close()
+            socket.close(0)
 
     async def run(self):
         context = zmq.asyncio.Context()
-        socket = context.socket(zmq.SUB)
-        socket.setsockopt(zmq.LINGER, 0)
-        socket.setsockopt(zmq.SUBSCRIBE, TOPIC)
-        socket.connect(self.endpoint)
-        replay = True
-        next_replay = 0.0
+        socket = None
         try:
+            socket = context.socket(zmq.SUB)
+            socket.setsockopt(zmq.LINGER, 0)
+            socket.setsockopt(zmq.SUBSCRIBE, TOPIC)
+            socket.connect(self.endpoint)
+            replay = True
+            next_replay = 0.0
             while True:
                 try:
                     if replay or time.monotonic() >= next_replay:
@@ -548,5 +604,8 @@ class KVEventSubscriber:
                     replay = True
                     await asyncio.sleep(0.5)
         finally:
-            socket.close()
-            context.term()
+            self.ready = False
+            self.snapshot = (False, 0.0, ())
+            if socket is not None:
+                socket.close(0)
+            context.destroy(linger=0)

@@ -259,6 +259,16 @@ def test_model_weights_override_assets_but_not_the_served_model():
     assert row.inference_identity() != resolved().inference_identity()
 
 
+@pytest.mark.parametrize("source", ["kv_events", "compare"])
+def test_deepseek_v051_image_rejects_native_kv_routing(source):
+    recipe = load(config_path("deepseek-v41-flash-lora-8k"))
+    recipe.inference_lora_routing_source = source
+    with pytest.raises(
+        ValueError, match=r"DeepSeek-V4.1-Flash image uses SGLang v0\.5\.21"
+    ):
+        DeploymentConfig.create(recipe)
+
+
 @pytest.mark.parametrize(
     ("changes", "match"),
     [

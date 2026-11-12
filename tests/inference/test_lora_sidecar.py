@@ -1,21 +1,23 @@
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from stitch.types import VersionRef
 
+import spindle.inference.lora_sidecar as sidecar
 from spindle.inference.bulletin import SnapshotBulletin
 from spindle.inference.lora_sidecar import create_app
 
 
 @pytest.mark.parametrize(
-    ("source", "salted"),
-    [("hook", False), ("kv_events", True), ("compare", False)],
+    "source",
+    ["hook", "kv_events", "compare"],
 )
-def test_routing_source_controls_cache_salt_rewrite(tmp_path, source, salted):
+def test_routing_source_preserves_user_cache_salt(tmp_path, source):
     received = []
 
     def upstream(request):
@@ -31,25 +33,24 @@ def test_routing_source_controls_cache_salt_rewrite(tmp_path, source, salted):
         routing_source=source,
     )
     with TestClient(app) as client:
+        assert (app.state.kv_events is None) is (source == "hook")
         response = client.post(
-            "/generate", json={"input_ids": [1, 2], "lora_path": "adapter/v1"}
+            "/generate",
+            json={
+                "input_ids": [1, 2],
+                "lora_path": "adapter/v1",
+                "cache_salt": "tenant",
+            },
         )
         assert response.status_code == 200
     sent = json.loads(received[0])
-    assert ("cache_salt" in sent) is salted
-    if salted:
-        assert json.loads(sent["cache_salt"].removeprefix("spindle-kv:")) == [
-            "adapter/v1",
-            None,
-        ]
+    assert sent["cache_salt"] == "tenant"
 
 
 @pytest.mark.parametrize("source", ["hook", "kv_events", "compare"])
 def test_routing_state_has_router_work_shape_and_compare_summary(
     tmp_path, monkeypatch, source
 ):
-    import spindle.inference.lora_sidecar as sidecar
-
     catalog = tmp_path / "routing-work.json"
     catalog.write_text(
         json.dumps(
@@ -78,9 +79,7 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
     with TestClient(app) as client:
         if source != "hook":
             subscriber = app.state.kv_events
-            subscriber.ready = True
-            subscriber.checked_at = time.monotonic()
-            subscriber.cache.prefixes.update(["01" * 16, "02" * 16])
+            subscriber.snapshot = (True, time.monotonic(), ("02" * 16,))
             app.state.loads = {
                 "timestamp": time.time(),
                 "num_running_reqs": 3,
@@ -90,6 +89,8 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
             }
             app.state.loads_at = time.monotonic()
         state = client.get("/routing-state").json()
+        if source == "kv_events":
+            assert app.state.routing_catalog is None
         work = state["work"]
         assert {
             "age_seconds",
@@ -102,12 +103,72 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
             "kv_used_tokens",
             "kv_capacity_tokens",
         } <= work.keys()
+        compare_response = client.get("/routing-state/compare")
         if source == "compare":
-            comparison = client.get("/routing-state/compare").json()
-            assert comparison["intersection"] == 1
-            assert comparison["hook_only"] == 0
+            assert compare_response.status_code == 200
+            comparison = compare_response.json()
+            assert comparison["intersection"] == 0
+            assert comparison["hook_only"] == 1
             assert comparison["kv_events_only"] == 1
-            assert "adapter_attribution_supported" in comparison
+        else:
+            assert compare_response.status_code == 404
+
+
+def test_empty_hook_catalog_has_no_cpu_adapters(tmp_path, monkeypatch):
+    monkeypatch.setattr(sidecar, "ROUTING_CATALOG_PATH", tmp_path / "missing.json")
+    app = create_app(
+        SnapshotBulletin(tmp_path / "bulletin"),
+        "http://sglang",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+        routing_source="hook",
+    )
+    with TestClient(app) as client:
+        app.state.registered_adapters["adapter-v1"] = "/tmp/adapter-v1"
+        response = client.get("/routing-state").json()
+    assert response["cpu_adapters"] == []
+    assert response["work"] is None
+
+
+def test_routing_polls_use_published_prefix_snapshot():
+    subscriber = SimpleNamespace(snapshot=(True, time.monotonic(), ("01" * 16,)))
+    state = SimpleNamespace(
+        kv_events=subscriber,
+        loads={
+            "timestamp": time.time(),
+            "num_running_reqs": 0,
+            "num_waiting_reqs": 0,
+            "num_used_tokens": 0,
+            "max_total_num_tokens": 1,
+        },
+        loads_at=time.monotonic(),
+        loads_task=object(),
+        registered_adapters={},
+        routing_requests={},
+    )
+    app = SimpleNamespace(state=state)
+    for _ in range(100):
+        assert sidecar.kv_view(app)["prefixes"] == ["01" * 16]
+
+
+def test_malformed_loads_response_keeps_last_good_snapshot():
+    async def scenario():
+        client = httpx.AsyncClient(
+            base_url="http://sglang",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"loads": None})
+            ),
+        )
+        state = SimpleNamespace(
+            client=client, loads={"timestamp": 1}, loads_task=object()
+        )
+        try:
+            await sidecar.refresh_loads(SimpleNamespace(state=state))
+            assert state.loads == {"timestamp": 1}
+            assert state.loads_task is None
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_generation_concurrency_does_not_block_health_or_metrics(tmp_path):
