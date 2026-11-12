@@ -326,8 +326,6 @@ class KVCache:
             return
         if not all(type(token) is int for token in tokens):
             return
-        if len(set(keys)) != len(keys):
-            return
         existing = [index for index, key in enumerate(keys) if key in self.blocks]
         if existing:
             start = 0
@@ -346,6 +344,8 @@ class KVCache:
                 segment["token_ids"] = tokens[start * size :]
                 segment["parent_block_hash"] = parent
                 self.apply(segment)
+            return
+        if len(set(keys)) != len(keys):
             return
         try:
             packed = array("q", tokens)
