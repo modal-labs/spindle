@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from spindle.inference.native_router import NativeRouter
+from spindle.inference.kv_events import KVCache, cache_salt
 
 
 @pytest.fixture
@@ -48,7 +49,7 @@ def worker():
             time.sleep(observation.get("delay", 0))
             work = dict(
                 age_seconds=observation.get("age", 0),
-                prefixes=[],
+                prefixes=observation.get("prefixes", []),
                 prefix_nodes=[],
                 cpu_adapters=["adapter/v1"],
                 gpu_adapters=["adapter/v1"],
@@ -161,6 +162,39 @@ async def dispatch(router, worker, timeout=3, request_id="test", headers=None):
 
 def rids(worker):
     return [body["rid"] for _, body in worker["requests"]]
+
+
+def test_kv_prefix_hash_routes_through_the_real_rust_binding(worker):
+    tokens = list(range(128))
+    cache = KVCache()
+    cache.apply(
+        {
+            "type": "BlockStored",
+            "block_hashes": [100, 101],
+            "parent_block_hash": None,
+            "token_ids": tokens,
+            "block_size": 64,
+            "cache_salt": cache_salt("adapter/v1"),
+            "medium": "GPU",
+        }
+    )
+    worker["observations"] = {
+        "cached": {"prefixes": list(cache.prefixes)},
+        "cold": {"prefixes": []},
+    }
+
+    async def test(router):
+        result = await router.dispatch(
+            "adapter/v1",
+            "session",
+            request_id="hash-agreement",
+            body={"input_ids": tokens, "sampling_params": {"max_new_tokens": 4}},
+            headers={"Modal-Session-ID": "session"},
+            deadline=asyncio.get_running_loop().time() + 3,
+        )
+        assert result.routing["best_cached_tokens"] == 64
+
+    with_router(worker, test)
 
 
 def test_a_worker_error_is_returned_without_cooling_the_replica(worker):
