@@ -40,5 +40,8 @@ record to its last. The three `save_state` calls took 3.5, 8.4 and 10.8 seconds.
   sampling seed.
 - The trainer and sampler were already warm, so the times exclude cold starts.
   The server is shared; other clients may have been using it.
+- Sampling was slower for the second batch after each evaluation: 27 to 39
+  seconds at updates 2, 7, 12 and 17 against a 22-second median. The cause is
+  not known.
 - Nothing restores from the saved states, so the run shows that `save_state`
   succeeds, not that a restore works.

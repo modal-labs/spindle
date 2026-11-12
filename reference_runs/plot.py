@@ -20,7 +20,9 @@ PANELS = [
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("runs", type=Path, nargs="+")
-    parser.add_argument("--output", type=Path, default=Path("reference-runs.png"))
+    parser.add_argument(
+        "--output", type=Path, default=Path(__file__).with_name("reference-runs.png")
+    )
     args = parser.parse_args()
     figure, axes = pyplot.subplots(2, 2, figsize=(11, 7), layout="constrained")
     for run in args.runs:

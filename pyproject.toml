@@ -296,7 +296,7 @@ include = ["src", "reference_runs"]
 exclude = ["src/spindle/proto/*_pb2.py"]
 
 [tool.ty.analysis]
-# GPU-only packages that aren't installed in the dev environment.
+# Packages that aren't installed in the dev environment.
 allowed-unresolved-imports = [
     "matplotlib.**",
     "megatron.**",

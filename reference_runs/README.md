@@ -11,7 +11,7 @@ clean up anything.
 
 [`dapo_math.py`](dapo_math.py) trains a LoRA adapter on
 [DAPO-Math](https://huggingface.co/datasets/zhuzilin/dapo-math-17k) with GRPO. It
-uses only the stock Tinker SDK. The settings are the `CONFIG` dictionary at the
+uses only the stock Tinker SDK. The settings are the `Config` dataclass at the
 top of the script; the default model is `Qwen/Qwen3.5-4B`.
 
 Each update samples 8 responses to each of 32 problems from the latest published
@@ -59,7 +59,9 @@ seconds) and `event`.
 An `update` record has:
 
 - `step`, the count of accepted optimizer updates. The script exits if the
-  service reports `update_successful:mean` other than 1.
+  service reports `update_successful:mean` other than 1. The batch for update k
+  is sampled from the weights after k - 1 updates, so its `reward` is one
+  update behind the `evaluation` at the same step.
 - `reward`, `responses`, `response_tokens_mean` and `truncated_fraction` for the
   sampled batch.
 - `sampling_seconds`, `forward_backward_seconds` and `optimizer_seconds`, timed
@@ -78,7 +80,7 @@ uv run --with matplotlib python reference_runs/plot.py \
 ```
 
 This draws held-out accuracy, training reward, response length and seconds
-between accepted updates for each run into `reference-runs.png`. It reads only
+between accepted updates for each run into `reference_runs/reference-runs.png`. It reads only
 `metrics.jsonl`, so it works offline and on a run that has not finished.
 
 Compare runs only when their `run` records have the same `config`. Check in a
