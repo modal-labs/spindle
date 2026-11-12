@@ -282,6 +282,10 @@ def publish_native_directory(path: Path) -> None:
     if name is not None and relative is None:
         raise RuntimeError("native checkpoint capture is outside the checkpoint volume")
     written = _native_file_inventory(path)
+    # Peer directory caches may retain the native export's staging name after its atomic rename.
+    if "adapter_model.safetensors.partial" in written:
+        written.remove("adapter_model.safetensors.partial")
+        written.add("adapter_model.safetensors")
     sync_checkpoint_volume("commit")
 
     def verify():

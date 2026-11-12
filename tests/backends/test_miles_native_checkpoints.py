@@ -178,6 +178,56 @@ def test_native_publication_checks_all_peer_files(tmp_path, monkeypatch, missing
     ).exists()  # rank0's mount never stood in for the remote inventory
 
 
+@pytest.mark.parametrize(
+    ("peer_inventory", "remote_weights", "error"),
+    [
+        ("adapter_model.safetensors.partial", True, None),
+        ("adapter_model.safetensors.partial", False, "adapter_model.safetensors"),
+        ("peer.distcp", True, "peer.distcp"),
+        ("peer.distcp.partial", True, "peer.distcp.partial"),
+    ],
+)
+def test_native_publication_requires_final_atomic_export(
+    tmp_path, monkeypatch, peer_inventory, remote_weights, error
+):
+    path = tmp_path / ".capture.abcd"
+    path.mkdir()
+    partial = path / "adapter_model.safetensors.partial"
+    partial.write_bytes(b"complete weights")
+    partial.replace(path / "adapter_model.safetensors")
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "ckpt")
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(tmp_path))
+    # A peer's cached directory can retain the staging name after rank zero's rename.
+    monkeypatch.setattr(
+        volumes,
+        "_native_file_inventory",
+        lambda _: {"adapter_model.safetensors", peer_inventory},
+    )
+    durable = {}
+
+    def commit(action):
+        assert action == "commit"
+        if remote_weights:
+            durable["adapter_model.safetensors"] = (
+                path / "adapter_model.safetensors"
+            ).read_bytes()
+
+    class Volume:
+        def listdir(self, relative, *, recursive):
+            assert recursive
+            return [SimpleNamespace(path=f"{relative}/{name}") for name in durable]
+
+    monkeypatch.setattr(volumes, "sync_checkpoint_volume", commit)
+    monkeypatch.setattr(volumes.modal.Volume, "from_name", lambda _: Volume())
+    if error is not None:
+        with pytest.raises(RuntimeError, match=error):
+            volumes.publish_native_directory(path)
+    else:
+        volumes.publish_native_directory(path)
+        assert durable == {"adapter_model.safetensors": b"complete weights"}
+        assert not partial.exists()
+
+
 def test_native_writer_error_never_publishes(tmp_path, monkeypatch):
     events = []
 
