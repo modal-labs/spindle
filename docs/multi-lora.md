@@ -189,4 +189,4 @@ The two views can differ in these ways:
 - With SGLang disaggregation enabled, `/v1/loads` includes its prefill and decode queues in `waiting_requests`; the hook counts only the scheduler's main waiting queue.
 - KV events do not identify GPU-resident adapters, so `gpu_adapters` is empty.
 
-At `page_size=1`, a synthetic Python cache benchmark used 131 MiB RSS at about 1 million resident KV tokens and 294 MiB at about 4 million, or roughly 75–130 MiB per million before other sidecar work.
+At `page_size=1`, expect about 60 MiB of cache memory per million resident KV tokens: a synthetic run used 131 MiB RSS at 1 million tokens and 294 MiB at 4 million, including about 70 MiB for the empty Python process.
