@@ -7,7 +7,7 @@ from .rollout_image import CORE_SAMPLER_PACKAGES, runtime_image_for
 
 MILES_COMMIT = "6f5a4a8429e4f57a65a7251facb7d3d9faf0b3ff"
 TRAINER_SGLANG_COMMIT = "9ac1c65bec3dc832766d03970e545da5bd6fcb6f"
-SAMPLER_SGLANG_COMMIT = "e22646bfef3dfd79aa4390fb95b644a5268eb53c"
+SAMPLER_SGLANG_COMMIT = "991fb375666ad9b173dcc7f9123c5a993f3151fc"
 
 trainer_image = release_image.run_commands(
     f"git -C {MILES_PATH} fetch --depth=1"

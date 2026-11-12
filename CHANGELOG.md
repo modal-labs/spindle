@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Beam LoRA reference-run script with incremental metrics, evaluation records, checkpoint resume, and comparison plots.
+
 - Miles LoRA configs can bypass checkpoint revision checks for debugging with `dangerously_allow_checkpoint_revision_mismatch`, disabled by default.
 
 - Beam-1.0-501B-A23B BF16 LoRA recipe with sixteen H200 training GPUs and an eight-B300 sampler.
