@@ -8,8 +8,7 @@ class Config(BaseConfig):
     model = "reflection/Beam-1.0-501B-A23B"
     weights_revision = "12950ae640b48cbbe9b5bb7735bf197507d6383f"
     max_context_length = 5120
-    trainer_image = "spindle.providers.modal.beam_image:trainer_image"
-    inference_image = "spindle.providers.modal.beam_image:inference_image"
+    trainer_image = "miles-v0.1.2"
     trainer_gpu = "H200"
     trainer_gpus_per_node = 8
     trainer_nodes = 2

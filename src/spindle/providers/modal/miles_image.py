@@ -91,6 +91,16 @@ BRIDGE_IMPORT_CACHE_PATCH = (
     "             converted_weights = self._convert_loaded_hf_weight(task, hf_weights)\n"
 )
 
+
+def patch_bridge_import_cache(patch: str) -> None:
+    subprocess.run(
+        ["patch", "-p1", "-d", str(distribution("megatron-bridge").locate_file(""))],
+        input=patch,
+        text=True,
+        check=True,
+    )
+
+
 # The release has the DSA backend hooks but omits the TileLang implementation.
 # Upstream #5049 adds the kernels and their packed/context-parallel tests.
 # Fetching the commit by hash pins its exact contents, unlike a generated .diff.
@@ -128,13 +138,9 @@ image = (
     .run_commands(
         f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {MILES_COMMIT}"
         f" && git -C {MILES_PATH} checkout -B {MILES_BRANCH} FETCH_HEAD",
-        "python - <<'PY'\n"
-        "from importlib.metadata import distribution\n"
-        "import subprocess\n"
-        "root = distribution('megatron-bridge').locate_file('')\n"
-        "subprocess.run(['patch', '-p1', '-d', str(root)], input="
-        + repr(BRIDGE_IMPORT_CACHE_PATCH)
-        + ", text=True, check=True)\nPY\n",
+    )
+    .run_function(
+        patch_bridge_import_cache, kwargs={"patch": BRIDGE_IMPORT_CACHE_PATCH}
     )
     .run_commands(
         "pip install --no-deps 'peft>=0.18.1'",
