@@ -61,6 +61,18 @@ def test_native_adapter_name_needs_no_cache_salt():
     assert cache.adapter_names_seen
 
 
+def test_cache_block_limit_evicts_oldest_branch(monkeypatch):
+    import spindle.inference.kv_events as kv_events
+
+    monkeypatch.setattr(kv_events, "MAX_BLOCKS", 2)
+    cache = KVCache()
+    cache.apply(stored([1], list(range(64))))
+    cache.apply(stored([2], list(range(64, 128)), parent=1))
+    cache.apply(stored([3], list(range(128, 192)), parent=2))
+    assert len(cache.blocks) <= kv_events.MAX_BLOCKS
+    assert not cache.prefixes
+
+
 def test_cache_salt_rewrite_preserves_per_request_batch_salts():
     rewritten = cache_salt("adapter-v1", ["tenant-a", "tenant-b"])
     assert isinstance(rewritten, list)
@@ -108,9 +120,11 @@ def test_duplicate_gap_and_unsalted_events():
     first = packet([stored([1], list(range(64)))])
     sub.apply(0, first)
     sub.apply(0, first)
+    sub.ready = True
     assert len(sub.cache.prefixes) == 1
     sub.apply(2, packet([stored([3], list(range(64, 128)), parent=1)]))
     assert not sub.cache.prefixes
+    assert not sub.ready
     event = stored([4], list(range(64)))
     event["cache_salt"] = None
     sub.cache.apply(event)

@@ -34,6 +34,7 @@ class Digest(Protocol):
 
 TOPIC = b"kv-events"
 SALT_PREFIX = "spindle-kv:"
+MAX_BLOCKS = 100_000
 KV_EVENTS_CONFIG = {
     "publisher": "zmq",
     "endpoint": "tcp://*:5557",
@@ -156,7 +157,7 @@ class KVCache:
                 if parent is not None:
                     self.children[parent].add(key)
             parent = key
-        while len(self.blocks) > 100_000:
+        while len(self.blocks) > MAX_BLOCKS:
             self.remove(next(iter(self.blocks)))
 
 
@@ -183,6 +184,7 @@ class KVEventSubscriber:
             return
         if sequence != self.sequence + 1:
             self.cache.clear()
+            self.ready = False
             return False
         batch = msgspec.msgpack.decode(payload)
         try:
