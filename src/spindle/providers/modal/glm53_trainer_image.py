@@ -1,7 +1,7 @@
 """Miles-pinned GLM model dependency with the release Bridge core preserved."""
 
 from .image_dependencies import ignore_config_source
-from .miles_image_common import BRIDGE_IMPORT_CACHE_INSTALL
+from .miles_image import BRIDGE_IMPORT_CACHE_INSTALL
 from .miles_release_image import MILES_PATH, release_image
 
 # Merged modal-projects/miles#31 on spindle-miles-v0.1.2.
