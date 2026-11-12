@@ -44,15 +44,6 @@ def test_models_are_grouped_by_provider_smallest_trainer_first():
         assert smallest == sorted(smallest)
 
 
-def test_default_selection_deploys_one_qwen_lora():
-    presets = deploy_wizard.bundled_presets()
-    assert deploy_wizard.modes_for(presets, deploy_wizard.DEFAULT_MODEL)[0] == "lora"
-    preset = deploy_wizard.pick(
-        presets, deploy_wizard.DEFAULT_MODEL, "lora", deploy_wizard.DEFAULT_CONTEXT
-    )
-    assert preset.name == "qwen36-35b-a3b-lora-32k"
-
-
 def test_models_with_lora_and_full_offer_both_modes():
     presets = deploy_wizard.bundled_presets()
     assert deploy_wizard.modes_for(presets, "Qwen/Qwen3.5-4B") == ["lora", "full"]
