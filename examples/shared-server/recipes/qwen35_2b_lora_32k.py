@@ -9,9 +9,7 @@ class Config(Parent):
         "platform.requires_proxy_auth": True,
         "platform.modal.environment": "spindle",
         "platform.modal.exclude_reserved_capacity": True,
-        "trainer_max_instances": 6,
-        "inference_min_replicas": 4,
-        "inference_max_replicas": 16,
+        "trainer_max_instances": 4,
     }
 
 
