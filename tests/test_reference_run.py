@@ -149,7 +149,8 @@ def test_partial_final_evaluation_cannot_claim_learning(tmp_path):
     assert all(not r["complete"] for r in summary["evaluations"])
 
 
-def test_ambiguous_update_refuses_automatic_checkpoint_rollback(tmp_path):
+@pytest.mark.parametrize("stop_after", [None, 9])
+def test_invalid_resume_does_not_change_training_history(tmp_path, stop_after):
 
     output = tmp_path / "results"
     with beam.Journal(output) as journal:
@@ -157,9 +158,17 @@ def test_ambiguous_update_refuses_automatic_checkpoint_rollback(tmp_path):
         journal.event("update_started", step=11)
         journal.event("optimizer_submitted", step=11)
     args = SimpleNamespace(
-        output=output, resume="tinker://checkpoint10", replay_cache=tmp_path / "cache"
+        output=output,
+        resume="tinker://checkpoint10",
+        replay_cache=tmp_path / "cache",
+        stop_after=stop_after,
     )
-    with pytest.raises(ValueError, match="Uncheckpointed update outcome"):
+    message = (
+        "Uncheckpointed update outcome"
+        if stop_after is None
+        else "--stop-after precedes"
+    )
+    with pytest.raises(ValueError, match=message):
         beam.run(args, beam.Config())
     assert len(beam.read_records(output / "metrics.jsonl")) == 3
 
@@ -315,6 +324,17 @@ def test_checkpoint_resume_preserves_cached_behavior_and_update_sequence(
         for r in beam.read_records(output / "metrics.jsonl")
         if r["event"] == "checkpoint"
     ][-1]["path"]
+    if failure_phase is None and not lose_cache:
+        reference = args.resume
+        beam.run(args, config)
+        assert len(calls) == before
+        probe = beam.read_records(output / "metrics.jsonl")[-1]
+        assert probe["event"] == "restore_roundtrip"
+        assert probe["reference"] == reference
+        assert states[probe["path"]] == states[reference]
+        assert instances[-1].step == 1
+        assert instances[-1] is not instances[0]
+        args.resume = probe["path"]
     if lose_cache:
         shutil.rmtree(cache)
     args.stop_after = None
@@ -329,10 +349,10 @@ def test_checkpoint_resume_preserves_cached_behavior_and_update_sequence(
         else 0
     )
     assert len(calls) == before + extra_groups
-    assert instances[1] is not instances[0]
-    assert instances[1].step == 2
-    assert instances[1].moment == pytest.approx(1.9)
-    assert instances[1].weight == pytest.approx(
+    assert instances[-1] is not instances[0]
+    assert instances[-1].step == 2
+    assert instances[-1].moment == pytest.approx(1.9)
+    assert instances[-1].weight == pytest.approx(
         1 - beam.learning_rate(1) - 1.9 * beam.learning_rate(2)
     )
     if lose_cache or failure_phase == "prefetch":

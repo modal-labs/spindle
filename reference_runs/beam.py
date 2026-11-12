@@ -12,6 +12,10 @@ Metrics, configuration and evaluations in --output are intended for Git.
 Large routing records live in --replay-cache, outside the checked-in results.
 After update10, rebuild/restart the deployment and resume from the printed and journaled
 checkpoint URI using the SAME output and cache paths, without --stop-after.
+To audit restoration first, resume with --stop-after 10. This saves a roundtrip
+checkpoint and exits before publication, evaluation, or training. Compare its
+weights and optimizer state with the original checkpoint, then resume the new
+checkpoint without --stop-after to continue.
 The external deployment provenance JSON records exact Spindle/Miles/SGLang
 revisions, resolved recipe and hardware; it must contain no credentials.
 
@@ -540,6 +544,13 @@ def run(args, config):
             if not checkpoints or checkpoints[-1]["path"] != args.resume:
                 raise ValueError("Resume must use the latest recorded checkpoint")
             completed = checkpoints[-1]["step"]
+            if (
+                getattr(args, "stop_after", None) is not None
+                and args.stop_after < completed
+            ):
+                raise ValueError(
+                    "--stop-after precedes the restored checkpoint's update"
+                )
             if updates and updates[-1]["step"] > completed:
                 raise ValueError(
                     "Updates after checkpoint require explicit recovery; refusing silent rollback"
@@ -642,6 +653,7 @@ def run(args, config):
             )
             print(f"Checkpoint update{step}: {result.path}", flush=True)
             plot(args.output, journal=journal)
+            return result.path
 
         def sampling_client(path):
             async def create_sampling():
@@ -667,6 +679,12 @@ def run(args, config):
             )
             return sampler, result.path
 
+        if args.resume and args.stop_after == completed:
+            path = checkpoint(completed)
+            journal.event(
+                "restore_roundtrip", step=completed, reference=args.resume, path=path
+            )
+            return
         if not args.resume:
             checkpoint(0)
         sampler, sampler_path = publish(completed)
