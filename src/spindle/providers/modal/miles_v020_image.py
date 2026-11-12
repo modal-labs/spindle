@@ -85,7 +85,7 @@ image = (
         "git -C /root/miles apply - <<'SPINDLE_PATCH'\n" + PATCH + "SPINDLE_PATCH",
         MEGATRON_RUNTIME_CHECK,
     )
-    .add_local_python_source("spindle", ignore=ignore_config_source)
+    .add_local_python_source("spindle", ignore=ignore_config_source, copy=True)
     .run_commands(
         "python -c 'from spindle.backends.miles_runtime import v020, actor_v020'"
     )
