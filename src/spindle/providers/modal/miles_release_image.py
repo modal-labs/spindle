@@ -10,12 +10,9 @@ from .image_dependencies import (
     MEGATRON_RUNTIME_PACKAGES,
     STITCH_PACKAGE,
 )
+from .runtime_images import BASE_IMAGES
 
-MILES_RELEASE = "v0.1.2"
-BASE_IMAGE = (
-    f"radixark/miles:{MILES_RELEASE}"
-    "@sha256:c81d8ba7b91571aac8e0bb2be372c6a9664e1ff7b88f518a8891861bae83e3b7"
-)
+BASE_IMAGE = BASE_IMAGES["miles-v0.1.2"]
 MILES_COMMIT = "a22fd824191c64ba7c5d6c531f125406e4ce9cc6"
 MILES_PATH = "/root/miles"
 # Megatron-LM is only partially installed as a package; some model
