@@ -295,6 +295,8 @@ class KVCache:
                             del self.children[chain.parent]
                 self.chains[chain.id] = None
                 self.free_chains.append(chain.id)
+        if not self.blocks:
+            self.clear()
 
     def apply(self, event: dict):
         kind = event["type"]
@@ -324,6 +326,8 @@ class KVCache:
             return
         if not all(type(token) is int for token in tokens):
             return
+        if len(set(keys)) != len(keys):
+            return
         existing = [index for index, key in enumerate(keys) if key in self.blocks]
         if existing:
             start = 0
@@ -351,8 +355,7 @@ class KVCache:
             return
         if sys.byteorder != "little":
             packed.byteswap()
-        if ancestor is not None:
-            self._refresh_ancestors(*ancestor)
+        stored_under = ancestor
         for start in range(0, len(keys), 65536):
             stop = min(start + 65536, len(keys))
             group_keys = keys[start:stop]
@@ -396,6 +399,8 @@ class KVCache:
                 digest.update(data[offset * 8 :])
             parent = group_keys[-1]
             ancestor = (chain, len(group_keys) - 1)
+        if stored_under is not None:
+            self._refresh_ancestors(*stored_under)
 
 
 class KVEventSubscriber:
