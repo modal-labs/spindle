@@ -319,7 +319,7 @@ def test_checkpoint_resume_preserves_cached_behavior_and_update_sequence(
                 )
             )
 
-    async def create(**kwargs):
+    async def create(*, base_model, rank, train_unembed):
         return Training()
 
     async def restore(path):

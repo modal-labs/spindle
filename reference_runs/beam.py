@@ -635,7 +635,6 @@ def run(args, config):
                 else service.create_lora_training_client_async(
                     base_model=config.model,
                     rank=config.rank,
-                    seed=config.seed,
                     train_unembed=False,
                 )
             )
