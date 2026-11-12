@@ -1,4 +1,5 @@
 import asyncio
+import json
 import struct
 
 import msgspec
@@ -58,6 +59,17 @@ def test_native_adapter_name_needs_no_cache_salt():
     cache.apply(event)
     assert digest("adapter-v1", list(range(64))) in cache.prefixes
     assert cache.adapter_names_seen
+
+
+def test_cache_salt_rewrite_preserves_per_request_batch_salts():
+    rewritten = cache_salt("adapter-v1", ["tenant-a", "tenant-b"])
+    assert isinstance(rewritten, list)
+    assert [
+        json.loads(value.removeprefix("spindle-kv:"))[1] for value in rewritten
+    ] == [
+        "tenant-a",
+        "tenant-b",
+    ]
 
 
 def test_chained_pages_eviction_and_adapter_versions():

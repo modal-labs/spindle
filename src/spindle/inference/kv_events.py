@@ -49,7 +49,11 @@ def publisher_config(dp_size: int = 1) -> dict:
     return config
 
 
-def cache_salt(adapter: str, original: str | None = None) -> str:
+def cache_salt(
+    adapter: str, original: str | list[str] | None = None
+) -> str | list[str]:
+    if isinstance(original, list):
+        return [cache_salt(adapter, item) for item in original]
     # Native lora_id is None; cache salt preserves adapter identity across replay.
     return SALT_PREFIX + json.dumps([adapter, original], separators=(",", ":"))
 
