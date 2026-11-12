@@ -9,5 +9,7 @@
   "capped": 141,
   "finished_wrong": 2,
   "audited_at": 1794456734.0215535,
-  "scope": "Complete initial evaluation only; this establishes the starting measurements, not learning or optimizer restore identity."
+  "scope": "Complete initial evaluation only; this establishes the starting measurements, not learning or optimizer restore identity.",
+  "reference_grader_source": "https://github.com/modal-projects/miles/blob/6f5a4a8429e4f57a65a7251facb7d3d9faf0b3ff/miles/rollout/rm_hub/math_dapo_utils.py",
+  "strict_box_verify": true
 }
