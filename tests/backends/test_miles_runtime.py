@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from pydantic import BaseModel, ConfigDict
 
 from spindle.backends.miles_runtime import runtime as miles_runtime
 from spindle.backends.miles_runtime.runtime import (
@@ -224,13 +225,21 @@ def test_allgather_cp_guard_is_skipped_only_for_bshd(allgather_cp, qkv_format, s
     assert args.allgather_cp is allgather_cp
 
 
-def test_array_bridge_keeps_the_miles_contract(monkeypatch):
+@pytest.mark.parametrize("native", [False, True])
+def test_array_bridge_keeps_the_miles_contract(monkeypatch, native):
     """Rows go to the workers as arrays (RL fields as tensors, which Miles
     slices per context-parallel rank) and come back ordered by sample index."""
 
     class MilesBackend:
         def __init__(self, trainer, router_url, dp_size=1):
             self.trainer = trainer
+
+    class NativeMilesBackend(MilesBackend):
+        def __init__(self, trainer, router_url, lora_layout, dp_size=1):
+            super().__init__(trainer, router_url, dp_size=dp_size)
+            self.lora_layout = lora_layout
+
+    layout = SimpleNamespace(attention=("q_proj",)) if native else None
 
     def build_train_data(slot_datums):
         rows = [row for _, row in slot_datums]
@@ -247,7 +256,7 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch):
         miles_runtime,
         "tinker_runtime",
         SimpleNamespace(
-            MilesBackend=MilesBackend,
+            MilesBackend=NativeMilesBackend if native else MilesBackend,
             _build_train_data=build_train_data,
             ROLLOUT_DATA_VALUE_SPEC={},
         ),
@@ -295,7 +304,11 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch):
             },
         ),
     ]
-    bridge = _array_bridge(SimpleNamespace(forward_backward=forward_backward))
+    bridge = _array_bridge(
+        SimpleNamespace(forward_backward=forward_backward), lora_layout=layout
+    )
+    if native:
+        assert bridge.lora_layout is layout
     outputs = asyncio.run(bridge._execute_batch("forward_backward", 1, rows, "ppo", {}))
 
     (sent,) = store.values
@@ -348,3 +361,42 @@ def test_native_type_error_after_bridge_call_is_fatal():
         runtime._run(io.load_slot(0, 2, 4.0))
     assert changed == ["slot-mutated"]
     assert isinstance(runtime._failure, TypeError)
+
+
+def test_v020_actor_spec_classmethod_preserves_config_and_subclasses():
+    class Spec(BaseModel):
+        model_config = ConfigDict(frozen=True)
+        worker_class: str
+        model_id: str
+
+        @classmethod
+        def create(cls, config):
+            return cls(worker_class=config.worker_class, model_id=config.model_id)
+
+    class ChildSpec(Spec):
+        pass
+
+    specs = SimpleNamespace(TrainerSpec=Spec)
+    config = SimpleNamespace(
+        worker_class="miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor",
+        model_id="model-a",
+    )
+    before = Spec.create(config)
+    _configure_actor_spec(specs)
+    once = Spec.create.__func__
+    _configure_actor_spec(specs)
+    assert Spec.create.__func__ is once
+    result = Spec.create(config)
+    assert (
+        result.worker_class
+        == "spindle.backends.miles_runtime.actor.SpindleMilesTrainRayActor"
+    )
+    assert result.model_id == before.model_id
+    assert before.worker_class == config.worker_class
+    assert isinstance(ChildSpec.create(config), ChildSpec)
+    assert (
+        Spec.create(
+            SimpleNamespace(worker_class="fft", model_id="model-b")
+        ).worker_class
+        == "fft"
+    )

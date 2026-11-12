@@ -44,7 +44,7 @@ class Config(BaseConfig):
         "cli_options": {
             "lora_type": "lora",
             "bf16": True,
-            "qkv_format": "bshd",
+            "qkv_format": "thd",
             "attention_backend": "unfused",
             "data_pad_size_multiplier": 1,
             "moe_router_dtype": "fp32",

@@ -97,6 +97,7 @@ def test_beam_preserves_distinct_attention_and_mlp_gates():
     deployment = DeploymentConfig.create(load(config_path("beam-501b-a23b-lora-5k")))
     assert deployment.recipe.trainer_image == "miles-v0.2.0"
     assert deployment.recipe.miles_cfg["cli_options"]["lora_type"] == "lora"
+    assert deployment.recipe.miles_cfg["cli_options"]["qkv_format"] == "thd"
     targets = deployment.inference_settings["lora_target_modules"]
     assert "self_attn.gate_proj" in targets
     assert "mlp.gate_proj" in targets

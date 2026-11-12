@@ -59,6 +59,16 @@ except ImportError:
     create_trainer_handles = None
 
 
+try:
+    from miles.ray.train.init_request import TrainerControllerInitRequest
+    from miles.ray.wiring import compute_backend_capability
+    from miles.utils.args.trainer_utils import compute_trainer_config
+    from miles.utils.hf_utils.config import load_hf_config
+    from miles.utils.lora.hf_lora_targets import get_hf_lora_targets
+except ImportError:
+    TrainerControllerInitRequest = None
+
+
 class MilesRuntime:
     """Synchronous owner of Miles's asynchronous Ray trainer controller."""
 
@@ -346,9 +356,20 @@ class MilesRuntime:
         if create_trainer_handles is not None:
             configs = compute_trainer_configs(args)
             (actor_config,) = [c for c in configs if c.role == ACTOR_ROLE]
-            handles = create_trainer_handles(args, trainer_configs=configs)
+            if TrainerControllerInitRequest is not None:
+                capability = compute_backend_capability(args)
+                handles = create_trainer_handles(
+                    args, trainer_configs=configs, capability=capability
+                )
+                self._args = compute_trainer_config(args, actor_config)
+                request = TrainerControllerInitRequest.from_args(
+                    args, trainer=actor_config
+                )
+            else:
+                handles = create_trainer_handles(args, trainer_configs=configs)
+                request = compute_trainer_args(args, actor_config)
             self._trainer = handles[actor_config.trainer_id]
-            await self._trainer.init(compute_trainer_args(args, actor_config))
+            await self._trainer.init(request)
         else:
             self._trainer = TrainerController(
                 args=args,
@@ -360,7 +381,12 @@ class MilesRuntime:
             )
             await self._trainer.init()
         startup.mark("trainer_actors_initialized")
-        self._bridge = _array_bridge(self._trainer)
+        lora_layout = (
+            get_hf_lora_targets(load_hf_config(self.config.hf_checkpoint).to_dict())
+            if TrainerControllerInitRequest is not None
+            else None
+        )
+        self._bridge = _array_bridge(self._trainer, lora_layout=lora_layout)
         if uses_native_checkpoints(self._bridge):
             self._native_checkpoints = NativeCheckpoints(
                 self._bridge, args, self.config
@@ -416,7 +442,7 @@ _WORKER_ENV_VARS = (
 )
 
 
-def _array_bridge(trainer):
+def _array_bridge(trainer, *, lora_layout=None):
     """Miles's ``_execute_batch`` builds per-token Python lists and returns log
     probabilities with ``.tolist()``; this keeps rows and outputs as arrays."""
 
@@ -466,7 +492,10 @@ def _array_bridge(trainer):
                         outputs[index] = recorded
             return [outputs[index] for index in range(len(slot_datums))]
 
-    return ArrayBackend(trainer, router_url="", dp_size=1)
+    kwargs = {"router_url": "", "dp_size": 1}
+    if lora_layout is not None:
+        kwargs["lora_layout"] = lora_layout
+    return ArrayBackend(trainer, **kwargs)
 
 
 def _worker_env() -> dict[str, str]:
@@ -523,7 +552,12 @@ def _main_process_identity():
 
 
 def _configure_actor_spec(train_specs) -> None:
-    original = train_specs._compute_spec_trainer
+    legacy = hasattr(train_specs, "_compute_spec_trainer")
+    original = (
+        train_specs._compute_spec_trainer
+        if legacy
+        else train_specs.TrainerSpec.create.__func__
+    )
     if getattr(original, "_spindle_actor_spec", False):
         return
 
@@ -542,7 +576,10 @@ def _configure_actor_spec(train_specs) -> None:
         return spec
 
     compute._spindle_actor_spec = True
-    train_specs._compute_spec_trainer = compute
+    if legacy:
+        train_specs._compute_spec_trainer = compute
+    else:
+        train_specs.TrainerSpec.create = classmethod(compute)
 
 
 def _allow_allgather_cp_bshd_multi_lora(lora_arguments) -> None:
