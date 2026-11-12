@@ -4,8 +4,8 @@ Client workloads that train and sample through the Tinker API and record
 metrics. Run one against a deployment before and after a backend change, then
 compare the recorded numbers.
 
-The scripts connect to a server that already exists. They do not deploy, stop or
-clean up anything.
+The client scripts connect to a server that already exists. They do not deploy,
+stop or clean up anything.
 
 ## DAPO-Math GRPO
 
@@ -20,6 +20,19 @@ reward 1 when its last `\boxed{...}` equals the label. The advantage is the
 reward minus the mean reward for that problem. Evaluation samples 2 responses to
 each of 128 held-out problems, before training and every 5 updates. The script
 saves trainer state with `save_state` every 10 updates.
+
+Deploy [`dapo_math_config.py`](dapo_math_config.py) before running the client:
+
+```bash
+uv run spindle deploy reference_runs/dapo_math_config.py --app reference --env dev
+```
+
+The recipe fixes training at four H100 GPUs and sampling at two replicas with
+one H100 each. It has no GPU fallback or sampler autoscaling, and admits one
+training client. Use a dedicated deployment without other sampling clients.
+The client requests `dapo-math-qwen35-4b-h100` through the stock Tinker SDK and
+records this hardware contract. Point it at the deployment of this recipe;
+metadata alone does not verify the hardware of an arbitrary server.
 
 Set `TINKER_BASE_URL` and `TINKER_API_KEY`, then:
 
@@ -50,7 +63,7 @@ seconds) and `event`.
 
 | Event | Fields |
 | --- | --- |
-| `run` | `config`, `adam` (the optimizer parameters sent), `tinker_sdk` |
+| `run` | `config`, `adam` (the optimizer parameters sent), `tinker_sdk`, `recipe`, `hardware` |
 | `publication` | `step`, `seconds` to save sampler weights and open a sampling client |
 | `evaluation` | `step`, `reward` (accuracy), `responses`, `response_tokens_mean`, `truncated_fraction`, `seconds` |
 | `checkpoint` | `step`, `seconds` for `save_state` |
@@ -83,6 +96,7 @@ This draws held-out accuracy, training reward, response length and seconds
 between accepted updates for each run into `reference_runs/reference-runs.png`. It reads only
 `metrics.jsonl`, so it works offline and on a run that has not finished.
 
-Compare runs only when their `run` records have the same `config`. Check in a
+Compare runs only when their `run` records have the same `config` and
+`hardware`. Missing hardware metadata means the allocation is unknown. Check in a
 run's `metrics.jsonl` under `results/` with a short README that states the code
 revision, the deployment and what the run does not show. Charts stay out of Git.

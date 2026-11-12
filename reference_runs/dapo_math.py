@@ -39,6 +39,12 @@ class Config:
     learning_rate: float = 4e-5
 
 
+HARDWARE = {
+    "trainer": {"gpu": "H100", "gpus": 4},
+    "sampler": {"gpu": "H100", "gpus_per_replica": 1, "replicas": 2},
+}
+RECIPE = "dapo-math-qwen35-4b-h100"
+
 SMOKE = Config(updates=2, groups=4, eval_problems=8, evaluation_interval=1)
 
 Problem = tuple[list[int], str]
@@ -146,13 +152,15 @@ def main() -> None:
     ]
     held_out = problems[: config.eval_problems]
     service = tinker.ServiceClient()
-    training = service.create_lora_training_client(config.model, config.lora_rank)
+    training = service.create_lora_training_client(RECIPE, config.lora_rank)
     adam = types.AdamParams(learning_rate=config.learning_rate)
     record(
         "run",
         config=dataclasses.asdict(config),
         adam=adam.model_dump(),
         tinker_sdk=importlib.metadata.version("tinker"),
+        recipe=RECIPE,
+        hardware=HARDWARE,
     )
     clock, previous = time.monotonic, None
     for step in range(config.updates + 1):

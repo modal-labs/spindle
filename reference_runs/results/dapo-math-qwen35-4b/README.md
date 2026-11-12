@@ -32,8 +32,13 @@ record to its last. The three `save_state` calls took 3.5, 8.4 and 10.8 seconds.
 - Server: Spindle 0.1.6 at `b5d04c8`, the `qwen35-4b-lora-32k` recipe (four H100
   trainer GPUs). The server reported this commit shortly before the run; the
   script does not record it.
+- Sampler GPU type, GPUs per replica and replica count were not recorded.
 
 ## Limits
+
+- Matching the four H100 trainer GPUs does not establish matching sampler
+  hardware. Sampling and total run time differences cannot be attributed solely
+  to a training backend change, including a Miles migration.
 
 - One run with one seed. One evaluation response is 0.4 percentage points, and
   the evaluations are not independent across updates because they reuse the
