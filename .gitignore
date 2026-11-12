@@ -14,4 +14,3 @@ reference_runs/results/beam/*
 !reference_runs/results/beam/README.md
 !reference_runs/results/beam/config.json
 !reference_runs/results/beam/metrics.jsonl
-!reference_runs/results/beam/learning.png

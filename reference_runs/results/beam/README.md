@@ -19,8 +19,6 @@ Median time between accepted updates was **621.90 seconds**, including the plann
 cold restart. Median native forward/backward time was 449.40 seconds; median trainer
 API wall time was 513.19 seconds. Wall time through the requested stop was 10.90 hours.
 
-![AIME25 accuracy, response length and update-time comparisons](learning.png)
-
 The green curves are approximate digitizations of the
 [published Beam LoRA run](https://huggingface.co/blog/reflection-beam#train-with-lora).
 Its reported step axis has not been verified as optimizer updates. Hardware and
@@ -30,13 +28,14 @@ The run used 16 H200 trainer GPUs and eight B300 sampler GPUs. Runtime pins were
 Miles `6f5a4a84`, trainer SGLang `9ac1c65b` and sampler SGLang `991fb37566`.
 Client code was `6bcf5aa` through update 10 and `35f365f` afterward.
 
-Only [configuration](config.json), [metrics](metrics.jsonl), the plot and this README
-are checked in. Metrics contain update/evaluation aggregates and accuracy per problem
+Only [configuration](config.json), [metrics](metrics.jsonl) and this README are
+checked in. Metrics contain update/evaluation aggregates and accuracy per problem
 in dataset order, averaged over eight samples. They contain no prompts, answers,
 labels or routing payloads. Detailed responses,
 checkpoint journals and audit files stay local and are ignored by Git.
 
-Regenerate the plot from these metrics without the detailed responses:
+Charts are generated locally and shown in the PR description. Regenerate them
+from these metrics without the detailed responses:
 
 ```bash
 uv run --with matplotlib==3.11.2 python reference_runs/beam.py \
