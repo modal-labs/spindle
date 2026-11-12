@@ -24,7 +24,8 @@ def stored(keys, tokens, parent=None, adapter="adapter-v1", medium="GPU"):
         parent_block_hash=parent,
         block_size=len(tokens) // len(keys),
         lora_id=None,
-        cache_salt=cache_salt(adapter),
+        lora_name=adapter,
+        cache_salt=None,
         medium=medium,
     )
 
@@ -61,16 +62,13 @@ def test_native_adapter_name_needs_no_cache_salt():
     assert cache.adapter_names_seen
 
 
-def test_cache_block_limit_evicts_oldest_branch(monkeypatch):
-    import spindle.inference.kv_events as kv_events
-
-    monkeypatch.setattr(kv_events, "MAX_BLOCKS", 2)
+def test_cache_keeps_shared_root_with_many_blocks():
     cache = KVCache()
     cache.apply(stored([1], list(range(64))))
     cache.apply(stored([2], list(range(64, 128)), parent=1))
     cache.apply(stored([3], list(range(128, 192)), parent=2))
-    assert len(cache.blocks) <= kv_events.MAX_BLOCKS
-    assert not cache.prefixes
+    assert set(cache.blocks) == {1, 2, 3}
+    assert len(cache.prefixes) == 3
 
 
 def test_cache_salt_rewrite_preserves_per_request_batch_salts():
@@ -108,14 +106,68 @@ def test_small_pages_cross_router_boundary_and_unknown_parent():
     cache = KVCache()
     cache.apply(stored(list(range(1, 81)), list(range(80))))
     assert set(cache.prefixes) == {digest("adapter-v1", list(range(64)))}
-    with pytest.raises(ValueError, match="parent is unknown"):
-        cache.apply(stored([100], list(range(64)), parent=999))
+    cache.apply(stored([100], list(range(64)), parent=999))
     assert 100 not in cache.blocks
     cache.apply(stored([101], list(range(64)), medium="CPU_PINNED"))
     assert 101 not in cache.blocks
 
 
-def test_duplicate_gap_and_unsalted_events():
+@pytest.mark.parametrize("page_size", [1, 16, 64, 80])
+def test_store_skips_unknown_parent_and_bigram_tokens(page_size):
+    cache = KVCache()
+    tokens = list(range(page_size * 2))
+    event = stored([1, 2], tokens, parent=999)
+    cache.apply(event)
+    assert not cache.blocks
+    event["parent_block_hash"] = None
+    event["token_ids"][0] = (1, 2)
+    cache.apply(event)
+    cache.apply(stored([3], list(range(page_size)), parent=2))
+    assert not cache.blocks
+    event["token_ids"][0] = 0
+    cache.apply(event)
+    cache.apply(stored([3], list(range(page_size)), parent=2))
+    cache.apply(dict(type="BlockRemoved", block_hashes=[2], medium="GPU"))
+    assert set(cache.blocks) == {1}
+
+
+def test_repeated_store_and_recent_prefix_cap():
+    cache = KVCache()
+    keys = list(range(1, 8194))
+    tokens = list(range(64 * len(keys)))
+    event = stored(keys, tokens)
+    cache.apply(event)
+    cache.apply(event)
+    assert len(cache.blocks) == len(keys)
+    assert len(cache.prefixes) == 8192
+    assert digest("adapter-v1", tokens) in cache.prefixes
+    assert digest("adapter-v1", tokens[:64]) not in cache.prefixes
+    cache.apply(stored([8194], tokens[64:128], parent=1))
+    assert digest("adapter-v1", tokens[:64]) in cache.prefixes
+
+
+def test_mixed_restore_extends_existing_prefix():
+    cache = KVCache()
+    cache.apply(stored([1], list(range(64))))
+    cache.apply(stored([1, 2], list(range(128))))
+    assert set(cache.blocks) == {1, 2}
+    assert set(cache.prefixes) == {
+        digest("adapter-v1", list(range(64))),
+        digest("adapter-v1", list(range(128))),
+    }
+
+
+def test_signed_block_hashes_survive_resize_and_removal():
+    cache = KVCache()
+    keys = [-(1 << 63), (1 << 63) - 1] + list(range(1024))
+    tokens = list(range(len(keys)))
+    cache.apply(stored(keys, tokens))
+    cache.apply(dict(type="BlockRemoved", block_hashes=[keys[1]], medium="GPU"))
+    assert set(cache.blocks) == {keys[0]}
+    assert not cache.prefixes
+
+
+def test_duplicate_gap_and_salted_events():
     sub = KVEventSubscriber()
     first = packet([stored([1], list(range(64)))])
     sub.apply(0, first)
@@ -128,9 +180,10 @@ def test_duplicate_gap_and_unsalted_events():
     event = stored([4], list(range(64)))
     event["cache_salt"] = None
     sub.cache.apply(event)
+    assert set(sub.cache.blocks) == {4}
     event["cache_salt"] = cache_salt("adapter-v1", "tenant")
     sub.cache.apply(event)
-    assert not sub.cache.blocks
+    assert set(sub.cache.blocks) == {4}
 
 
 def test_dp_publisher_port_ranges_do_not_overlap():

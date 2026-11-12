@@ -78,7 +78,7 @@ class TreeModel:
     def prefixes(self):
         result = set()
         for node in self.nodes.values():
-            if node.salt is not None:
+            if node.salt is not None or node.adapter == "base":
                 continue
             for length in range(64, len(node.tokens) + 1, 64):
                 digest = xxhash.xxh3_128((node.adapter + "\0").encode())
