@@ -17,7 +17,7 @@ PANELS = [
 ]
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("runs", type=Path, nargs="+")
     parser.add_argument("--output", type=Path, default=Path("reference-runs.png"))
