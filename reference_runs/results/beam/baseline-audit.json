@@ -1,0 +1,13 @@
+{
+  "step": 0,
+  "responses": 240,
+  "strict_reference_regrade_disagreements": 0,
+  "reference_grader_sha256": "3d6b61357e2ee8f1704ba0eb1726ea2dd65dbf9c76e963f20d5ff6598b8f7b23",
+  "correct": 97.0,
+  "accuracy": 0.4041666666666667,
+  "mean_tokens": 3180.5416666666665,
+  "capped": 141,
+  "finished_wrong": 2,
+  "audited_at": 1794456734.0215535,
+  "scope": "Complete initial evaluation only; this establishes the starting measurements, not learning or optimizer restore identity."
+}
