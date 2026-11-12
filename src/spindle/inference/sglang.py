@@ -19,9 +19,7 @@ def main():
     load_plugins()
     settings = json.loads(sys.argv[2])
     if os.environ.get("SGLANG_SPINDLE_ROUTING_SOURCE") in {"kv_events", "compare"}:
-        settings["kv_events_config"] = json.dumps(
-            publisher_config(settings.get("dp_size", 1))
-        )
+        settings["kv_events_config"] = json.dumps(publisher_config())
     args = ServerArgs(
         model_path=sys.argv[1],
         host="127.0.0.1",

@@ -113,6 +113,16 @@ class DeploymentConfig(BaseModel):
         routing_source = pinned.inference_lora_routing_source
         if routing_source not in {"hook", "kv_events", "compare"}:
             raise ValueError(f"unknown inference_lora_routing_source: {routing_source}")
+        if (
+            routing_source != "hook"
+            and pinned.inference_image
+            == "spindle.providers.modal.deepseek_v41_image:inference_image"
+        ):
+            raise ValueError(
+                "inference_lora_routing_source='kv_events' or 'compare' requires "
+                "an SGLang image whose KV events include adapter names and /v1/loads; "
+                "the DeepSeek-V4.1-Flash image uses SGLang v0.5.21"
+            )
         prefill_rate = pinned.inference_routing_prefill_tokens_per_second
         if prefill_rate is not None and not (
             isinstance(prefill_rate, (int, float))

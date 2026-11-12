@@ -166,35 +166,27 @@ each column separately, and their vocabulary work and memory grow with
 
 The deterministic path aims to give each client the same training results regardless of which other clients share its batches (think of it as batch-invariance for training). It uses deterministic attention kernels, fixed reduction layouts, and ordered per-client gradient accumulation, alongside batch-invariant inference.
 
-To enable it, build the patched FA3 artifacts, set SPINDLE_MILES_FA3_ARTIFACTS to their directory before deployment, and use the qwen3_5_9b_base_miles_lora_deterministic definition. The Tinker training code stays the same. We've validated on small math experiments (see  [LoRA validation](lora_validation.md) deterministic training section) but still need to do larger validation. Our changes to fa3 to make it deterministic also come at a throughput cost, and so this path remains experimental for now. 
+To enable it, build the patched FA3 artifacts, set SPINDLE_MILES_FA3_ARTIFACTS to their directory before deployment, and use the qwen3_5_9b_base_miles_lora_deterministic definition. The Tinker training code stays the same. We've validated on small math experiments (see  [LoRA validation](lora_validation.md) deterministic training section) but still need to do larger validation. Our changes to fa3 to make it deterministic also come at a throughput cost, and so this path remains experimental for now.
 
+### Cache routing snapshots
 
-
-### Native cache observations
-
-Each SGLang replica publishes native KV events with:
-
-```sh
---kv-events-config '{"publisher":"zmq","endpoint":"tcp://*:5557","replay_endpoint":"tcp://*:5558","topic":"kv-events"}'
-```
-
-Port 5557 carries live publications; port 5558 serves bounded replay. With multiple
-SGLang DP ranks, the replay base moves past the live port range to avoid overlap.
-Cache-aware routing still requires one DP rank per Modal replica.
-
-Cache-aware LoRA routing reads replica snapshots from `/routing-state`. By
-default, SGLang's scheduler hook produces the snapshot. Set
+Cache-aware LoRA routing reads replica snapshots from `/routing-state`. Set
 `inference_lora_routing_source = "kv_events"` on a recipe to use SGLang's native
-KV events instead. The sidecar replays missed events locally and combines cached
-prefixes with `/v1/loads`; user cache salts remain isolated. The native producer
-cannot identify which named adapters are on the GPU, so its `gpu_adapters` list
-is empty. The scheduler hook remains the default because the router uses that
-list when it estimates adapter loading cost.
+KV events; the default is `"hook"`, which keeps the scheduler snapshot hook.
+Native events count prefixes and load alongside `/v1/loads`. The hook remains
+the default because the router uses its GPU adapter list when it estimates
+adapter loading cost.
 
-Set `inference_lora_routing_source = "compare"` to keep the scheduler hook as the
-served view while enabling both producers. Read `/routing-state/compare` on the
-replica to compare prefix counts, overlap, sample differences, load values, view
-ages, subscriber readiness and adapter-name support. The v0.5.21 fork does not
-include adapter names in KV events, so its comparison reports that prefix
-attribution is unavailable; native KV routing there uses the request cache salt.
-Comparison is available on the sidecar's usual HTTP port 8000.
+Set `inference_lora_routing_source = "compare"` to serve the hook snapshot while
+both producers run on the replica. `GET /routing-state/compare` shows prefix
+counts, overlap, sample differences, load values, view ages and whether the
+native event subscriber is ready. KV events and comparison require an image with
+adapter names in KV events and the `/v1/loads` endpoint; the DeepSeek-V4.1-Flash
+image uses SGLang v0.5.21 and rejects those settings.
+
+The two views can differ in these ways:
+
+- The hook selects up to 8,192 recent prefixes and refreshes about once a second. KV events also cap the list at 8,192, favoring recently stored, deeper paths because events do not report cache-hit times.
+- On hybrid Mamba models, the hook counts only prefix boundaries with valid Mamba state. KV events cannot report that state.
+- On hybrid sliding-window pools, KV load reports the greater of full-pool and sliding-window token use; the hook reports full-pool use.
+- KV events do not identify GPU-resident adapters, so `gpu_adapters` is empty.

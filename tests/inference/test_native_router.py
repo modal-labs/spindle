@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from spindle.inference.native_router import NativeRouter
-from spindle.inference.kv_events import KVCache, cache_salt
+from spindle.inference.kv_events import KVCache
 
 
 @pytest.fixture
@@ -174,7 +174,8 @@ def test_kv_prefix_hash_routes_through_the_real_rust_binding(worker):
             "parent_block_hash": None,
             "token_ids": tokens,
             "block_size": 64,
-            "cache_salt": cache_salt("adapter/v1"),
+            "cache_salt": None,
+            "lora_name": "adapter/v1",
             "medium": "GPU",
         }
     )

@@ -12,10 +12,10 @@ from spindle.inference.lora_sidecar import create_app
 
 
 @pytest.mark.parametrize(
-    ("source", "salted"),
-    [("hook", False), ("kv_events", True), ("compare", False)],
+    "source",
+    ["hook", "kv_events", "compare"],
 )
-def test_routing_source_controls_cache_salt_rewrite(tmp_path, source, salted):
+def test_routing_source_preserves_user_cache_salt(tmp_path, source):
     received = []
 
     def upstream(request):
@@ -31,17 +31,18 @@ def test_routing_source_controls_cache_salt_rewrite(tmp_path, source, salted):
         routing_source=source,
     )
     with TestClient(app) as client:
+        assert (app.state.kv_events is None) is (source == "hook")
         response = client.post(
-            "/generate", json={"input_ids": [1, 2], "lora_path": "adapter/v1"}
+            "/generate",
+            json={
+                "input_ids": [1, 2],
+                "lora_path": "adapter/v1",
+                "cache_salt": "tenant",
+            },
         )
         assert response.status_code == 200
     sent = json.loads(received[0])
-    assert ("cache_salt" in sent) is salted
-    if salted:
-        assert json.loads(sent["cache_salt"].removeprefix("spindle-kv:")) == [
-            "adapter/v1",
-            None,
-        ]
+    assert sent["cache_salt"] == "tenant"
 
 
 @pytest.mark.parametrize("source", ["hook", "kv_events", "compare"])
@@ -80,7 +81,18 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
             subscriber = app.state.kv_events
             subscriber.ready = True
             subscriber.checked_at = time.monotonic()
-            subscriber.cache.prefixes.update(["01" * 16, "02" * 16])
+            subscriber.cache.apply(
+                {
+                    "type": "BlockStored",
+                    "block_hashes": [1],
+                    "token_ids": list(range(64)),
+                    "parent_block_hash": None,
+                    "block_size": 64,
+                    "lora_name": "adapter/v1",
+                    "cache_salt": None,
+                    "medium": "GPU",
+                }
+            )
             app.state.loads = {
                 "timestamp": time.time(),
                 "num_running_reqs": 3,
@@ -90,6 +102,8 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
             }
             app.state.loads_at = time.monotonic()
         state = client.get("/routing-state").json()
+        if source == "kv_events":
+            assert app.state.routing_catalog is None
         work = state["work"]
         assert {
             "age_seconds",
@@ -102,12 +116,15 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
             "kv_used_tokens",
             "kv_capacity_tokens",
         } <= work.keys()
+        compare_response = client.get("/routing-state/compare")
         if source == "compare":
-            comparison = client.get("/routing-state/compare").json()
-            assert comparison["intersection"] == 1
-            assert comparison["hook_only"] == 0
+            assert compare_response.status_code == 200
+            comparison = compare_response.json()
+            assert comparison["intersection"] == 0
+            assert comparison["hook_only"] == 1
             assert comparison["kv_events_only"] == 1
-            assert "adapter_attribution_supported" in comparison
+        else:
+            assert compare_response.status_code == 404
 
 
 def test_generation_concurrency_does_not_block_health_or_metrics(tmp_path):
