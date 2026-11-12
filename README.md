@@ -113,7 +113,7 @@ In a terminal, this starts an interactive deploy. It first checks that each secr
 
 It then asks:
 
-1. Which models to post-train. Qwen3.6-35B-A3B is selected by default.
+1. Which models to post-train. None are selected at first; press space to select one.
 2. LoRA or full fine-tuning, for models that support both. LoRA is selected by default.
 3. The longest sequence you'll train on (prompt + completion). Each model gets its smallest bundled config that fits.
 
