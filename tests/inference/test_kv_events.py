@@ -1,6 +1,6 @@
 import asyncio
-import json
 import struct
+from collections import deque
 
 import msgspec
 import pytest
@@ -11,7 +11,6 @@ import zmq.asyncio
 from spindle.inference.kv_events import (
     KVCache,
     KVEventSubscriber,
-    cache_salt,
     publisher_config,
 )
 
@@ -24,7 +23,8 @@ def stored(keys, tokens, parent=None, adapter="adapter-v1", medium="GPU"):
         parent_block_hash=parent,
         block_size=len(tokens) // len(keys),
         lora_id=None,
-        cache_salt=cache_salt(adapter),
+        cache_salt=None,
+        lora_name=adapter,
         medium=medium,
     )
 
@@ -51,39 +51,6 @@ def test_kv_prefix_hash_matches_router_request_hash():
     }
 
 
-def test_native_adapter_name_needs_no_cache_salt():
-    cache = KVCache()
-    event = stored([1], list(range(64)))
-    event["cache_salt"] = None
-    event["lora_name"] = "adapter-v1"
-    cache.apply(event)
-    assert digest("adapter-v1", list(range(64))) in cache.prefixes
-    assert cache.adapter_names_seen
-
-
-def test_cache_block_limit_evicts_oldest_branch(monkeypatch):
-    import spindle.inference.kv_events as kv_events
-
-    monkeypatch.setattr(kv_events, "MAX_BLOCKS", 2)
-    cache = KVCache()
-    cache.apply(stored([1], list(range(64))))
-    cache.apply(stored([2], list(range(64, 128)), parent=1))
-    cache.apply(stored([3], list(range(128, 192)), parent=2))
-    assert len(cache.blocks) <= kv_events.MAX_BLOCKS
-    assert not cache.prefixes
-
-
-def test_cache_salt_rewrite_preserves_per_request_batch_salts():
-    rewritten = cache_salt("adapter-v1", ["tenant-a", "tenant-b"])
-    assert isinstance(rewritten, list)
-    assert [
-        json.loads(value.removeprefix("spindle-kv:"))[1] for value in rewritten
-    ] == [
-        "tenant-a",
-        "tenant-b",
-    ]
-
-
 def test_chained_pages_eviction_and_adapter_versions():
     cache = KVCache()
     tokens = list(range(192))
@@ -108,8 +75,7 @@ def test_small_pages_cross_router_boundary_and_unknown_parent():
     cache = KVCache()
     cache.apply(stored(list(range(1, 81)), list(range(80))))
     assert set(cache.prefixes) == {digest("adapter-v1", list(range(64)))}
-    with pytest.raises(ValueError, match="parent is unknown"):
-        cache.apply(stored([100], list(range(64)), parent=999))
+    cache.apply(stored([100], list(range(64)), parent=999))
     assert 100 not in cache.blocks
     cache.apply(stored([101], list(range(64)), medium="CPU_PINNED"))
     assert 101 not in cache.blocks
@@ -126,17 +92,51 @@ def test_duplicate_gap_and_unsalted_events():
     assert not sub.cache.prefixes
     assert not sub.ready
     event = stored([4], list(range(64)))
-    event["cache_salt"] = None
     sub.cache.apply(event)
-    event["cache_salt"] = cache_salt("adapter-v1", "tenant")
+    event["cache_salt"] = "tenant-salt"
     sub.cache.apply(event)
-    assert not sub.cache.blocks
+    assert set(sub.cache.blocks) == {4}
+    assert len(sub.cache.prefixes) == 1
 
 
-def test_dp_publisher_port_ranges_do_not_overlap():
+@pytest.mark.parametrize(
+    "invalid_event",
+    [
+        {"lora_name": None, "cache_salt": None, "token_ids": list(range(64))},
+        {
+            "lora_name": "adapter-v1",
+            "cache_salt": "tenant",
+            "token_ids": list(range(64)),
+        },
+        {
+            "lora_name": "adapter-v1",
+            "cache_salt": None,
+            "token_ids": [(i, i + 1) for i in range(64)],
+        },
+    ],
+    ids=["unnamed", "salted", "bigram"],
+)
+def test_events_without_comparable_named_unigram_prefixes_are_skipped(invalid_event):
+    cache = KVCache()
+    event = stored([1], list(range(64)))
+    event.update(invalid_event)
+    cache.apply(event)
+    assert not cache.blocks
+    assert not cache.prefixes
+
+
+def test_routing_prefixes_are_bounded_and_favor_new_paths():
+    cache = KVCache()
+    for key in range(8193):
+        cache.apply(stored([key], list(range(key, key + 64))))
+    prefixes = cache._routing_prefixes()
+    assert len(prefixes) == 8192
+    assert digest("adapter-v1", list(range(8192, 8256))) in prefixes
+    assert digest("adapter-v1", list(range(64))) not in prefixes
+
+
+def test_publisher_config_has_single_rank_endpoints():
     assert publisher_config()["replay_endpoint"] == "tcp://*:5558"
-    with pytest.raises(ValueError, match="one data-parallel rank"):
-        publisher_config(4)
 
 
 @pytest.mark.parametrize(
@@ -156,25 +156,28 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
             (1, packet([stored([2], list(range(64, 128)), parent=1)])),
         ]
 
-        async def serve():
-            identity, delimiter, start = await router.recv_multipart()
-            assert delimiter == b""
-            start = int.from_bytes(start, "big")
-            for seq, payload in history:
-                if seq >= start:
-                    prefix = (
-                        [identity, b"", b"kv-events"] if with_topic else [identity, b""]
-                    )
-                    await router.send_multipart(
-                        prefix + [seq.to_bytes(8, "big"), payload]
-                    )
-            prefix = [identity, b"", b""] if with_topic else [identity, b""]
-            await router.send_multipart(
-                prefix + [(-1).to_bytes(8, "big", signed=True), b""]
-            )
+        async def serve(requests=1):
+            for _ in range(requests):
+                identity, delimiter, start = await router.recv_multipart()
+                assert delimiter == b""
+                start = int.from_bytes(start, "big")
+                for seq, payload in history:
+                    if seq >= start:
+                        prefix = (
+                            [identity, b"", b"kv-events"]
+                            if with_topic
+                            else [identity, b""]
+                        )
+                        await router.send_multipart(
+                            prefix + [seq.to_bytes(8, "big"), payload]
+                        )
+                prefix = [identity, b"", b""] if with_topic else [identity, b""]
+                await router.send_multipart(
+                    prefix + [(-1).to_bytes(8, "big", signed=True), b""]
+                )
 
-        async def replay():
-            await asyncio.gather(serve(), subscriber.replay(context))
+        async def replay(requests=1):
+            await asyncio.gather(serve(requests), subscriber.replay(context))
 
         try:
             await replay()
@@ -183,15 +186,64 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
             assert len(subscriber.cache.prefixes) == 2
             await replay()  # Anchor is deduplicated, including a quiet stream.
             assert len(subscriber.cache.prefixes) == 2
-            history[:] = [(0, packet([], ts=2.0))]
-            await (
-                replay()
-            )  # Replay has no latest-sequence marker when the buffer is empty.
+            history[:] = [(0, packet([stored([9], list(range(64)))], ts=2.0))]
+            await replay(2)  # A missing anchor probes the replay buffer from zero.
             assert subscriber.ready
-            assert len(subscriber.cache.prefixes) == 2
-            assert not subscriber.apply_publication(0, packet([], ts=2.0))
-            assert subscriber.sequence == -1
-            assert not subscriber.cache.prefixes
+            assert subscriber.sequence == 0
+            assert set(subscriber.cache.blocks) == {9}
+            assert digest("adapter-v1", list(range(64))) in subscriber.cache.prefixes
+        finally:
+            router.close(0)
+            context.term()
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+
+
+@pytest.mark.parametrize(
+    "with_topic", [False, True], ids=["sglang-0.5.21", "sglang-0.5.23"]
+)
+def test_replay_recovers_after_buffer_roll_without_inventing_ancestors(
+    tmp_path, with_topic
+):
+    async def scenario():
+        context = zmq.asyncio.Context()
+        router = context.socket(zmq.ROUTER)
+        endpoint = f"ipc://{tmp_path}/rolled"
+        router.bind(endpoint)
+        subscriber = KVEventSubscriber(replay_endpoint=endpoint)
+        history = deque(maxlen=2)
+
+        def add(sequence, event):
+            history.append((sequence, packet([event])))
+
+        add(0, stored([1], list(range(64))))
+        add(1, stored([2], list(range(64, 128)), parent=1))
+        add(2, stored([3], list(range(128, 192)), parent=2))
+        add(3, stored([4], list(range(64))))
+        add(4, stored([5], list(range(64, 128)), parent=4))
+
+        async def serve():
+            identity, delimiter, _ = await router.recv_multipart()
+            assert delimiter == b""
+            for seq, payload in history:
+                prefix = (
+                    [identity, b"", b"kv-events"] if with_topic else [identity, b""]
+                )
+                await router.send_multipart(prefix + [seq.to_bytes(8, "big"), payload])
+            prefix = [identity, b"", b""] if with_topic else [identity, b""]
+            await router.send_multipart(
+                prefix + [(-1).to_bytes(8, "big", signed=True), b""]
+            )
+
+        try:
+            await asyncio.gather(serve(), subscriber.replay(context))
+            assert subscriber.ready
+            assert subscriber.sequence == 4
+            assert set(subscriber.cache.blocks) == {4, 5}
+            assert set(subscriber.cache.prefixes) == {
+                digest("adapter-v1", list(range(64))),
+                digest("adapter-v1", list(range(128))),
+            }
         finally:
             router.close(0)
             context.term()
@@ -233,11 +285,24 @@ def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path):
             history.append((0, payload))
             await pub.send_multipart([b"kv-events", (0).to_bytes(8, "big"), payload])
             await until(lambda: len(subscriber.cache.prefixes) == 1)
+            history.append((1, packet([stored([2], list(range(64, 128)), parent=1)])))
+            history.append(
+                (2, packet([dict(type="BlockRemoved", block_hashes=[1], medium="GPU")]))
+            )
+            await pub.send_multipart(
+                [b"kv-events", (2).to_bytes(8, "big"), history[-1][1]]
+            )
+            await until(lambda: subscriber.sequence == 2)
+            assert not subscriber.cache.prefixes
+            payload = packet([stored([3], list(range(64)))])
+            history.append((3, payload))
+            await pub.send_multipart([b"kv-events", (3).to_bytes(8, "big"), payload])
+            await until(lambda: len(subscriber.cache.prefixes) == 1)
             # No PUB notification: idle replay must recover the final removal.
             history.append(
-                (1, packet([dict(type="BlockRemoved", block_hashes=[1], medium="GPU")]))
+                (4, packet([dict(type="BlockRemoved", block_hashes=[3], medium="GPU")]))
             )
-            await until(lambda: subscriber.sequence == 1)
+            await until(lambda: subscriber.sequence == 4)
             assert not subscriber.cache.prefixes
         finally:
             for task in tasks:

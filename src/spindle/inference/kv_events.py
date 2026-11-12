@@ -8,7 +8,6 @@ final publications. Missing history drops hints rather than inventing residency.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import struct
 import time
@@ -33,8 +32,7 @@ class Digest(Protocol):
 
 
 TOPIC = b"kv-events"
-SALT_PREFIX = "spindle-kv:"
-MAX_BLOCKS = 100_000
+MAX_PREFIXES = 8192
 KV_EVENTS_CONFIG = {
     "publisher": "zmq",
     "endpoint": "tcp://*:5557",
@@ -43,20 +41,8 @@ KV_EVENTS_CONFIG = {
 }
 
 
-def publisher_config(dp_size: int = 1) -> dict:
-    config = dict(KV_EVENTS_CONFIG)
-    if dp_size != 1:
-        raise ValueError("KV cache routing requires one data-parallel rank")
-    return config
-
-
-def cache_salt(
-    adapter: str, original: str | list[str] | None = None
-) -> str | list[str]:
-    if isinstance(original, list):
-        return [cache_salt(adapter, item) for item in original]
-    # Native lora_id is None; cache salt preserves adapter identity across replay.
-    return SALT_PREFIX + json.dumps([adapter, original], separators=(",", ":"))
+def publisher_config() -> dict:
+    return dict(KV_EVENTS_CONFIG)
 
 
 @dataclass
@@ -66,6 +52,7 @@ class Block:
     length: int
     digest: Digest
     prefixes: list[str]
+    order: int
 
 
 class KVCache:
@@ -73,13 +60,13 @@ class KVCache:
         self.blocks: dict[int, Block] = {}
         self.children: dict[int, set[int]] = defaultdict(set)
         self.prefixes: Counter[str] = Counter()
-        self.adapter_names_seen = False
+        self.next_order = 0
 
     def clear(self):
         self.blocks.clear()
         self.children.clear()
         self.prefixes.clear()
-        self.adapter_names_seen = False
+        self.next_order = 0
 
     def remove(self, key: int):
         pending = [key]
@@ -113,30 +100,24 @@ class KVCache:
         if kind != "BlockStored":
             raise ValueError(f"Unknown KV event: {kind}")
         adapter = event.get("lora_name")
-        salt = event.get("cache_salt") or ""
-        if salt.startswith(SALT_PREFIX):
-            salted_adapter, original_salt = json.loads(salt[len(SALT_PREFIX) :])
-            if original_salt:
-                return
-            adapter = adapter or salted_adapter
-        elif adapter:
-            self.adapter_names_seen = True
-            if salt:
-                return
-        else:
+        if event.get("cache_salt") or not adapter:
             return
-        if event.get("lora_name"):
-            self.adapter_names_seen = True
+        parent = event["parent_block_hash"]
+        if parent is not None and parent not in self.blocks:
+            return
         size = event["block_size"]
         tokens = event["token_ids"]
         keys = event["block_hashes"]
+        if any(
+            not isinstance(token, int) or isinstance(token, bool) for token in tokens
+        ):
+            return
         if size <= 0 or len(tokens) != size * len(keys):
             raise ValueError("Invalid KV block size")
-        parent = event["parent_block_hash"]
+        if parent is not None and self.blocks[parent].adapter != adapter:
+            raise ValueError("KV block crosses adapter namespaces")
         for index, key in enumerate(keys):
             ancestor = self.blocks.get(parent)
-            if parent is not None and ancestor is None:
-                raise ValueError("KV block parent is unknown")
             if ancestor is not None and ancestor.adapter != adapter:
                 raise ValueError("KV block crosses adapter namespaces")
             digest = (
@@ -152,13 +133,33 @@ class KVCache:
                 if length % 64 == 0:
                     prefixes.append(digest.hexdigest())
             if key not in self.blocks:
-                self.blocks[key] = Block(parent, adapter, length, digest, prefixes)
+                self.blocks[key] = Block(
+                    parent, adapter, length, digest, prefixes, self.next_order
+                )
+                self.next_order += 1
                 self.prefixes.update(prefixes)
                 if parent is not None:
                     self.children[parent].add(key)
             parent = key
-        while len(self.blocks) > MAX_BLOCKS:
-            self.remove(next(iter(self.blocks)))
+
+    def _routing_prefixes(self, limit: int = MAX_PREFIXES) -> list[str]:
+        leaves = [key for key in self.blocks if not self.children.get(key)]
+        leaves.sort(
+            key=lambda key: (self.blocks[key].order, self.blocks[key].length),
+            reverse=True,
+        )
+        selected: set[str] = set()
+        for leaf in leaves:
+            path = []
+            key: int | None = leaf
+            while key is not None:
+                block = self.blocks[key]
+                path.extend(block.prefixes)
+                key = block.parent
+            additions = set(path) - selected
+            if len(selected) + len(additions) <= limit:
+                selected.update(additions)
+        return sorted(selected)
 
 
 class KVEventSubscriber:
@@ -187,12 +188,8 @@ class KVEventSubscriber:
             self.ready = False
             return False
         batch = msgspec.msgpack.decode(payload)
-        try:
-            for event in batch[1]:
-                self.cache.apply(event)
-        except (KeyError, TypeError, ValueError, IndexError):
-            self.cache.clear()
-            raise
+        for event in batch[1]:
+            self.cache.apply(event)
         self.sequence = sequence
         self.anchor = payload
         self.checked_at = time.monotonic()
@@ -214,44 +211,64 @@ class KVEventSubscriber:
         socket.setsockopt(zmq.LINGER, 0)
         socket.connect(self.replay_endpoint)
         try:
-            await socket.send_multipart(
-                [b"", max(self.sequence + 1, 0).to_bytes(8, "big")]
-            )
-            batches = []
-            async with asyncio.timeout(2):
-                while True:
-                    frames = await socket.recv_multipart()
-                    topic = TOPIC
-                    if len(frames) == 3:
-                        delimiter, seq, payload = frames
-                    elif len(frames) == 4:
-                        delimiter, topic, seq, payload = frames
-                    else:
-                        raise ValueError("Invalid KV replay frame count")
-                    if delimiter != b"" or len(seq) != 8:
-                        raise ValueError("Invalid KV replay frames")
-                    sequence = int.from_bytes(seq, "big", signed=True)
-                    if sequence == -1:
-                        break
-                    if topic != TOPIC:
-                        raise ValueError("Invalid KV replay topic")
-                    batches.append((sequence, payload))
-            if (
-                batches
-                and self.sequence >= 0
-                and batches[0][0] == 0
-                and self.sequence > 0
+
+            async def fetch(start: int):
+                await socket.send_multipart([b"", start.to_bytes(8, "big")])
+                batches = []
+                async with asyncio.timeout(2):
+                    while True:
+                        frames = await socket.recv_multipart()
+                        topic = TOPIC
+                        if len(frames) == 3:
+                            delimiter, seq, payload = frames
+                        elif len(frames) == 4:
+                            delimiter, topic, seq, payload = frames
+                        else:
+                            raise ValueError("Invalid KV replay frame count")
+                        if delimiter != b"" or len(seq) != 8:
+                            raise ValueError("Invalid KV replay frames")
+                        sequence = int.from_bytes(seq, "big", signed=True)
+                        if sequence == -1:
+                            return batches
+                        if topic != TOPIC:
+                            raise ValueError("Invalid KV replay topic")
+                        batches.append((sequence, payload))
+
+            batches = await fetch(max(self.sequence, 0))
+            if self.sequence > 0 and not any(
+                sequence == self.sequence for sequence, _ in batches
             ):
-                self.reset()
-            if batches and batches[0][0] > self.sequence + 1:
-                self.reset()
-                return
-            for sequence, payload in batches:
-                if sequence <= self.sequence:
-                    continue
-                if not self.apply(sequence, payload):
-                    self.reset()
-                    return
+                batches = await fetch(0)
+            anchor_index = next(
+                (
+                    i
+                    for i, (sequence, _) in enumerate(batches)
+                    if sequence == self.sequence
+                ),
+                None,
+            )
+            if self.sequence >= 0 and (
+                anchor_index is None or batches[anchor_index][1] != self.anchor
+            ):
+                self.cache.clear()
+                self.sequence = -1
+                self.anchor = None
+                self.ready = False
+                anchor_index = None
+            start = anchor_index + 1 if anchor_index is not None else 0
+            previous = self.sequence
+            for sequence, payload in batches[start:]:
+                if sequence != previous + 1:
+                    self.cache.clear()
+                    self.sequence = sequence - 1
+                    self.anchor = None
+                    self.ready = False
+                self.apply(sequence, payload)
+                previous = sequence
+            if not batches and self.sequence >= 0:
+                self.cache.clear()
+                self.sequence = -1
+                self.anchor = None
             self.ready = True
             self.checked_at = time.monotonic()
         finally:
