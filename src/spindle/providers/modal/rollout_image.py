@@ -1,7 +1,7 @@
 import modal
 
 from .image_dependencies import (
-    CORE_PACKAGES,
+    SAMPLER_PACKAGES,
     STITCH_PACKAGE,
     TINKER_PACKAGE,
     ignore_config_source,
@@ -13,7 +13,7 @@ SGLANG_BRANCH = "spindle-sglang-v0.5.23"
 SGLANG_REVISION = "90785332b8e3e1202ae280d85ecec197473bd5a8"
 # v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
 CORE_SAMPLER_PACKAGES = (
-    *(p for p in CORE_PACKAGES if not p.startswith("opentelemetry-")),
+    *(p for p in SAMPLER_PACKAGES if not p.startswith("opentelemetry-")),
     "opentelemetry-sdk==1.45.2",
     "opentelemetry-exporter-otlp-proto-http==1.45.2",
 )

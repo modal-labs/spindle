@@ -30,8 +30,9 @@ MAX_PREFIXES = 8192
 REPLAY_STALL_TIMEOUT_SECONDS = 2.0
 KV_EVENTS_CONFIG = {
     "publisher": "zmq",
-    "endpoint": "tcp://*:5557",
-    "replay_endpoint": "tcp://*:5558",
+    "endpoint": "tcp://127.0.0.1:5557",
+    "bind": True,
+    "replay_endpoint": "tcp://127.0.0.1:5558",
     "topic": TOPIC.decode(),
 }
 

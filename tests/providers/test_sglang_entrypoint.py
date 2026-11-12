@@ -11,9 +11,10 @@ from spindle.inference.kv_events import KV_EVENTS_CONFIG
 from spindle.deployments import DeploymentConfig, config_path, load
 
 
-@pytest.mark.parametrize("source", [None, "kv_events", "compare"])
+@pytest.mark.parametrize("source", [None, "hook", "kv_events", "compare"])
 def test_sglang_constructor_receives_recorded_settings(monkeypatch, source):
     row = DeploymentConfig.create(load(config_path("qwen35-9b-lora-16k")))
+    row.inference_settings["kv_events_config"] = '{"publisher":"null"}'
     calls = []
 
     class ServerArgs:
@@ -48,7 +49,7 @@ def test_sglang_constructor_receives_recorded_settings(monkeypatch, source):
             **row.inference_settings,
             **(
                 {"kv_events_config": json.dumps(KV_EVENTS_CONFIG)}
-                if source is not None
+                if source in {"kv_events", "compare"}
                 else {}
             ),
         },
