@@ -116,8 +116,11 @@ The [full DAPO-Math reference run](../reference_runs/results/dapo-math-qwen35-4b
 completed 20 accepted updates, 21 sampler publications, five held-out evaluations,
 and three checkpoint saves. Held-out accuracy went from 61/256 (23.8%) to 92/256
 (35.9%). Median SDK sampling, backward, and publication times were 48.5, 39.9,
-and 19.9 seconds; median trainer-internal backward was 10.4 seconds. One run does
-not establish learning or performance parity with another runtime.
+and 19.9 seconds; median trainer-internal backward was 10.4 seconds. The fresh
+v0.1.1 reference finished at 107/256 (41.8%), with 16.6-second median SDK backward
+and 7.9-second publication. The new path was slower in this pair. Different
+warm-up and autoscaling settings, and only one run per runtime, limit attribution;
+learning and performance parity are not established.
 
 An earlier two-update
 smoke run used Spindle `75b3e49` and Miles `949b877`; it completed training,

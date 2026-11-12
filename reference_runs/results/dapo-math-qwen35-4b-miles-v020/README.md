@@ -38,6 +38,34 @@ each reporting 81,559 MiB. Samplers scaled from cold rather than starting as two
 warm replicas. The driver used two CPU cores and 8 GiB memory with Tinker 0.26.0.
 No deployment settings changed during the run.
 
+## Comparison with the fresh reference
+
+The [fresh Miles v0.1.1 reference](../dapo-math-qwen35-4b/README.md) used client
+and deployment source `e24a4fd` and Miles fork `fdd808c`. Both runs used the same
+training algorithm, stock SDK version, model, rank, data, and seed, with four
+actual H100 trainer GPUs and two actual single-H100 sampler replicas.
+
+| Measurement | Miles v0.1.1 reference | Miles v0.2.0 |
+| --- | ---: | ---: |
+| Initial held-out correct | 53/256 (20.7%) | 61/256 (23.8%) |
+| Final held-out correct | 107/256 (41.8%) | 92/256 (35.9%) |
+| Accepted updates | 20/20 | 20/20 |
+| Median sampling seconds | 45.3 | 48.5 |
+| Median SDK backward seconds | 16.6 | 39.9 |
+| Median trainer-internal backward seconds | 8.9 | 10.4 |
+| Median optimizer seconds | 1.2 | 1.8 |
+| Median publication seconds | 7.9 | 19.9 |
+| Median seconds between updates | 73.5 | 121.6 |
+| Checkpoint save seconds, steps 0/10/20 | 4.8 / 14.3 / 10.0 | 19.6 / 22.2 / 23.2 |
+
+The new runtime was slower and had lower final accuracy in this pair. These
+results establish successful execution and recovery, not learning or performance
+parity. Each runtime has only one run; the initial evaluation scores also differ.
+The baseline warmed both samplers with a smoke run, fixed two sampler replicas,
+and limited the trainer to one client. This run started samplers cold, allowed
+zero to eight replicas, and allowed eight trainer clients while using one.
+Those differences prevent attributing the entire timing gap to the Miles version.
+
 ## Deployment configuration
 
 [`deployment.py`](deployment.py) records the model and runtime settings used for
