@@ -64,7 +64,6 @@ SMOKE = {
     "groups": 4,
     "eval_problems": 8,
     "eval_samples": 1,
-    "max_response_tokens": 256,
     "evaluation_interval": 1,
     "checkpoint_interval": 1,
 }
@@ -357,7 +356,7 @@ def client_revision() -> str:
 
     try:
         return git("rev-parse", "HEAD") + (
-            "-dirty" if git("status", "--porcelain") else ""
+            "-dirty" if git("status", "--porcelain", "--untracked-files=no") else ""
         )
     except (OSError, subprocess.CalledProcessError):
         return UNKNOWN
