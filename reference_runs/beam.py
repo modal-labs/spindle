@@ -760,14 +760,48 @@ def run(args, config):
                         behavior_policy_step=manifest["policy"],
                         **batch_metrics,
                     )
-                except Exception:
+                except Exception as error:
                     latest = read_records(args.output / "metrics.jsonl")
                     submitted = any(
                         r["event"] == "optimizer_submitted" and r["step"] == step
                         for r in latest
                     )
-                    rejected = optimizer_outcome(latest, step) == 0
-                    if not submitted or rejected:
+                    outcome = optimizer_outcome(latest, step)
+                    rejected = outcome == 0
+                    if outcome == 1:
+                        if not any(
+                            r["event"] == "update" and r["step"] == step for r in latest
+                        ):
+                            phase = {
+                                name: next(
+                                    r
+                                    for r in reversed(latest)
+                                    if r["event"] == name and r["step"] == step
+                                )
+                                for name in [
+                                    "update_started",
+                                    "backward",
+                                    "optimizer_result",
+                                ]
+                            }
+                            result = phase["optimizer_result"]
+                            journal.event(
+                                "update",
+                                step=step,
+                                time=result["time"],
+                                seconds=result["time"]
+                                - phase["update_started"]["time"],
+                                timing_source="journal_wall_clock",
+                                behavior_policy_step=manifest["policy"],
+                                learning_rate=learning_rate(step),
+                                metrics=phase["backward"]["metrics"],
+                                optimizer=result["metrics"],
+                                diagnostics_available=False,
+                                reporting_error=type(error).__name__,
+                                **batch_metrics,
+                            )
+                        checkpoint(step)
+                    elif not submitted or rejected:
                         pending_descriptor = current_descriptor
                         journal.event(
                             "update_rejected"

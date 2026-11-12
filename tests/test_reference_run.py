@@ -216,7 +216,17 @@ def test_invalid_resume_does_not_change_training_history(tmp_path, stop_after):
 
 @pytest.mark.parametrize("lose_cache", [False, True])
 @pytest.mark.parametrize(
-    "failure_phase", [None, "prefetch", "publish", "backward", "rejected"]
+    "failure_phase",
+    [
+        None,
+        "prefetch",
+        "publish",
+        "backward",
+        "rejected",
+        "diagnostics",
+        "report",
+        "reported",
+    ],
 )
 def test_checkpoint_resume_preserves_cached_behavior_and_update_sequence(
     tmp_path, monkeypatch, lose_cache, failure_phase
@@ -341,6 +351,31 @@ def test_checkpoint_resume_preserves_cached_behavior_and_update_sequence(
     monkeypatch.setenv("TINKER_API_KEY", "test")
     original_capture = beam.capture
 
+    original_exp = beam.np.exp
+
+    def exp(value):
+        if failure_phase == "diagnostics" and failures:
+            failures.pop()
+            raise ValueError("simulated diagnostics failure")
+        return original_exp(value)
+
+    monkeypatch.setattr(beam.np, "exp", exp)
+    original_event = beam.Journal.event
+
+    def event(journal, name, **values):
+        failing = (
+            name == "update" and failures and failure_phase in {"report", "reported"}
+        )
+        if failing:
+            failures.pop()
+            if failure_phase == "report":
+                values["tis_mean"] = float("nan")
+        original_event(journal, name, **values)
+        if failing and failure_phase == "reported":
+            raise RuntimeError("simulated reported failure")
+
+    monkeypatch.setattr(beam.Journal, "event", event)
+
     def capture(*a, **kw):
         if failure_phase == "prefetch" and a[2] == 2 and failures:
             failures.pop()
@@ -350,15 +385,28 @@ def test_checkpoint_resume_preserves_cached_behavior_and_update_sequence(
     monkeypatch.setattr(beam, "capture", capture)
     if failure_phase:
         with pytest.raises(
-            RuntimeError,
+            ValueError if failure_phase in {"diagnostics", "report"} else RuntimeError,
             match="Optimizer update rejected"
             if failure_phase == "rejected"
+            else "Out of range float values"
+            if failure_phase == "report"
             else f"simulated {failure_phase} failure",
         ):
             beam.run(args, config)
     else:
         beam.run(args, config)
     assert instances[0].step == (0 if failure_phase in {"backward", "rejected"} else 1)
+    if failure_phase in {"diagnostics", "report", "reported"}:
+        events = beam.read_records(output / "metrics.jsonl")
+        accepted = [r for r in events if r["event"] == "update"]
+        assert len(accepted) == 1
+        if failure_phase != "reported":
+            assert accepted[0]["diagnostics_available"] is False
+            assert "tis_mean" not in accepted[0]
+        saved = [r for r in events if r["event"] == "checkpoint"][-1]
+        assert saved["step"] == 1
+        assert saved["pending_rollout"]["step"] == 2
+        assert saved["pending_rollout"]["policy"] == 0
     before = len(calls)
     args.resume = [
         r
@@ -400,7 +448,7 @@ def test_checkpoint_resume_preserves_cached_behavior_and_update_sequence(
         assert calls[before:] == [(0, True)] * extra_groups
     assert [r["behavior_policy_step"] for r in events if r["event"] == "cycle"] == [
         0
-    ] * (1 if failure_phase == "prefetch" else 2)
+    ] * (1 if failure_phase in {"prefetch", "diagnostics", "report", "reported"} else 2)
     assert events[-1]["event"] == "completed"
 
 
