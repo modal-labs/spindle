@@ -38,6 +38,33 @@ each reporting 81,559 MiB. Samplers scaled from cold rather than starting as two
 warm replicas. The driver used two CPU cores and 8 GiB memory with Tinker 0.26.0.
 No deployment settings changed during the run.
 
+## Deployment configuration
+
+[`deployment.py`](deployment.py) records the model and runtime settings used for
+this run. It inherits the [Qwen3.5-4B preset at the validated commit](https://github.com/modal-projects/spindle/blob/0edd81bf982088864fb0a6179352c366dcb8be8b/src/spindle/configs/qwen35_4b_lora_32k.py).
+The resolved trainer and inference settings were compared with the original
+local deployment override and matched.
+
+- Trainer: `miles-v0.2.0`, four H100 GPUs, one instance, up to eight clients;
+  this workload used one training client.
+- Sampler: one H100 per replica, autoscaling from zero to eight replicas;
+  two replicas were observed during the run.
+- Session, pool idle, and sweep intervals: 300 seconds.
+- Platform settings were supplied separately: frontend app and Modal environment,
+  API/proxy secret bindings, and model-assets/checkpoint/bulletin volume bindings.
+  Proxy authentication was enabled. The optional Hugging Face secret was disabled
+  for this public model. GPU placement had no region constraint.
+
+The later cold/warm diagnostic used `trainer_gpu = "H100!"` to prohibit an
+automatic H200 upgrade. Both runs' actual H100 allocations
+were checked directly. The full training run requested plain `H100`; the recorded
+config preserves that distinction.
+
+The newer fixed-hardware baseline recipe uses two fixed sampler replicas and one
+trainer client slot. Those settings differ from this run's autoscaling policy and
+eight-client limit, even though the observed GPU types and counts match. The
+benchmark's training algorithm was unchanged.
+
 ## Checkpoint and slot checks
 
 [Checkpoint results](checkpoint-validation.json) record independent CPU reads
@@ -54,6 +81,8 @@ and one optimizer-step tensor.
 | Warm interleaved B against serial B | All 775 tensors bitwise equal |
 | Original cold interleaved B against serial B | All 775 tensors bitwise equal |
 | Original cold interleaved A against serial A | 128 weights and 258 moment tensors differ; cause unresolved |
+| Restored-first cold versus warm serial updates | All 775 tensors bitwise equal after both step 1 and step 2 |
+| Full reference run checkpoint restored in a new trainer | All 775 tensors bitwise equal, including moments and step 20 |
 
 The slot probe uses one four-token cross-entropy sequence per update. A uses
 input token IDs `[100, 200, 300, 400]` and shifted targets ending in `500`; B
@@ -73,6 +102,19 @@ error is `6.85557e-5`; weight relative L2 error is `5.41504e-5` over all adapter
 weights. BF16 casting leaves 111 weight tensors different. These numbers do not
 establish an effect on output quality or identify a cause. The maximum error
 across all state tensors, `0.00194091`, belongs to second moments, not weights.
+
+A second restart probe restored the original A initial checkpoint before any
+training forward/backward. It saved after each of two serial updates, restored
+the same initial checkpoint, and repeated both updates on the warm runtime.
+All tensors matched at both steps. Its step-2 hash also matched the original
+serial control and warm interleaved A. Generic cold execution did not reproduce
+the original discrepancy; fresh initialization versus restored state, or an
+intermittent numerical effect, remains possible. This is not demonstrated
+cross-slot contamination, and no Miles patch was made.
+
+The same new trainer restored the full reference run's step-20 checkpoint and
+saved it without updating. All 775 tensors matched bitwise, including nonzero
+Adam moments and optimizer step 20.
 
 Hashes in the JSON cover the source checkpoint of each comparison. The
 `continued-state` entry is a self-read used to verify saved step 3; it is not

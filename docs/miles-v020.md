@@ -4,8 +4,8 @@ Select `trainer_image = "miles-v0.2.0"` to use the new runtime with an existing
 Miles LoRA configuration. The default image and existing model recipes have not
 changed. Stock Tinker SDK checks on four H100 trainer GPUs cover training,
 cold restart with exact optimizer restore, and weights-only restore. The full
-20-update reference workload completed. The initial cold-slot discrepancy remains
-under investigation.
+20-update reference workload completed. An initial fresh-slot numerical discrepancy remains
+unexplained.
 
 The new path uses Miles' typed configuration, trainer initialization request,
 per-slot optimizers, and native adapter-directory checkpoint API. It supports the
@@ -99,13 +99,18 @@ SDK 0.26.0:
 - A trained checkpoint restored in a new trainer container with all 775 tensors
   bitwise equal, including nonzero Adam moments and optimizer step 2.
 - The next update was accepted and saved optimizer step 3.
+- The full reference run's trained checkpoint also restored in a new container
+  with all 775 tensors bitwise equal, including moments and optimizer step 20.
 - Weights-only restore preserved every weight exactly and reset moments and step
   to zero.
 - Two interleaved updates on each of two restored slots matched the serial
   controls bitwise across all 775 tensors per slot.
 - The original cold run differed from its serial control for one slot: 128
   weights and 258 moment tensors in layers 0–19. The second slot matched.
-  Warm replay did not reproduce the difference. Its cause remains unresolved.
+  Warm replay did not reproduce the difference. Restoring the same initial state
+  before any backward and comparing two cold versus warm serial updates also
+  matched bitwise after both steps. The original cause remains unresolved;
+  cross-slot contamination was not demonstrated.
 
 The [full DAPO-Math reference run](../reference_runs/results/dapo-math-qwen35-4b-miles-v020/README.md)
 completed 20 accepted updates, 21 sampler publications, five held-out evaluations,
