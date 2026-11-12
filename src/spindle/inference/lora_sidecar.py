@@ -49,25 +49,22 @@ async def refresh_loads(app):
         )
         response.raise_for_status()
         loads = response.json()["loads"]
-        if not isinstance(loads, list) or any(
-            not isinstance(load, dict) for load in loads
-        ):
-            raise ValueError("Invalid SGLang loads response")
-        if (
-            len(loads) == 1
-            and not {
-                "timestamp",
-                "num_running_reqs",
-                "num_waiting_reqs",
-                "num_used_tokens",
-                "max_total_num_tokens",
+        app.state.loads = (
+            {
+                key: loads[0][key]
+                for key in (
+                    "timestamp",
+                    "num_running_reqs",
+                    "num_waiting_reqs",
+                    "num_used_tokens",
+                    "max_total_num_tokens",
+                )
             }
-            <= loads[0].keys()
-        ):
-            raise ValueError("Incomplete SGLang loads response")
-        app.state.loads = loads[0] if len(loads) == 1 else None
+            if len(loads) == 1
+            else None
+        )
         app.state.loads_at = time.monotonic()
-    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+    except (httpx.HTTPError, ValueError, LookupError, TypeError):
         pass
     finally:
         app.state.loads_task = None
@@ -180,18 +177,15 @@ def kv_view(app):
     )
 
 
-def routing_body(app, work, snapshot=None):
+def routing_body(app, work):
     return {
         "replica": os.environ.get("MODAL_TASK_ID", "local"),
         "active": len(app.state.routing_requests),
         "adapters": dict(Counter(app.state.routing_requests.values())),
         "request_ids": list(app.state.routing_requests),
         "pending_adapters": sorted(set(app.state.routing_requests.values())),
-        "cpu_adapters": (work or {}).get(
-            "cpu_adapters",
-            (snapshot or {}).get("cpu_adapters", []),
-        ),
-        "age_seconds": work.get("age_seconds") if work else None,
+        "cpu_adapters": work["cpu_adapters"] if work else [],
+        "age_seconds": work["age_seconds"] if work else None,
         "work": work,
     }
 
@@ -220,7 +214,7 @@ def create_app(
         app.state.adapter_resolutions = {}
         app.state.routing_requests = {}
         app.state.request_work = {}
-        app.state.routing_catalog = {} if routing_source != "kv_events" else None
+        app.state.routing_catalog = {}
         app.state.routing_read_at = 0.0
         app.state.request_replay = RequestReplay()
         app.state.kv_events = (
@@ -266,8 +260,7 @@ def create_app(
     async def routing_state():
         if routing_source == "kv_events":
             return routing_body(app, kv_view(app))
-        snapshot = await hook_view(app)
-        return routing_body(app, snapshot, snapshot)
+        return routing_body(app, await hook_view(app))
 
     if routing_source == "compare":
 
@@ -357,7 +350,7 @@ def create_app(
                     status_code=409,
                 )
 
-        remember_request(payload)
+        remember_request(payload, payload.get("lora_path", "base"))
         response = await _post_generate(app.state.client, payload)
         try:
             body = response.json()

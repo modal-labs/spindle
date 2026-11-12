@@ -90,7 +90,7 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
             app.state.loads_at = time.monotonic()
         state = client.get("/routing-state").json()
         if source == "kv_events":
-            assert app.state.routing_catalog is None
+            assert app.state.routing_read_at == 0.0
         work = state["work"]
         assert {
             "age_seconds",

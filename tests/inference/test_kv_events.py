@@ -160,10 +160,13 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
             (1, packet([stored([2], list(range(64, 128)), parent=1)])),
         ]
 
+        ready_at_request = []
+
         async def serve(requests=1):
             for _ in range(requests):
                 identity, delimiter, start = await router.recv_multipart()
                 assert delimiter == b""
+                ready_at_request.append(subscriber.snapshot[0])
                 start = int.from_bytes(start, "big")
                 for seq, payload in history:
                     if seq >= start:
@@ -190,12 +193,20 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
             assert len(subscriber.cache.prefixes) == 2
             await replay()  # Anchor is deduplicated, including a quiet stream.
             assert len(subscriber.cache.prefixes) == 2
+            assert ready_at_request == [False, True]
             history[:] = [(0, packet([stored([9], list(range(64)))], ts=2.0))]
             await replay(2)  # A missing anchor probes the replay buffer from zero.
             assert subscriber.ready
             assert subscriber.sequence == 0
             assert set(subscriber.cache.blocks) == {9}
             assert digest("adapter-v1", list(range(64))) in subscriber.cache.prefixes
+            # A restarted publisher that already passed our sequence replays from zero.
+            history[:] = [
+                (0, packet([stored([5], list(range(64)))], ts=3.0)),
+                (1, packet([stored([6], list(range(64, 128)), parent=5)], ts=3.0)),
+            ]
+            await replay(2)
+            assert set(subscriber.cache.blocks) == {5, 6}
         finally:
             router.close(0)
             context.term()
@@ -388,13 +399,10 @@ def test_replay_timeout_applies_to_each_frame(tmp_path):
         endpoint = f"ipc://{tmp_path}/slow-replay"
         router.bind(endpoint)
         subscriber = KVEventSubscriber(replay_endpoint=endpoint)
-        subscriber.ready = True
-        subscriber._publish_snapshot()
 
         async def serve():
             identity, delimiter, start = await router.recv_multipart()
             assert delimiter == b"" and int.from_bytes(start, "big") == 0
-            assert not subscriber.snapshot[0]
             for sequence in range(3):
                 await asyncio.sleep(0.75)
                 event = stored(
@@ -544,7 +552,6 @@ def test_native_adapter_name_needs_no_cache_salt():
     event["lora_name"] = "adapter-v1"
     cache.apply(event)
     assert digest("adapter-v1", list(range(64))) in cache.prefixes
-    assert cache.adapter_names_seen
 
 
 def test_cache_keeps_shared_root_with_many_blocks():

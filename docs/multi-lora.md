@@ -187,6 +187,6 @@ The two views can differ in these ways:
 - On hybrid Mamba models, the hook counts only prefix boundaries with valid Mamba state. KV events cannot report that state.
 - On hybrid sliding-window pools, KV load reports the greater of full-pool and sliding-window token use; the hook reports full-pool use.
 - With SGLang disaggregation enabled, `/v1/loads` includes its prefill and decode queues in `waiting_requests`; the hook counts only the scheduler's main waiting queue.
-- KV events do not identify GPU-resident adapters, so `gpu_adapters` is empty.
+- KV events do not identify GPU-resident adapters, so `gpu_adapters` is empty and the router ranks a replica with the adapter on its GPU no higher than one that only has it loaded in CPU memory.
 
-At `page_size=1`, expect about 60 MiB of cache memory per million resident KV tokens: a synthetic run used 131 MiB RSS at 1 million tokens and 294 MiB at 4 million, including about 70 MiB for the empty Python process.
+With SGLang's default `page_size` of 1, the sidecar keeps about 60 MiB per million cached tokens and spends about 3 microseconds of CPU per cached token. Custom sampler images need `pyzmq` and `msgspec`.

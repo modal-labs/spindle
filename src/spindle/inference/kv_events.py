@@ -44,7 +44,6 @@ def publisher_config() -> dict:
 class _BlockIndex:
     def __init__(self):
         self.wide = False
-        self.yield_gil = False
         self._allocate(1024)
         self.count = 0
         self.occupied = 0
@@ -116,8 +115,6 @@ class _BlockIndex:
         for i, state in enumerate(old_states):
             if state == 1:
                 self._insert(old_keys[i], old_refs[i])
-            if self.yield_gil and i & 4095 == 4095:
-                time.sleep(0)
         old_keys.release()
         old_refs.release()
         old_states.release()
@@ -128,13 +125,11 @@ class _BlockIndex:
         self._resize(len(self.states))
 
     def clear(self):
-        yield_gil = self.yield_gil
         self.keys.release()
         self.refs.release()
         self.states.release()
         self.storage.close()
         self.__init__()
-        self.yield_gil = yield_gil
 
 
 class _Chain:
@@ -226,12 +221,10 @@ class _Chain:
 class KVCache:
     def __init__(self):
         self.blocks = _BlockIndex()
-        self.yield_gil = False
         self.chains: list[_Chain | None] = []
         self.free_chains: list[int] = []
         self.children: dict[int, set[int]] = {}
         self.prefix_counts: dict[str, int] = {}
-        self.adapter_names_seen = False
 
     @property
     def prefixes(self):
@@ -246,7 +239,6 @@ class KVCache:
         self.free_chains.clear()
         self.children.clear()
         self.prefix_counts.clear()
-        self.adapter_names_seen = False
 
     def _chain_ref(self, key):
         ref = self.blocks.get(key)
@@ -276,14 +268,12 @@ class KVCache:
             chain, first = pending.pop()
             if not chain.count or first >= chain.count:
                 continue
-            for index, child_key in enumerate(chain.keys[first : chain.count]):
+            for child_key in chain.keys[first : chain.count]:
                 for child_id in self.children.pop(child_key, ()):
                     child = self.chains[child_id]
                     if child is not None:
                         pending.append((child, 0))
                 self.blocks.pop(child_key)
-                if self.yield_gil and index & 511 == 511:
-                    time.sleep(0)
             for position, prefix in zip(chain.positions, chain.prefixes, strict=True):
                 if position > first * chain.size:
                     count = self.prefix_counts[prefix] - 1
@@ -323,7 +313,6 @@ class KVCache:
         adapter = event.get("lora_name")
         if not adapter or event.get("cache_salt"):
             return
-        self.adapter_names_seen = True
         size = event["block_size"]
         tokens = event["token_ids"]
         keys = event["block_hashes"]
@@ -403,8 +392,6 @@ class KVCache:
                     self.prefix_counts[prefix] = self.prefix_counts.pop(prefix, 0) + 1
                     next_boundary = 64
                 self.blocks.insert(key, chain_id << 16 | index)
-                if self.yield_gil and index & 511 == 511:
-                    time.sleep(0)
             if offset < len(group_tokens):
                 digest.update(data[offset * 8 :])
             parent = group_keys[-1]
@@ -442,8 +429,6 @@ class KVEventSubscriber:
         async def worker():
             self._loop = asyncio.get_running_loop()
             self._run_task = asyncio.current_task()
-            self.cache.yield_gil = True
-            self.cache.blocks.yield_gil = True
             self._thread_started.set()
             while True:
                 try:
@@ -517,8 +502,6 @@ class KVEventSubscriber:
         try:
             socket.setsockopt(zmq.LINGER, 0)
             socket.connect(self.replay_endpoint)
-            self.ready = False
-            self._publish_snapshot()
 
             async def fetch(start: int):
                 await socket.send_multipart([b"", start.to_bytes(8, "big")])
@@ -543,38 +526,17 @@ class KVEventSubscriber:
                     batches.append((sequence, payload))
 
             batches = await fetch(max(self.sequence, 0))
-            if self.sequence > 0 and not any(
-                sequence == self.sequence for sequence, _ in batches
-            ):
-                batches = await fetch(0)
-            anchor_index = next(
-                (
-                    i
-                    for i, (sequence, _) in enumerate(batches)
-                    if sequence == self.sequence
-                ),
-                None,
-            )
-            if self.sequence >= 0 and (
-                anchor_index is None or batches[anchor_index][1] != self.anchor
-            ):
+            if self.sequence >= 0 and batches[:1] != [(self.sequence, self.anchor)]:
+                # The publisher restarted or its replay buffer rolled past us.
                 self.reset()
-                anchor_index = None
-            start = anchor_index + 1 if anchor_index is not None else 0
-            previous = self.sequence
-            for index, (sequence, payload) in enumerate(batches[start:]):
-                if sequence != previous + 1:
+                batches = await fetch(0)
+            for index, (sequence, payload) in enumerate(batches):
+                if sequence > self.sequence + 1:
                     self.cache.clear()
                     self.sequence = sequence - 1
-                    self.anchor = None
-                    self.ready = False
-                    self._publish_snapshot()
                 self.apply(sequence, payload)
-                previous = sequence
                 if index & 31 == 31:
                     await asyncio.sleep(0)
-            if not batches and self.sequence >= 0:
-                self.reset()
             self.ready = True
             self.checked_at = time.monotonic()
             self._publish_snapshot()
