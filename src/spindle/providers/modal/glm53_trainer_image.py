@@ -1,7 +1,7 @@
 """Miles-pinned GLM model dependency with the release Bridge core preserved."""
 
-from .miles_image import BRIDGE_IMPORT_CACHE_PATCH
 from .image_dependencies import ignore_config_source
+from .miles_image_common import BRIDGE_IMPORT_CACHE_INSTALL
 from .miles_release_image import MILES_PATH, release_image
 
 # Merged modal-projects/miles#31 on spindle-miles-v0.1.2.
@@ -15,11 +15,5 @@ image = release_image.run_commands(
     # model packages from the dependency, retaining the release Bridge core.
     f"pip install -r {MILES_PATH}/docker/requirements-glm53.txt",
     f"python {MILES_PATH}/docker/install_glm53_provider.py",
-    "python - <<'PY'\n"
-    "from importlib.metadata import distribution\n"
-    "import subprocess\n"
-    "root = distribution('megatron-bridge').locate_file('')\n"
-    "subprocess.run(['patch', '-p1', '-d', str(root)], input="
-    + repr(BRIDGE_IMPORT_CACHE_PATCH)
-    + ", text=True, check=True)\nPY\n",
+    BRIDGE_IMPORT_CACHE_INSTALL,
 ).add_local_python_source("spindle", ignore=ignore_config_source)
