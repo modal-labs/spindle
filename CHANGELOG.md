@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- `spindle.create_service_client` returns a stock Tinker client with Modal proxy authentication from environment variables or explicit arguments. It disables Tinker's waiting-log grace period for all clients in the process.
+
 - GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
 
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.

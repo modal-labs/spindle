@@ -41,15 +41,13 @@ python examples/shared-server/with_proxy_auth.py -m tinker_cookbook.recipes.chat
     model_name=Qwen/Qwen3.8-27B base_url=$TINKER_BASE_URL
 ```
 
-In your own code you can pass the headers yourself instead. Tinker 0.36 and newer call the argument `default_headers_overrides`; older versions call it `default_headers`:
+For your own scripts, `spindle.create_service_client` reads the URL, API key, and proxy
+token variables above:
 
 ```python
-service = tinker.ServiceClient(
-    default_headers_overrides={
-        "Modal-Key": os.environ["MODAL_PROXY_TOKEN_ID"],
-        "Modal-Secret": os.environ["MODAL_PROXY_TOKEN_SECRET"],
-    }
-)
+import spindle
+
+service = spindle.create_service_client()
 ```
 
 The server picks the recipe from the client's `base_model`.

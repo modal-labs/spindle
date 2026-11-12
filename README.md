@@ -34,7 +34,7 @@ uv run spindle skills install
 
 This pins a release tag. Releases and their changes are listed in [CHANGELOG.md](CHANGELOG.md), and `uv run spindle --version` prints the installed version and commit.
 
-**If someone has already deployed Spindle for you, skip to [Run a Tinker script](#run-a-tinker-script)** with the server URL and Spindle API key they provide. API clients don't need Modal credentials or proxy tokens.
+**If someone has already deployed Spindle for you, skip to [Run a Tinker script](#run-a-tinker-script)** with the server URL and Spindle API key they provide. API clients don't need Modal API credentials. Proxy-protected servers also require a [proxy token](docs/deployment-configs.md).
 
 ## Set up the server
 
@@ -196,7 +196,10 @@ for row in rows:
 
 ## Run a Tinker script
 
-Any Tinker-compatible script can be run out of the box against a Spindle server just by changing the base URL and API key.
+Any Tinker-compatible script can be run out of the box against a Spindle server just by changing the base URL and API key. For proxy-protected servers, also supply the [proxy credentials](docs/deployment-configs.md).
+
+For new Python code, `spindle.create_service_client(...)` returns a stock
+`tinker.ServiceClient` with proxy authentication and [timely waiting logs](docs/observability.md#client-progress).
 
 Supported Tinker SDK versions: `>=0.26.0`. CI tests the minimum version, the version
 the server images pin, and the latest release. Deploy the current Spindle server before
