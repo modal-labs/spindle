@@ -377,6 +377,8 @@ def _post_report(rows: list[dict]) -> None:
     )["ts"]
     for row in rows:
         try:
+            blocks = []
+            text = f"`{row['config']}`"
             if row["status"] == "success":
                 png = render_timing_history_chart(
                     [
@@ -385,24 +387,32 @@ def _post_report(rows: list[dict]) -> None:
                     ],
                     config_name=row["config"],
                 )
-                if png:
-                    client.files_upload_v2(
-                        channel=channel,
-                        thread_ts=thread_ts,
-                        content=png,
-                        filename=f"timing_history_{row['config']}.png",
-                        title=row["config"],
-                    )
-                continue
-            text = f"`{row['config']}` failed"
-            if row.get("error"):
-                text += f"\n```{row['error'][:1500]}```"
+                if not png:
+                    continue
+                uploaded = client.files_upload_v2(
+                    content=png,
+                    filename=f"timing_history_{row['config']}.png",
+                    title=row["config"],
+                )
+                blocks.append(
+                    {
+                        "type": "image",
+                        "slack_file": {"id": uploaded["files"][0]["id"]},
+                        "alt_text": f"{row['config']} timing history",
+                    }
+                )
+            else:
+                text += " failed"
+                if row.get("error"):
+                    text += f"\n```{row['error'][:1500]}```"
             if row.get("modal_app_url"):
-                text += f"\n<{row['modal_app_url']}|Modal logs>"
+                text += f"\n<{row['modal_app_url']}|Trainer logs>"
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
             client.chat_postMessage(
                 channel=channel,
                 thread_ts=thread_ts,
                 text=text,
+                blocks=blocks,
                 mrkdwn=True,
                 unfurl_links=False,
                 unfurl_media=False,
@@ -431,6 +441,7 @@ def monitor(script: str) -> dict:
         url = modal.App.lookup(
             TRAINER_APPS[script], environment_name="spindle"
         ).get_dashboard_url()
+        url += f"?activeTab=logs&start={started}&end={time.time()}&live=false"
     except Exception:
         url = None
     point = RunPoint(
