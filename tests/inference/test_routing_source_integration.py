@@ -22,6 +22,7 @@ import uvicorn
 import xxhash
 
 from spindle.inference import lora_sidecar
+from spindle.inference.kv_events import KVEventSubscriber
 
 pytest.importorskip("spindle_router")
 NativeRouter = importlib.import_module("spindle.inference.native_router").NativeRouter
@@ -88,17 +89,20 @@ def wait_for(check, timeout=5):
 def serve_sidecar(replica, port, upstream, source, catalog, endpoint, replay_endpoint):
     os.environ["MODAL_TASK_ID"] = replica
     lora_sidecar.ROUTING_CATALOG_PATH = Path(catalog)
-    subscriber_type = lora_sidecar.KVEventSubscriber
-    lora_sidecar.KVEventSubscriber = lambda: subscriber_type(
-        endpoint=endpoint, replay_endpoint=replay_endpoint
+    app = lora_sidecar.create_app(
+        None,
+        upstream,
+        routing_source=source,
+        kv_subscriber=(
+            KVEventSubscriber(endpoint, replay_endpoint) if source != "hook" else None
+        ),
     )
-    app = lora_sidecar.create_app(None, upstream, routing_source=source)
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
 
 
 @pytest.fixture
 def harness(tmp_path):
-    state = {"loads": "ok", "requests": []}
+    state = {"loads": "ok"}
     destinations = {}
 
     class Upstream(BaseHTTPRequestHandler):
@@ -142,14 +146,13 @@ def harness(tmp_path):
                             "num_used_tokens": 0,
                             "max_total_num_tokens": 4096,
                         }
-                    ]
+                    ],
                 }
             )
 
         def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            self.rfile.read(int(self.headers["Content-Length"]))
             if self.path == "/generate":
-                state["requests"].append(body)
                 self.respond({"text": "ok", "meta_info": {}})
                 return
             self.respond({}, 404)
@@ -419,6 +422,7 @@ def test_compare_reports_intersection_and_divergence(harness):
         different["hook_only"],
         different["kv_events_only"],
     ) == (1, 0, 1)
+    assert harness.state("cached")["work"]["prefixes"] == prefixes[:1]
 
 
 @pytest.mark.parametrize("loads", ["slow", "error"])
