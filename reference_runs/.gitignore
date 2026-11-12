@@ -1,3 +1,2 @@
-.writer.lock
-local/
+runs/
 *.png
