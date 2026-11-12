@@ -226,6 +226,14 @@ def test_deepseek_v41_1017_recipes_load_the_1017_release(context, tp):
     assert row.recipe.weights_revision == "1bae0e1088993b9b82de08f59de5be5a34e42170"
 
 
+def test_kimi_k3_recipe_keeps_routed_experts_and_unembedding_frozen():
+    miles = MilesBackendConfig(
+        **resolved(recipe("kimi-k3-lora-32k")).trainer_settings["miles"]
+    )
+    assert lora_target_flags(miles.target_modules) == (True, True, False)
+    assert not any(".experts." in target for target in miles.target_modules)
+
+
 def test_asset_paths_follow_the_model():
     a = resolved()
     assert a.asset_path == f"/assets/{a.recipe.model}"
