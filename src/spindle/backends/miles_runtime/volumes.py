@@ -12,9 +12,10 @@ import os
 import shutil
 import socket
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import modal
+from modal.types import FileEntryType
 import torch.distributed as dist
 from torch.distributed.checkpoint import FileSystemReader
 
@@ -221,57 +222,66 @@ def _volume_action(name: str, action: str) -> None:
     print(f"spindle_checkpoint_volume action={action} volume={name}", flush=True)
 
 
-def _native_file_inventory(path: Path) -> set[str]:
-    files, error = [], None
-    try:
-        files = sorted(str(p.relative_to(path)) for p in path.rglob("*") if p.is_file())
-    except Exception as exc:
-        error = f"{type(exc).__name__}: {exc}"
-    inventories = [(files, error)]
-    if _distributed():
-        inventories = [None] * dist.get_world_size()
-        dist.all_gather_object(inventories, (files, error))
-    errors = [error for _, error in inventories if error]
-    if errors:
-        raise RuntimeError("native checkpoint inventory failed: " + "; ".join(errors))
-    return {name for files, _ in inventories for name in files}
+def _native_file_path(path: Path, name: str) -> Path:
+    relative = Path(name)
+    target = path / relative
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or not target.resolve().is_relative_to(path.resolve())
+    ):
+        raise RuntimeError("native checkpoint references a file outside its directory")
+    for parent in (target, *target.parents):
+        if parent == path:
+            break
+        if parent.is_symlink():
+            raise RuntimeError("native checkpoint required files cannot be symlinks")
+    return target
 
 
 def native_referenced_files(path: Path) -> set[str]:
-    # These are the trainer's own DCP metadata files, read with the installed Torch schema.
+    # Native adapter state has one authoritative DCP metadata file, independent of peer directory caches.
+    state_dir = _native_file_path(path, "adapter_state")
+    if not state_dir.exists():
+        return set()
+    metadata = _native_file_path(path, "adapter_state/.metadata")
+    state = FileSystemReader(metadata.parent).read_metadata()
+    if state.storage_data is None:
+        raise RuntimeError("native checkpoint has no DCP storage metadata")
     referenced = set()
-    for metadata in path.rglob(".metadata"):
-        state = FileSystemReader(metadata.parent).read_metadata()
-        if state.storage_data is None:
-            raise RuntimeError("native checkpoint has no DCP storage metadata")
-        for storage in state.storage_data.values():
-            relative = Path(storage.relative_path)
-            if relative.is_absolute() or ".." in relative.parts:
-                raise RuntimeError(
-                    "native checkpoint references a file outside its directory"
-                )
-            referenced.add(str((metadata.parent / relative).relative_to(path)))
+    for storage in state.storage_data.values():
+        relative = Path(storage.relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise RuntimeError(
+                "native checkpoint references a file outside its directory"
+            )
+        name = str(Path("adapter_state") / relative)
+        _native_file_path(path, name)
+        referenced.add(name)
     return referenced
 
 
-def validate_native_files(path: Path, *, require_state: bool = False) -> None:
-    required = {"adapter_parametrization.json"}
-    required |= (
+def _native_required_files(
+    path: Path, *, require_state: bool | None = None
+) -> set[str]:
+    if require_state is None:
+        require_state = _native_file_path(path, "adapter_state").exists()
+    required = {"adapter_parametrization.json"} | (
         {"adapter_state/.metadata"}
         if require_state
         else {"adapter_config.json", "adapter_model.safetensors"}
     )
+    for name in required:
+        _native_file_path(path, name)
+    return required | (native_referenced_files(path) if require_state else set())
+
+
+def validate_native_files(path: Path, *, require_state: bool = False) -> None:
+    required = _native_required_files(path, require_state=require_state)
     missing_metadata = sorted(name for name in required if not (path / name).is_file())
     if missing_metadata:
         raise RuntimeError(
-            f"native checkpoint is missing metadata or weights: {missing_metadata}"
-        )
-    missing = sorted(
-        name for name in native_referenced_files(path) if not (path / name).is_file()
-    )
-    if missing:
-        raise RuntimeError(
-            f"native checkpoint is missing referenced shards: {missing[:8]}"
+            f"native checkpoint is missing required files: {missing_metadata}"
         )
 
 
@@ -281,15 +291,10 @@ def publish_native_directory(path: Path) -> None:
     relative = _checkpoint_volume_path(path)
     if name is not None and relative is None:
         raise RuntimeError("native checkpoint capture is outside the checkpoint volume")
-    written = _native_file_inventory(path)
-    # Peer directory caches may retain the native export's staging name after its atomic rename.
-    if "adapter_model.safetensors.partial" in written:
-        written.remove("adapter_model.safetensors.partial")
-        written.add("adapter_model.safetensors")
     sync_checkpoint_volume("commit")
 
     def verify():
-        expected = written | native_referenced_files(path)
+        expected = _native_required_files(path)
         if name is None:
             available = {
                 str(p.relative_to(path)) for p in path.rglob("*") if p.is_file()
@@ -298,10 +303,15 @@ def publish_native_directory(path: Path) -> None:
             assert relative is not None
             volume = modal.Volume.from_name(name)
             prefix = relative.rstrip("/") + "/"
-            available = {
-                entry.path.lstrip("/").removeprefix(prefix)
-                for entry in volume.listdir(relative, recursive=True)
-            }
+            available = set()
+            for entry in volume.listdir(relative, recursive=True):
+                entry_path = PurePosixPath(entry.path.lstrip("/"))
+                if ".." in entry_path.parts or not str(entry_path).startswith(prefix):
+                    raise RuntimeError(
+                        "native checkpoint Volume entry is outside its directory"
+                    )
+                if entry.type == FileEntryType.FILE:
+                    available.add(str(entry_path).removeprefix(prefix))
         missing = sorted(expected - available)
         if missing:
             raise RuntimeError(

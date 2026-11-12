@@ -108,6 +108,7 @@ def _distributed_actor(monkeypatch, identities: list[str], via_task_id: bool = T
 
 def _load_actor(monkeypatch):
     importlib.import_module("spindle.backends.miles_runtime")
+    importlib.import_module("spindle.backends.score_centering")
     _module(monkeypatch, "modal")
     torch = _module(monkeypatch, "torch")
     _module(monkeypatch, "torch.distributed")
@@ -493,7 +494,23 @@ def test_native_publish_waits_for_every_node_and_rejects_missing_shards(
     roots = {node: tmp_path / node / ".capture.0123456789abcdef" for node in ("a", "b")}
     for node, root in roots.items():
         root.mkdir(parents=True)
-        (root / f"{node}.distcp").write_bytes(node.encode())
+        (root / "adapter_state").mkdir()
+        (root / "adapter_state" / f"{node}.distcp").write_bytes(node.encode())
+        (root / ".tmpArbitraryStalePeerEntry").write_bytes(b"staging")
+    (roots["a"] / "adapter_parametrization.json").write_text("{}")
+    (roots["a"] / "adapter_state/.metadata").write_bytes(b"DCP metadata")
+    monkeypatch.setattr(
+        volumes,
+        "FileSystemReader",
+        lambda _: types.SimpleNamespace(
+            read_metadata=lambda: types.SimpleNamespace(
+                storage_data={
+                    node: types.SimpleNamespace(relative_path=f"{node}.distcp")
+                    for node in ("a", "b")
+                }
+            )
+        ),
+    )
     cloud = set()
     commits = []
     lock = threading.Lock()
@@ -508,13 +525,15 @@ def test_native_publish_waits_for_every_node_and_rejects_missing_shards(
                     raise RuntimeError("native volume denied")
                 if not (failure == "missing_peer" and node == "b"):
                     cloud.update(
-                        f"{roots[node].name}/{p.name}" for p in roots[node].iterdir()
+                        f"{roots[node].name}/{p.relative_to(roots[node])}"
+                        for p in roots[node].rglob("*")
+                        if p.is_file() and not p.name.startswith(".tmp")
                     )
 
         def listdir(self, relative, *, recursive):
             assert recursive
             assert sorted(commits) == ["a", "b"]
-            return [types.SimpleNamespace(path=name) for name in cloud]
+            return [types.SimpleNamespace(path=name, type=1) for name in cloud]
 
     volumes.modal.Volume = types.SimpleNamespace(from_name=lambda _: Volume())
     futures = world.run_ranks(
@@ -532,4 +551,4 @@ def test_native_publish_waits_for_every_node_and_rejects_missing_shards(
         else:
             future.result()
     assert sorted(commits) == ["a", "b"]
-    assert not (roots["a"] / "b.distcp").exists()
+    assert not (roots["a"] / "adapter_state/b.distcp").exists()

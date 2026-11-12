@@ -129,7 +129,7 @@ def test_missing_dcp_shard_prevents_commit(tmp_path, monkeypatch):
         return written
 
     io.bridge.save_slot = incomplete
-    with pytest.raises(RuntimeError, match="missing referenced shards"):
+    with pytest.raises(RuntimeError, match="missing required files"):
         asyncio.run(io.capture(0, str(tmp_path / "capture"), include_optimizer=True))
     assert not (tmp_path / "capture").exists()
     assert not (tmp_path / ".capture.abcd").exists()
@@ -145,87 +145,154 @@ def test_source_rejection_keeps_slot_identity(tmp_path, monkeypatch):
     assert not io.bridge.restored
 
 
-@pytest.mark.parametrize("missing", [False, True])
-def test_native_publication_checks_all_peer_files(tmp_path, monkeypatch, missing):
-    path = tmp_path / ".capture.abcd"
-    path.mkdir()
-    (path / "local").write_bytes(b"local")
-    monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "ckpt")
-    monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(tmp_path))
-    monkeypatch.setattr(volumes, "_native_file_inventory", lambda _: {"local", "peer"})
-    events = []
-    remote = set()
-
-    class Volume:
-        def listdir(self, relative, *, recursive):
-            assert recursive and events == ["commit"]
-            return [SimpleNamespace(path=f"{relative}/{name}") for name in remote]
-
-    def commit(action):
-        assert action == "commit"
-        events.append(action)
-        remote.update({"local"} if missing else {"local", "peer"})
-
-    monkeypatch.setattr(volumes, "sync_checkpoint_volume", commit)
-    monkeypatch.setattr(volumes.modal.Volume, "from_name", lambda _: Volume())
-    if missing:
-        with pytest.raises(RuntimeError, match="missing peer files"):
-            volumes.publish_native_directory(path)
-    else:
-        volumes.publish_native_directory(path)
-    assert not (
-        path / "peer"
-    ).exists()  # rank0's mount never stood in for the remote inventory
-
-
+@pytest.mark.parametrize("state", [False, True])
 @pytest.mark.parametrize(
-    ("peer_inventory", "remote_weights", "error"),
+    "missing",
     [
-        ("adapter_model.safetensors.partial", True, None),
-        ("adapter_model.safetensors.partial", False, "adapter_model.safetensors"),
-        ("peer.distcp", True, "peer.distcp"),
-        ("peer.distcp.partial", True, "peer.distcp.partial"),
+        None,
+        "artifact",
+        "adapter_parametrization.json",
+        "metadata",
+        "directory",
+        "symlink",
     ],
 )
-def test_native_publication_requires_final_atomic_export(
-    tmp_path, monkeypatch, peer_inventory, remote_weights, error
+def test_native_publication_uses_completed_format_manifest(
+    tmp_path, monkeypatch, state, missing
 ):
     path = tmp_path / ".capture.abcd"
     path.mkdir()
-    partial = path / "adapter_model.safetensors.partial"
-    partial.write_bytes(b"complete weights")
-    partial.replace(path / "adapter_model.safetensors")
+    (path / "adapter_parametrization.json").write_text("{}")
+    if state:
+        dcp.save(
+            {"weight": torch.tensor([2.0]), "step": torch.tensor(7)},
+            checkpoint_id=path / "adapter_state",
+        )
+        required = {
+            "adapter_parametrization.json",
+            "adapter_state/.metadata",
+        } | volumes.native_referenced_files(path)
+        artifact = next(name for name in required if name.endswith(".distcp"))
+        metadata = "adapter_state/.metadata"
+    else:
+        (path / "adapter_config.json").write_text("{}")
+        (path / "adapter_model.safetensors").write_bytes(b"complete weights")
+        required = {
+            "adapter_parametrization.json",
+            "adapter_config.json",
+            "adapter_model.safetensors",
+        }
+        artifact = "adapter_model.safetensors"
+        metadata = "adapter_config.json"
+    durable = {name: (path / name).read_bytes() for name in required}
+    # Neither arbitrary temporary names nor their spelling define checkpoint requirements.
+    for transient in (
+        ".tmpAiZjLx",
+        "adapter_model.safetensors.partial",
+        "unknown-staging-file",
+    ):
+        (path / transient).write_bytes(b"stale peer directory entry")
+    omitted = (
+        artifact
+        if missing in {"artifact", "directory", "symlink"}
+        else metadata
+        if missing == "metadata"
+        else missing
+    )
+    if omitted is not None and missing not in {"directory", "symlink"}:
+        durable.pop(omitted)
     monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "ckpt")
     monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(tmp_path))
-    # A peer's cached directory can retain the staging name after rank zero's rename.
-    monkeypatch.setattr(
-        volumes,
-        "_native_file_inventory",
-        lambda _: {"adapter_model.safetensors", peer_inventory},
-    )
-    durable = {}
+    committed = []
 
     def commit(action):
         assert action == "commit"
-        if remote_weights:
-            durable["adapter_model.safetensors"] = (
-                path / "adapter_model.safetensors"
-            ).read_bytes()
+        committed.append(action)
 
     class Volume:
         def listdir(self, relative, *, recursive):
-            assert recursive
-            return [SimpleNamespace(path=f"{relative}/{name}") for name in durable]
+            assert recursive and committed == ["commit"]
+            return [
+                SimpleNamespace(
+                    path=f"{relative}/{name}",
+                    type=(2 if missing == "directory" else 3)
+                    if name == artifact and missing in {"directory", "symlink"}
+                    else 1,
+                )
+                for name in durable
+            ]
 
     monkeypatch.setattr(volumes, "sync_checkpoint_volume", commit)
     monkeypatch.setattr(volumes.modal.Volume, "from_name", lambda _: Volume())
-    if error is not None:
-        with pytest.raises(RuntimeError, match=error):
-            volumes.publish_native_directory(path)
-    else:
+    if omitted is None:
         volumes.publish_native_directory(path)
-        assert durable == {"adapter_model.safetensors": b"complete weights"}
-        assert not partial.exists()
+        assert set(durable) == required
+    else:
+        with pytest.raises(RuntimeError, match=omitted):
+            volumes.publish_native_directory(path)
+
+
+@pytest.mark.parametrize("reference", ["../outside.distcp", "/outside.distcp"])
+def test_native_dcp_references_cannot_escape_capture(tmp_path, monkeypatch, reference):
+    path = tmp_path / ".capture.abcd"
+    state_dir = path / "adapter_state"
+    state_dir.mkdir(parents=True)
+    (state_dir / ".metadata").write_bytes(b"metadata")
+    monkeypatch.setattr(
+        volumes,
+        "FileSystemReader",
+        lambda _: SimpleNamespace(
+            read_metadata=lambda: SimpleNamespace(
+                storage_data={"weight": SimpleNamespace(relative_path=reference)}
+            )
+        ),
+    )
+    with pytest.raises(RuntimeError, match="outside its directory"):
+        volumes.native_referenced_files(path)
+
+
+@pytest.mark.parametrize("name", ["adapter_model.safetensors", "adapter_state"])
+def test_native_required_files_reject_symlinks(tmp_path, monkeypatch, name):
+    path = tmp_path / ".capture.abcd"
+    path.mkdir()
+    (path / "adapter_parametrization.json").write_text("{}")
+    (path / "adapter_config.json").write_text("{}")
+    outside = tmp_path / "outside"
+    if name == "adapter_state":
+        outside.mkdir()
+    else:
+        outside.write_bytes(b"weights")
+    (path / name).symlink_to(outside, target_is_directory=name == "adapter_state")
+    monkeypatch.delenv("SPINDLE_CHECKPOINT_VOLUME", raising=False)
+    with pytest.raises(RuntimeError, match=r"outside its directory|symlink"):
+        volumes.publish_native_directory(path)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "other-capture/adapter_model.safetensors",
+        ".capture.abcd/../adapter_model.safetensors",
+    ],
+)
+def test_native_publication_rejects_unsafe_volume_paths(tmp_path, monkeypatch, entry):
+    path = tmp_path / ".capture.abcd"
+    path.mkdir()
+    for name in (
+        "adapter_parametrization.json",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+    ):
+        (path / name).write_bytes(b"complete")
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "ckpt")
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(tmp_path))
+    monkeypatch.setattr(volumes, "sync_checkpoint_volume", lambda _: None)
+    volume = SimpleNamespace(
+        listdir=lambda *args, **kwargs: [SimpleNamespace(path=entry)]
+    )
+    monkeypatch.setattr(volumes.modal.Volume, "from_name", lambda _: volume)
+    with pytest.raises(RuntimeError, match="outside its directory"):
+        volumes.publish_native_directory(path)
 
 
 def test_native_writer_error_never_publishes(tmp_path, monkeypatch):
