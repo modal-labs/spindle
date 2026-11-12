@@ -114,8 +114,9 @@ def test_duplicate_gap_and_unsalted_events():
             "cache_salt": None,
             "token_ids": [(i, i + 1) for i in range(64)],
         },
+        {"lora_name": "adapter-v1", "cache_salt": None, "token_ids": [True] * 64},
     ],
-    ids=["unnamed", "salted", "bigram"],
+    ids=["unnamed", "salted", "bigram", "boolean"],
 )
 def test_events_without_comparable_named_unigram_prefixes_are_skipped(invalid_event):
     cache = KVCache()
@@ -399,7 +400,7 @@ def test_replay_timeout_applies_to_each_frame(tmp_path):
                 event = stored(
                     [sequence + 1],
                     list(range(sequence * 64, (sequence + 1) * 64)),
-                    parent=sequence if sequence else None,
+                    parent=sequence or None,
                 )
                 await router.send_multipart(
                     [identity, b"", sequence.to_bytes(8, "big"), packet([event])]
@@ -477,6 +478,63 @@ def test_subscriber_thread_stops_after_replay_socket_error():
     subscriber.stop_thread()
     assert time.monotonic() - started < 2.5
     assert not thread.is_alive() and not subscriber.snapshot[0]
+
+
+def test_subscriber_thread_stops_during_long_replay(tmp_path):
+    async def scenario():
+        context = zmq.asyncio.Context()
+        router = context.socket(zmq.ROUTER)
+        endpoint = f"ipc://{tmp_path}/long-replay"
+        router.bind(endpoint)
+        subscriber = KVEventSubscriber(replay_endpoint=endpoint)
+        applied = 0
+        original = subscriber.cache.apply
+
+        def slow_apply(event):
+            nonlocal applied
+            time.sleep(0.002)
+            original(event)
+            applied += 1
+
+        subscriber.cache.apply = slow_apply
+
+        async def serve():
+            identity, _, _ = await router.recv_multipart()
+            for sequence in range(1000):
+                await router.send_multipart(
+                    [
+                        identity,
+                        b"",
+                        sequence.to_bytes(8, "big"),
+                        packet([stored([sequence + 1], list(range(64)))]),
+                    ]
+                )
+            await router.send_multipart(
+                [identity, b"", (-1).to_bytes(8, "big", signed=True), b""]
+            )
+
+        task = asyncio.create_task(serve())
+        subscriber.start_thread()
+        thread = subscriber._thread
+        try:
+            await asyncio.wait_for(task, 3)
+            async with asyncio.timeout(3):
+                while applied < 50:
+                    await asyncio.sleep(0.01)
+            assert not subscriber.snapshot[0]
+            started = time.monotonic()
+            await asyncio.to_thread(subscriber.stop_thread)
+            assert time.monotonic() - started < 1
+            assert not thread.is_alive() and not subscriber.snapshot[0]
+        finally:
+            if thread.is_alive():
+                await asyncio.to_thread(subscriber.stop_thread)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            router.close(0)
+            context.term()
+
+    asyncio.run(scenario())
 
 
 def test_native_adapter_name_needs_no_cache_salt():

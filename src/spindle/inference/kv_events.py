@@ -44,6 +44,7 @@ def publisher_config() -> dict:
 class _BlockIndex:
     def __init__(self):
         self.wide = False
+        self.yield_gil = False
         self._allocate(1024)
         self.count = 0
         self.occupied = 0
@@ -115,6 +116,8 @@ class _BlockIndex:
         for i, state in enumerate(old_states):
             if state == 1:
                 self._insert(old_keys[i], old_refs[i])
+            if self.yield_gil and i & 4095 == 4095:
+                time.sleep(0)
         old_keys.release()
         old_refs.release()
         old_states.release()
@@ -125,11 +128,13 @@ class _BlockIndex:
         self._resize(len(self.states))
 
     def clear(self):
+        yield_gil = self.yield_gil
         self.keys.release()
         self.refs.release()
         self.states.release()
         self.storage.close()
         self.__init__()
+        self.yield_gil = yield_gil
 
 
 class _Chain:
@@ -139,6 +144,7 @@ class _Chain:
         "adapter",
         "length",
         "size",
+        "store_tokens",
         "start_digest",
         "storage",
         "count",
@@ -155,9 +161,10 @@ class _Chain:
         self.adapter = adapter
         self.length = length
         self.size = size
+        self.store_tokens = size % 64 != 0 or length % 64 != 0
         self.start_digest = digest
         self.count = len(keys)
-        storage_size = (len(keys) + len(tokens)) * 8
+        storage_size = (len(keys) + len(tokens) * self.store_tokens) * 8
         self.storage = (
             mmap.mmap(-1, storage_size)
             if storage_size >= 4096
@@ -165,7 +172,8 @@ class _Chain:
         )
         view = memoryview(self.storage)
         view[: len(keys) * 8] = array("q", keys).tobytes()
-        view[len(keys) * 8 :] = tokens.tobytes()
+        if self.store_tokens:
+            view[len(keys) * 8 :] = tokens.tobytes()
         self.keys = view[: len(keys) * 8].cast("q")
         self.tokens = view[len(keys) * 8 :].cast("q")
         view.release()
@@ -181,7 +189,7 @@ class _Chain:
                 self.storage.close()
             self.count = 0
             return
-        storage_size = count * (self.size + 1) * 8
+        storage_size = count * (self.size * self.store_tokens + 1) * 8
         storage = (
             mmap.mmap(-1, storage_size)
             if storage_size >= 4096
@@ -189,7 +197,8 @@ class _Chain:
         )
         view = memoryview(storage)
         view[: count * 8] = self.keys[:count].cast("B")
-        view[count * 8 :] = self.tokens[: count * self.size].cast("B")
+        if self.store_tokens:
+            view[count * 8 :] = self.tokens[: count * self.size].cast("B")
         self.keys.release()
         self.tokens.release()
         if isinstance(self.storage, mmap.mmap):
@@ -217,6 +226,7 @@ class _Chain:
 class KVCache:
     def __init__(self):
         self.blocks = _BlockIndex()
+        self.yield_gil = False
         self.chains: list[_Chain | None] = []
         self.free_chains: list[int] = []
         self.children: dict[int, set[int]] = {}
@@ -225,7 +235,7 @@ class KVCache:
 
     @property
     def prefixes(self):
-        return list(islice(reversed(self.prefix_counts), 8192))
+        return list(islice(reversed(self.prefix_counts), MAX_PREFIXES))
 
     def clear(self):
         self.blocks.clear()
@@ -266,12 +276,14 @@ class KVCache:
             chain, first = pending.pop()
             if not chain.count or first >= chain.count:
                 continue
-            for child_key in chain.keys[first : chain.count]:
+            for index, child_key in enumerate(chain.keys[first : chain.count]):
                 for child_id in self.children.pop(child_key, ()):
                     child = self.chains[child_id]
                     if child is not None:
                         pending.append((child, 0))
                 self.blocks.pop(child_key)
+                if self.yield_gil and index & 511 == 511:
+                    time.sleep(0)
             for position, prefix in zip(chain.positions, chain.prefixes, strict=True):
                 if position > first * chain.size:
                     count = self.prefix_counts[prefix] - 1
@@ -321,7 +333,7 @@ class KVCache:
         ancestor = self._chain_ref(parent) if parent is not None else None
         if parent is not None and (ancestor is None or ancestor[0].adapter != adapter):
             return
-        if not all(isinstance(token, int) for token in tokens):
+        if not all(type(token) is int for token in tokens):
             return
         existing = [index for index, key in enumerate(keys) if key in self.blocks]
         if existing:
@@ -391,6 +403,8 @@ class KVCache:
                     self.prefix_counts[prefix] = self.prefix_counts.pop(prefix, 0) + 1
                     next_boundary = 64
                 self.blocks.insert(key, chain_id << 16 | index)
+                if self.yield_gil and index & 511 == 511:
+                    time.sleep(0)
             if offset < len(group_tokens):
                 digest.update(data[offset * 8 :])
             parent = group_keys[-1]
@@ -428,6 +442,8 @@ class KVEventSubscriber:
         async def worker():
             self._loop = asyncio.get_running_loop()
             self._run_task = asyncio.current_task()
+            self.cache.yield_gil = True
+            self.cache.blocks.yield_gil = True
             self._thread_started.set()
             while True:
                 try:
@@ -455,7 +471,10 @@ class KVEventSubscriber:
         if self._thread is None:
             return
         if self._loop is not None and self._run_task is not None:
-            self._loop.call_soon_threadsafe(self._run_task.cancel)
+            try:
+                self._loop.call_soon_threadsafe(self._run_task.cancel)
+            except RuntimeError:
+                pass
         self._thread.join(timeout)
         if self._thread.is_alive():
             logger.error(
@@ -543,7 +562,7 @@ class KVEventSubscriber:
                 anchor_index = None
             start = anchor_index + 1 if anchor_index is not None else 0
             previous = self.sequence
-            for sequence, payload in batches[start:]:
+            for index, (sequence, payload) in enumerate(batches[start:]):
                 if sequence != previous + 1:
                     self.cache.clear()
                     self.sequence = sequence - 1
@@ -552,6 +571,8 @@ class KVEventSubscriber:
                     self._publish_snapshot()
                 self.apply(sequence, payload)
                 previous = sequence
+                if index & 31 == 31:
+                    await asyncio.sleep(0)
             if not batches and self.sequence >= 0:
                 self.reset()
             self.ready = True
