@@ -1,5 +1,14 @@
 """Miles v0.2.0 configuration and adapter-directory API."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from miles.utils.args.runtime import AllConfig
+    from miles.tinker.runtime import MilesBackend
+
+
 from argparse import Namespace
 from pathlib import Path
 
@@ -19,18 +28,18 @@ CHECKPOINT_FORMAT = "miles_adapter_state"
 ACTOR_CLASS = "spindle.backends.miles_runtime.actor_v020.SpindleMilesTrainRayActor"
 
 
-def configure_args(args):
+def configure_args(args: Namespace) -> None:
     args.lora_A_init_method = "kaiming"
     args.use_dynamic_global_batch_size = True
     args.delay_split_train_data_by_dp = True
 
 
-def configure_actor():
+def configure_actor() -> None:
     original = TrainerSpec.create.__func__
     if getattr(original, "_spindle_actor_spec", False):
         return
 
-    def create(cls, config):
+    def create(cls: type, config: object) -> object:
         spec = original(cls, config)
         if (
             spec.worker_class
@@ -43,7 +52,9 @@ def configure_actor():
     TrainerSpec.create = classmethod(create)
 
 
-async def initialize_trainer(args):
+async def initialize_trainer(
+    args: AllConfig,
+) -> tuple[object, TrainerControllerInitRequest]:
     configs = compute_trainer_configs(args)
     (actor,) = [config for config in configs if config.role == ACTOR_ROLE]
     handles = create_trainer_handles(
@@ -53,12 +64,12 @@ async def initialize_trainer(args):
     return trainer, TrainerControllerInitRequest.from_args(args, trainer=actor)
 
 
-def replay_args(args):
+def replay_args(args: AllConfig) -> Namespace:
     return Namespace(**(dict(args) | args.raw_megatron.base_args))
 
 
 class AdapterBridge:
-    def __init__(self, bridge, args):
+    def __init__(self, bridge: MilesBackend, args: AllConfig) -> None:
         self.bridge = bridge
         self.args = args
         self.slots = {}
@@ -66,10 +77,10 @@ class AdapterBridge:
         self.fingerprint = base_model_fingerprint(config)
         bridge.lora_layout = get_hf_lora_targets(config)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> object:
         return getattr(self.bridge, name)
 
-    def fields(self, rank, alpha):
+    def fields(self, rank: int, alpha: float) -> dict[str, object]:
         return dict(
             base_model=self.args.hf_checkpoint,
             lora_rank=rank,
@@ -80,8 +91,14 @@ class AdapterBridge:
         )
 
     async def load_slot(
-        self, slot, rank, alpha, *, ckpt_path=None, load_optimizer=True
-    ):
+        self,
+        slot: int,
+        rank: int,
+        alpha: float,
+        *,
+        ckpt_path: str | None = None,
+        load_optimizer: bool = True,
+    ) -> dict[str, object] | None:
         source = None
         if ckpt_path is not None:
             source = dict(
@@ -94,13 +111,15 @@ class AdapterBridge:
             self.slots[slot] = (rank, alpha)
         return result
 
-    async def unload_slot(self, slot):
+    async def unload_slot(self, slot: int) -> dict[str, object] | None:
         result = await self.bridge.unload_slot(slot)
         if result is None:
             self.slots.pop(slot)
         return result
 
-    async def save_slot(self, slot, path, *, include_optimizer=True):
+    async def save_slot(
+        self, slot: int, path: str, *, include_optimizer: bool = True
+    ) -> None:
         target = Path(path)
         rank, alpha = self.slots[slot]
         fields = self.fields(rank, alpha)
@@ -119,7 +138,7 @@ class AdapterBridge:
             written = results[0]
         materialize_adapter(written.path, target, checkpoint=True)
 
-    async def export_slot(self, slot, rank, alpha, path):
+    async def export_slot(self, slot: int, rank: int, alpha: float, path: str) -> None:
         target = Path(path)
         written = await self.bridge.export_slot(
             slot, str(target.parent), target.name, "spindle", self.fields(rank, alpha)

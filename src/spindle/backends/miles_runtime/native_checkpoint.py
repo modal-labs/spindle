@@ -1,5 +1,8 @@
 """Assemble Miles native adapter directories before exposing a capture."""
 
+from __future__ import annotations
+
+
 import json
 import os
 import shutil
@@ -12,7 +15,12 @@ from torch.distributed.checkpoint import FileSystemReader
 from torch.distributed.checkpoint.metadata import MetadataIndex, TensorStorageMetadata
 
 
-def validate_adapter(path: Path, *, checkpoint: bool, expected_shapes=None) -> None:
+def validate_adapter(
+    path: Path,
+    *,
+    checkpoint: bool,
+    expected_shapes: dict[str, tuple[int, ...]] | None = None,
+) -> None:
     if checkpoint:
         fields = json.loads((path / "adapter_parametrization.json").read_text())
         if fields.get("format_version") != 1:

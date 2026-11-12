@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+from pathlib import Path
+from collections.abc import Iterator
+
 import json
 import pickle
 from dataclasses import replace
@@ -16,7 +21,7 @@ from spindle.backends.miles_runtime.native_checkpoint import (
 )
 
 
-def _checkpoint(path, value=1.0):
+def _checkpoint(path: Path, value: float = 1.0) -> dict[str, torch.Tensor]:
     path.mkdir(parents=True, exist_ok=True)
     (path / "adapter_parametrization.json").write_text(
         json.dumps({"format_version": 1})
@@ -31,7 +36,7 @@ def _checkpoint(path, value=1.0):
     return state
 
 
-def test_native_capture_preserves_weights_moments_and_step(tmp_path):
+def test_native_capture_preserves_weights_moments_and_step(tmp_path: Path) -> None:
     source = tmp_path / ".capture.1234"
     expected = _checkpoint(source)
     target = tmp_path / "capture"
@@ -43,7 +48,9 @@ def test_native_capture_preserves_weights_moments_and_step(tmp_path):
 
 
 @pytest.mark.parametrize("damage", ["missing", "truncated", "metadata"])
-def test_native_capture_rejects_incomplete_checkpoint(tmp_path, damage):
+def test_native_capture_rejects_incomplete_checkpoint(
+    tmp_path: Path, damage: str
+) -> None:
     source = tmp_path / ".capture.1234"
     _checkpoint(source)
     shard = next((source / "adapter_state").glob("*.distcp"))
@@ -65,7 +72,9 @@ def test_native_capture_rejects_incomplete_checkpoint(tmp_path, damage):
 @pytest.mark.parametrize(
     "missing", ["adapter_config.json", "adapter_model.safetensors"]
 )
-def test_sampler_requires_final_weights_and_config(tmp_path, missing):
+def test_sampler_requires_final_weights_and_config(
+    tmp_path: Path, missing: str
+) -> None:
     (tmp_path / "adapter_config.json").write_text("{}")
     (tmp_path / "adapter_model.safetensors").write_bytes(b"weights")
     (tmp_path / missing).unlink()
@@ -74,7 +83,7 @@ def test_sampler_requires_final_weights_and_config(tmp_path, missing):
         validate_adapter(tmp_path, checkpoint=False)
 
 
-def test_concurrent_captures_keep_their_own_files(tmp_path):
+def test_concurrent_captures_keep_their_own_files(tmp_path: Path) -> None:
     sources = [tmp_path / f".capture{i}.1234" for i in range(2)]
     expected = [_checkpoint(source, float(i)) for i, source in enumerate(sources)]
     targets = [tmp_path / f"capture{i}" for i in range(2)]
@@ -93,8 +102,8 @@ def test_concurrent_captures_keep_their_own_files(tmp_path):
 
 @pytest.mark.parametrize("missing_peer", [False, True])
 def test_volume_assembly_requires_metadata_referenced_peer_shard(
-    tmp_path, monkeypatch, missing_peer
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_peer: bool
+) -> None:
     source = tmp_path / ".capture.1234"
     _checkpoint(source)
     state_dir = source / "adapter_state"
@@ -118,16 +127,18 @@ def test_volume_assembly_requires_metadata_referenced_peer_shard(
     peer.unlink()
 
     class Volume:
-        def listdir(self, path, *, recursive=False):
+        def listdir(
+            self, path: str, *, recursive: bool = False
+        ) -> list[SimpleNamespace]:
             assert recursive
             return [
                 SimpleNamespace(path=name, type=FileEntryType.FILE) for name in files
             ]
 
-        def read_file(self, path):
+        def read_file(self, path: str) -> Iterator[bytes]:
             yield files[path]
 
-        def commit(self):
+        def commit(self) -> None:
             pass
 
     monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(tmp_path))
@@ -148,8 +159,8 @@ def test_volume_assembly_requires_metadata_referenced_peer_shard(
 
 @pytest.mark.parametrize("damage", ["missing_index", "weight_shape", "moment_shape"])
 def test_native_metadata_rejects_incomplete_storage_and_incompatible_shapes(
-    tmp_path, damage
-):
+    tmp_path: Path, damage: str
+) -> None:
     _checkpoint(tmp_path)
     state_dir = tmp_path / "adapter_state"
     metadata = dcp.FileSystemReader(state_dir).read_metadata()

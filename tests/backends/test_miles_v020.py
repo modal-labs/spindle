@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import importlib.util
 import sys
@@ -8,7 +10,7 @@ import pytest
 
 
 @pytest.fixture
-def api(monkeypatch):
+def api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     modules = {
         "miles.backends.training_utils.checkpoint.adapter.parametrization": dict(
             base_model_fingerprint=lambda config: "fingerprint"
@@ -38,10 +40,16 @@ def api(monkeypatch):
 
 @pytest.mark.parametrize("restore_optimizer", [False, True])
 def test_native_restore_preserves_slot_configuration_and_optimizer_intent(
-    api, restore_optimizer
-):
+    api: ModuleType, restore_optimizer: bool
+) -> None:
     class NativeBridge:
-        async def load_slot(self, slot, rank, alpha, source=None):
+        async def load_slot(
+            self,
+            slot: int,
+            rank: int,
+            alpha: float,
+            source: dict[str, object] | None = None,
+        ) -> dict[str, object] | None:
             if source is not None:
                 assert source["load_optimizer"] is restore_optimizer
                 assert source["path"] == "/checkpoint/miles"
@@ -54,7 +62,7 @@ def test_native_restore_preserves_slot_configuration_and_optimizer_intent(
     )
     bridge = api.AdapterBridge(NativeBridge(), args)
 
-    async def run():
+    async def run() -> None:
         await bridge.load_slot(0, 4, 8)
         await bridge.load_slot(1, 8, 16)
         await bridge.load_slot(
@@ -65,9 +73,15 @@ def test_native_restore_preserves_slot_configuration_and_optimizer_intent(
     assert bridge.slots == {0: (4, 8), 1: (8, 16)}
 
 
-def test_rejected_native_load_keeps_slot_configuration(api):
+def test_rejected_native_load_keeps_slot_configuration(api: ModuleType) -> None:
     class NativeBridge:
-        async def load_slot(self, slot, rank, alpha, source=None):
+        async def load_slot(
+            self,
+            slot: int,
+            rank: int,
+            alpha: float,
+            source: dict[str, object] | None = None,
+        ) -> dict[str, object] | None:
             return {"error": "incompatible checkpoint", "error_category": "user"}
 
     bridge = api.AdapterBridge(
