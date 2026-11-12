@@ -1,0 +1,27 @@
+syntax = "proto3";
+package spindle.routing.v1;
+
+// Replica-local native KV events are decoded once, with bounded replay recovery.
+// Watch emits complete observations; reconnecting clients need no local cursor.
+service RoutingObserver {
+  rpc Watch(WatchRequest) returns (stream RoutingSnapshot);
+}
+message WatchRequest {}
+message RoutingSnapshot {
+  string replica = 1;
+  uint64 active = 2;
+  map<string, uint64> adapters = 3;
+  double observed_at = 5; // Unix seconds; queued messages must not renew stale state.
+  Work work = 4; // Absent until the scheduler exposes a native load observation.
+}
+message Work {
+  double age_seconds = 1;
+  repeated string prefixes = 2; // XXH3-128 of exact adapter version + token prefix.
+  repeated string cpu_adapters = 3;
+  repeated string gpu_adapters = 4;
+  repeated string request_ids = 5;
+  repeated string pending_adapters = 6;
+  uint64 waiting_requests = 7;
+  uint64 kv_used_tokens = 8;
+  uint64 kv_capacity_tokens = 9;
+}

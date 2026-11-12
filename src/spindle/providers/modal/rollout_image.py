@@ -24,7 +24,7 @@ def runtime_image_for(*, image: str, branch: str, revision: str, core_packages):
     return (
         modal.Image.from_registry(image)
         .entrypoint([])
-        .apt_install("git")
+        .apt_install("git", "nginx")
         # The base image sets `never`, which loads its bundled binding and ignores
         # the Rust sources copied below.
         .env({"SGLANG_RUST_BUILD_MODE": "auto"})
@@ -32,20 +32,21 @@ def runtime_image_for(*, image: str, branch: str, revision: str, core_packages):
             "rm -rf /tmp/spindle-sglang-overlay"
             f" && git clone --filter=blob:none --single-branch --branch {branch}"
             f" {SGLANG_REPOSITORY} /tmp/spindle-sglang-overlay"
+            f" && git -C /tmp/spindle-sglang-overlay fetch --depth 1 origin {revision}"
             f" && git -C /tmp/spindle-sglang-overlay checkout {revision}",
             "cp -a /tmp/spindle-sglang-overlay/python/. /sgl-workspace/sglang/python/"
             " && rm -rf /sgl-workspace/sglang/rust"
             " && cp -a /tmp/spindle-sglang-overlay/rust /sgl-workspace/sglang/rust"
             " && rm -rf /tmp/spindle-sglang-overlay",
-            # Bundle the fork's radix-tree binding so samplers load it in never mode.
+            # Bundle the fork's native KV-event binding so samplers load it in never mode.
             "python -c 'from sglang.srt.mem_cache.rust_tree_core.extension import bindings; "
-            'assert hasattr(bindings.RustUnifiedTreeCoreBinding, "routing_snapshot_delta"); '
+            'assert hasattr(bindings.RustUnifiedTreeCoreBinding, "take_events"); '
             "import pathlib, shutil; "
             'shutil.copy(bindings.__file__, "/sgl-workspace/sglang/python/sglang/srt/mem_cache/rust_tree_core/" '
             "+ pathlib.Path(bindings.__file__).name)'"
             " && rm -rf /root/.cache/sglang/rust_extensions",
             "SGLANG_RUST_BUILD_MODE=never python -c 'from sglang.srt.mem_cache.rust_tree_core.extension import bindings; "
-            'assert hasattr(bindings.RustUnifiedTreeCoreBinding, "routing_snapshot_delta")\'',
+            'assert hasattr(bindings.RustUnifiedTreeCoreBinding, "take_events")\'',
         )
         .env({"SGLANG_RUST_BUILD_MODE": "never"})
         .pip_install(*core_packages, STITCH_PACKAGE, TINKER_PACKAGE)

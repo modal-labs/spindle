@@ -17,3 +17,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 tokio-util = "0.7"
+
+prost = "0.14"
+tonic = { version = "0.14", default-features = false, features = ["channel", "codegen", "tls-ring", "tls-native-roots"] }
+tonic-prost = "0.14"

@@ -5,6 +5,7 @@ import runpy
 import sys
 from types import ModuleType
 
+from spindle.inference.kv_events import KV_EVENTS_CONFIG
 from spindle.deployments import DeploymentConfig, config_path, load
 
 
@@ -40,6 +41,7 @@ def test_sglang_constructor_receives_recorded_settings(monkeypatch):
             "host": "127.0.0.1",
             "port": 8001,
             **row.inference_settings,
+            "kv_events_config": json.dumps(KV_EVENTS_CONFIG),
         },
         "run",
         "stop",

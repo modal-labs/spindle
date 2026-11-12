@@ -168,3 +168,40 @@ The deterministic path aims to give each client the same training results regard
 
 To enable it, build the patched FA3 artifacts, set SPINDLE_MILES_FA3_ARTIFACTS to their directory before deployment, and use the qwen3_5_9b_base_miles_lora_deterministic definition. The Tinker training code stays the same. We've validated on small math experiments (see  [LoRA validation](lora_validation.md) deterministic training section) but still need to do larger validation. Our changes to fa3 to make it deterministic also come at a throughput cost, and so this path remains experimental for now. 
 
+
+
+### Native cache observations
+
+Each SGLang replica publishes native KV events with:
+
+```sh
+--kv-events-config '{"publisher":"zmq","endpoint":"tcp://*:5557","replay_endpoint":"tcp://*:5558","topic":"kv-events"}'
+```
+
+Port 5557 carries live publications; port 5558 serves bounded replay. With multiple
+SGLang DP ranks, the replay base moves past the live port range to avoid overlap.
+Cache-aware routing still requires one DP rank per Modal replica.
+
+The LoRA sidecar subscribes locally, recovers missed events through replay, and
+combines device block residency with SGLang's `/v1/loads` observations. Exact
+adapter versions travel in the request cache salt so replay remains attributable
+after requests finish. User-salted requests retain isolation and contribute no
+unsalted routing hints. Lost replay history drops hints for unknown ancestors;
+evictions and publisher restarts invalidate old hints. GPU KV residency is a
+routing estimate: native block events do not prove auxiliary Mamba/SWA state
+residency, and native load metrics report GPU adapter slot counts without names.
+The router therefore does not invent named GPU-adapter residency.
+
+The router consumes `spindle.routing.v1.RoutingObserver/Watch` over gRPC through
+the existing Modal Server gateway, using its proxy credentials and
+`Modal-Flash-Upstream` replica pin. Each stream carries full protobuf snapshots
+and observation timestamps, and reconnects independently. Stale or unavailable
+replicas retain the existing bounded gateway fallback behavior. There is no
+scheduler tree walk, JSON snapshot file, or `/routing-state` polling.
+
+Inside a LoRA replica, nginx listens for HTTP/2 cleartext on port 8000 (Modal's
+Server gateway speaks HTTP/2 to it), forwarding generation HTTP to loopback 8002
+and gRPC to loopback 8003. Local startup health checks use port 8002. The sampler
+image includes nginx; custom sampler images must also provide it. The wire schema
+is `src/spindle/proto/routing.proto`; regenerate its checked-in Python binding with
+`protoc -I src/spindle/proto --python_out=src/spindle/proto --pyi_out=src/spindle/proto src/spindle/proto/routing.proto`.
