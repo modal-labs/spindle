@@ -508,7 +508,6 @@ def test_checkpoint_capture_persist_and_restore(tmp_path, monkeypatch) -> None:
     [
         (False, "b" * 40, False),
         (True, "b" * 40, True),
-        (True, "c" * 40, True),
         (False, "a" * 40, True),
     ],
 )

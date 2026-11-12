@@ -5,7 +5,7 @@ from .miles_image import BRIDGE_IMPORT_CACHE_PATCH
 from .miles_release_image import MILES_PATH, release_image
 from .rollout_image import runtime_image_for
 
-MILES_COMMIT = "b81ab6dc42520ceacde3454c44e5d8480d2c3c58"
+MILES_COMMIT = "6f5a4a8429e4f57a65a7251facb7d3d9faf0b3ff"
 TRAINER_SGLANG_COMMIT = "9ac1c65bec3dc832766d03970e545da5bd6fcb6f"
 SAMPLER_SGLANG_COMMIT = "e22646bfef3dfd79aa4390fb95b644a5268eb53c"
 

@@ -19,9 +19,7 @@ CORE_SAMPLER_PACKAGES = (
 )
 
 
-def runtime_image_for(
-    *, image: str, branch: str, revision: str, core_packages=CORE_SAMPLER_PACKAGES
-):
+def runtime_image_for(*, image: str, branch: str, revision: str):
     """Build a matched SGLang image/source pair, including the fork's Rust binding."""
     return (
         modal.Image.from_registry(image)
@@ -50,7 +48,7 @@ def runtime_image_for(
             'assert hasattr(bindings.RustUnifiedTreeCoreBinding, "routing_snapshot_delta")\'',
         )
         .env({"SGLANG_RUST_BUILD_MODE": "never"})
-        .pip_install(*core_packages, STITCH_PACKAGE, TINKER_PACKAGE)
+        .pip_install(*CORE_SAMPLER_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE)
         .pip_install("huggingface-hub")
         .env(
             {
