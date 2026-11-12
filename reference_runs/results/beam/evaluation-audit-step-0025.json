@@ -1,0 +1,35 @@
+{
+  "step": 25,
+  "responses": 240,
+  "strict_reference_regrade_disagreements": 0,
+  "reference_grader_sha256": "3d6b61357e2ee8f1704ba0eb1726ea2dd65dbf9c76e963f20d5ff6598b8f7b23",
+  "reference_grader_source": "https://github.com/modal-projects/miles/blob/6f5a4a8429e4f57a65a7251facb7d3d9faf0b3ff/miles/rollout/rm_hub/math_dapo_utils.py",
+  "strict_box_verify": true,
+  "correct": 118.0,
+  "accuracy": 0.49166666666666664,
+  "mean_tokens": 2981.195833333333,
+  "capped": 122,
+  "finished_wrong": 1,
+  "paired_problem_changes_from_initial": {
+    "correct": {
+      "mean_delta": 0.0875,
+      "paired_problem_bootstrap_95": [
+        0.025,
+        0.15416666666666667
+      ]
+    },
+    "tokens": {
+      "mean_delta": -199.34583333333333,
+      "paired_problem_bootstrap_95": [
+        -311.6209375,
+        -105.91197916666671
+      ]
+    }
+  },
+  "bootstrap_draws": 20000,
+  "bootstrap_seed": 1234,
+  "formal_acceptance_step": 100,
+  "is_final_evaluation": false,
+  "interpretation": "Descriptive intermediate comparison; does not satisfy the final learning acceptance criterion.",
+  "audited_at": 1794478014.6427546
+}
