@@ -379,7 +379,7 @@ def _post_report(rows: list[dict]) -> None:
     for row in rows:
         try:
             blocks = []
-            text = f"`{row['config']}`"
+            text = ""
             if row["status"] == "success":
                 png = render_timing_history_chart(
                     [
@@ -403,12 +403,17 @@ def _post_report(rows: list[dict]) -> None:
                     }
                 )
             else:
-                text += " failed"
+                text = f"`{row['config']}` failed"
                 if row.get("error"):
                     text += f"\n```{row['error'][:1500]}```"
             if row.get("modal_app_url"):
-                text += f"\n<{row['modal_app_url']}|Trainer logs>"
-            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
+                if text:
+                    text += "\n"
+                text += f"<{row['modal_app_url']}|Trainer logs>"
+            if text:
+                blocks.append(
+                    {"type": "section", "text": {"type": "mrkdwn", "text": text}}
+                )
             for attempt in range(5):
                 try:
                     client.chat_postMessage(
