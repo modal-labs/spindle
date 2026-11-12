@@ -24,7 +24,7 @@ CONFIG = {
     "seed": 1234,
     "max_response_tokens": 2048,
     "temperature": 1.0,
-    "updates": 30,
+    "updates": 20,
     "groups": 32,
     "samples_per_group": 8,
     "eval_problems": 128,

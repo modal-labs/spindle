@@ -24,7 +24,7 @@ saves trainer state with `save_state` every 10 updates.
 Set `TINKER_BASE_URL` and `TINKER_API_KEY`, then:
 
 ```bash
-# 30 updates.
+# 20 updates.
 uv run python reference_runs/dapo_math.py --output reference_runs/runs/dapo
 
 # Smoke run: 2 small updates.
