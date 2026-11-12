@@ -8,7 +8,7 @@ Install/run from the repository root:
 Resume: add --resume CHECKPOINT_URI (the most recent saved checkpoint).
 Set TINKER_BASE_URL and TINKER_API_KEY; optional MODAL_KEY and MODAL_SECRET
 supply frontend authentication. --plan and --plot-only perform no remote work.
-Check in configuration, compact metrics and plots, not generated answers.
+Check in configuration and compact metrics. Generate plots locally.
 Raw evaluations and recovery diagnostics stay local and are ignored by Git.
 Large routing records live in --replay-cache, outside the checked-in results.
 After update10, rebuild/restart the deployment and resume from the printed and journaled
@@ -31,8 +31,8 @@ behavior/current diagnostic, not KL against the frozen base model.
 Budgets: median of the latest five accepted-update intervals <=900s after
 four intervals;30h wall time including evaluation/restart. A breached budget
 saves a checkpoint and exits for diagnosis. Evaluation writes each response
-before waiting for other groups. Metrics/evaluations/config/summary/plots are
-intended to be committed as they accumulate. Checkpoint URI records refer to
+before waiting for other groups. Commit configuration and aggregate metrics as
+they accumulate; detailed evaluations, summaries and plots stay local. Checkpoint URI records refer to
 remote30-day states; keep replay cache and checkpoint storage independently.
 The script never redeploys apps or claims exact optimizer restore identity;
 compare checkpoint/roundtrip state independently during the restart test.

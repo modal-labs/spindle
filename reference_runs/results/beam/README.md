@@ -26,7 +26,8 @@ orchestration differ; the comparison does not establish parity.
 
 The run used 16 H200 trainer GPUs and eight B300 sampler GPUs. Runtime pins were
 Miles `6f5a4a84`, trainer SGLang `9ac1c65b` and sampler SGLang `991fb37566`.
-Client code was `6bcf5aa` through update 10 and `35f365f` afterward.
+Client code was `6bcf5aa` through update 10 and `35f365f` afterward. These results
+predate the Miles v0.2.0 recipe and validate only the runtime pins above.
 
 Only [configuration](config.json), [metrics](metrics.jsonl) and this README are
 checked in. Metrics contain update/evaluation aggregates and accuracy per problem
