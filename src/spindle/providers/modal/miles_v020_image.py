@@ -12,8 +12,8 @@ from .image_dependencies import (
 
 MILES_RELEASE_COMMIT = "8e419cc739fb09b5f21085aeacc7f6fd951084e1"
 MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
-MILES_BRANCH = "spindle-miles-v0.2.0"
-MILES_COMMIT = "949b877bf2a8d0e36656544301a6bbee635bfbf7"
+MILES_BRANCH = "spindle-v020-regression-tests"
+MILES_COMMIT = "e6c491ace23353e32da863c05470f72f52293a9e"
 BASE_IMAGE = "radixark/miles:v0.2.0@sha256:c5e9ebe1dbb02faa094cf5036b57c4f3aadac9a53992f4d143823a6c20fb377c"
 
 image = (

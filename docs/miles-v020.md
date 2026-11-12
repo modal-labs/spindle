@@ -14,8 +14,8 @@ v0.2.0. No new models or model-specific recipes are included.
 ## Runtime identity
 
 - Miles release: `v0.2.0`, commit `8e419cc739fb09b5f21085aeacc7f6fd951084e1`.
-- Fork: `modal-projects/miles`, branch `spindle-miles-v0.2.0`, pinned commit
-  `949b877bf2a8d0e36656544301a6bbee635bfbf7`.
+- Fork: `modal-projects/miles`, branch `spindle-v020-regression-tests`, pinned commit
+  `e6c491ace23353e32da863c05470f72f52293a9e`.
 - Container: `radixark/miles:v0.2.0@sha256:c5e9ebe1dbb02faa094cf5036b57c4f3aadac9a53992f4d143823a6c20fb377c`.
 - Bundled Megatron-LM: `809217f40d60ea671aa9958fcdbc754b33758e42`.
 - Bundled Megatron-Bridge: `a0c6d6e09b0bd4d208c2d936608319d5ab456d87`.
