@@ -15,5 +15,17 @@
   },
   "pending_group_files_verified": 32,
   "observed_at": 1794463735.2956357,
-  "restore_comparison_complete": false
+  "restore_comparison_complete": true,
+  "old_gpu_apps_stopped": true,
+  "old_gpu_containers_remaining": 0,
+  "old_gpu_release_verified_at": 1794463888.4282844,
+  "roundtrip_checkpoint": "tinker://9bc1bd1f-ed23-4136-94a2-c4504a3da272:train:0/weights/beam-step-0010-fd2650c6",
+  "restore_comparison": "restore-comparison-step-0010.json",
+  "restore_tensor_count": 1664,
+  "restore_scalar_payload_count": 221,
+  "restore_unequal_elements": 0,
+  "restored_optimizer_step": 10,
+  "probe_supervisor_terminal": true,
+  "probe_placement_released_before_continuation": true,
+  "restore_verified_at": 1794465437.2210793
 }

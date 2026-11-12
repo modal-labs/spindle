@@ -1,5 +1,5 @@
 {
-  "spindle_revision": "2a0a9611bde3966b63b4827a9b5ef6687fb288b4",
+  "spindle_revision": "94edd8927c6374f15a58fd8427737e913d4295dd",
   "miles_revision": "6f5a4a8429e4f57a65a7251facb7d3d9faf0b3ff",
   "trainer_sglang_revision": "9ac1c65bec3dc832766d03970e545da5bd6fcb6f",
   "sampler_sglang_revision": "991fb375666ad9b173dcc7f9123c5a993f3151fc",
@@ -153,5 +153,8 @@
       }
     },
     "gpu_calls": false
-  }
+  },
+  "server_source_equivalent_revision": "2a0a9611bde3966b63b4827a9b5ef6687fb288b4",
+  "restarted_from_step": 10,
+  "deployed_at": 1794464045.3393667
 }
