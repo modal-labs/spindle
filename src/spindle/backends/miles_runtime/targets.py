@@ -42,8 +42,7 @@ class CandidateLogProbs(torch.autograd.Function):
         return picked - sum_exp.log()
 
     @staticmethod
-    def backward(ctx, *grad_outputs):
-        (grad,) = grad_outputs
+    def backward(ctx, grad):
         softmax, local, outside = ctx.saved_tensors
         grad_logits = softmax.mul_(-grad.sum(dim=-1, keepdim=True))
         grad_logits.scatter_add_(-1, local, grad.masked_fill(outside, 0.0))
