@@ -218,10 +218,6 @@ def test_routing_source_gates_pool_environment_and_sidecar(
     spec.inference_lora_routing = None if routing == "auto_affinity" else routing
     if routing == "auto_affinity" and lora:
         spec.sglang_cfg = {**spec.sglang_cfg, "dp_size": 2}
-    spec.inference_env = {
-        "SGLANG_SPINDLE_ROUTING_SOURCE": "untrusted",
-        "SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "untrusted",
-    }
     effective = (
         "affinity"
         if routing == "auto_affinity" or (routing is None and not lora)

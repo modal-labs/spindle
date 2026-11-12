@@ -292,15 +292,6 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         platform = deployment.recipe.platform
     recipe = deployment.recipe
     lora = recipe.parameterization == "lora"
-    inference_env = {
-        key: value
-        for key, value in recipe.inference_env.items()
-        if key
-        not in {
-            "SGLANG_SPINDLE_ROUTING_OBSERVATIONS",
-            "SGLANG_SPINDLE_ROUTING_SOURCE",
-        }
-    }
     if pool.definition_id != deployment.definition_id:
         raise ValueError("pool does not match deployment")
     app = modal.App(
@@ -331,7 +322,7 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         env=deployment_env(
             # Split-K speeds up decode-sized LoRA batches on H200 and B200.
             ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
-            | inference_env
+            | recipe.inference_env
             | (
                 {"SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1"}
                 if lora
