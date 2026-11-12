@@ -115,7 +115,7 @@ Miles checkpoints require the same runtime commit by default. For debugging only
 
 ### Images
 
-`trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1 and v0.1.2.
+`trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1, v0.1.2 and v0.2.0. Beam selects `miles-v0.2.0`; other recipes retain their existing trainer images. Miles v0.2.0 uses a different adapter checkpoint format. Checkpoints from v0.1.x are rejected even when revision checks are disabled.
 
 ## Prepare and launch
 

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from pydantic import BaseModel, ConfigDict
 
 from spindle.backends.miles_runtime.replay import install_replay_hooks
 from spindle.backends.miles_runtime.replay_data import install_distribution_sharding
@@ -98,7 +99,8 @@ def test_hooks_idempotent_and_replay_requires_registered_routers(miles):
     assert miles.events == []
 
 
-def test_mask_fields_forwarded_and_temperature_is_request_local(miles):
+@pytest.mark.parametrize("typed", [False, True])
+def test_mask_fields_forwarded_and_temperature_is_request_local(miles, typed):
     batch = {
         "rollout_sampling_mask_ids": [[3, 5, 4]],
         "rollout_sampling_mask_offsets": [[0, 0, 2, 3]],
@@ -119,7 +121,21 @@ def test_mask_fields_forwarded_and_temperature_is_request_local(miles):
     ]
     assert actual["rollout_sampling_mask_logprobs"] == [[-0.2, -1.7, 0.0]]
     assert keys == ["tokens"]
-    args = SimpleNamespace(vocab_size=6, rollout_temperature=1.0)
+
+    class BackendConfig(BaseModel):
+        model_config = ConfigDict(frozen=True)
+        vocab_size: int
+
+    class TrainerConfig(BaseModel):
+        model_config = ConfigDict(frozen=True)
+        backend: BackendConfig
+        rollout_temperature: float
+
+    args = (
+        TrainerConfig(backend=BackendConfig(vocab_size=6), rollout_temperature=1.0)
+        if typed
+        else SimpleNamespace(vocab_size=6, rollout_temperature=1.0)
+    )
     result = miles.loss._target_logprobs(args, batch, None)
     assert args.rollout_temperature == 1.0
     assert result["args"].rollout_temperature == 0.7
@@ -137,3 +153,25 @@ def test_mask_fields_forwarded_and_temperature_is_request_local(miles):
 def test_missing_miles_sharding_api_fails_at_install():
     with pytest.raises(RuntimeError, match="requires _package_shards"):
         install_distribution_sharding(SimpleNamespace())
+
+
+def test_v020_router_replay_preserves_adapter_slots(miles):
+    slots = object()
+
+    def native_run(args, batch_id, model, adapter_slots, rollout_data, **kwargs):
+        assert adapter_slots is slots
+        miles.lora.get_data_iterator(args, model, rollout_data)
+        assert miles.manager.replays == [["routes"]]
+        assert miles.manager.stage == "replay_backward"
+        return "native-result"
+
+    miles.lora.run_forward_backward = native_run
+    install_replay_hooks(**miles.dependencies)
+    assert (
+        miles.lora.run_forward_backward(
+            None, 0, [], slots, {"rollout_routed_experts": "routes"}
+        )
+        == "native-result"
+    )
+    assert miles.manager.replays == [[]]
+    assert miles.manager.stage == "fallthrough"

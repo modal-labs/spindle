@@ -8,7 +8,7 @@ class Config(BaseConfig):
     model = "reflection/Beam-1.0-501B-A23B"
     weights_revision = "12950ae640b48cbbe9b5bb7735bf197507d6383f"
     max_context_length = 5120
-    trainer_image = "miles-v0.1.2"
+    trainer_image = "miles-v0.2.0"
     trainer_gpu = "H200"
     trainer_gpus_per_node = 8
     trainer_nodes = 2
@@ -42,6 +42,7 @@ class Config(BaseConfig):
             "*.mlp.experts.*.down_proj",
         ],
         "cli_options": {
+            "lora_type": "lora",
             "bf16": True,
             "qkv_format": "bshd",
             "attention_backend": "unfused",

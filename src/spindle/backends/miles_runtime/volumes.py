@@ -11,10 +11,12 @@ import json
 import os
 import shutil
 import socket
+from contextlib import contextmanager
 from pathlib import Path
 
 import modal
 import torch.distributed as dist
+from torch.distributed.checkpoint import FileSystemReader
 
 
 def _checkpoint_volume_path(path: Path) -> str | None:
@@ -217,3 +219,115 @@ def _volume_action(name: str, action: str) -> None:
     else:
         volume.reload()
     print(f"spindle_checkpoint_volume action={action} volume={name}", flush=True)
+
+
+def _native_file_inventory(path: Path) -> set[str]:
+    files, error = [], None
+    try:
+        files = sorted(str(p.relative_to(path)) for p in path.rglob("*") if p.is_file())
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    inventories = [(files, error)]
+    if _distributed():
+        inventories = [None] * dist.get_world_size()
+        dist.all_gather_object(inventories, (files, error))
+    errors = [error for _, error in inventories if error]
+    if errors:
+        raise RuntimeError("native checkpoint inventory failed: " + "; ".join(errors))
+    return {name for files, _ in inventories for name in files}
+
+
+def native_referenced_files(path: Path) -> set[str]:
+    # These are the trainer's own DCP metadata files, read with the installed Torch schema.
+    referenced = set()
+    for metadata in path.rglob(".metadata"):
+        state = FileSystemReader(metadata.parent).read_metadata()
+        if state.storage_data is None:
+            raise RuntimeError("native checkpoint has no DCP storage metadata")
+        for storage in state.storage_data.values():
+            relative = Path(storage.relative_path)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise RuntimeError(
+                    "native checkpoint references a file outside its directory"
+                )
+            referenced.add(str((metadata.parent / relative).relative_to(path)))
+    return referenced
+
+
+def validate_native_files(path: Path, *, require_state: bool = False) -> None:
+    required = {"adapter_parametrization.json"}
+    required |= (
+        {"adapter_state/.metadata"}
+        if require_state
+        else {"adapter_config.json", "adapter_model.safetensors"}
+    )
+    missing_metadata = sorted(name for name in required if not (path / name).is_file())
+    if missing_metadata:
+        raise RuntimeError(
+            f"native checkpoint is missing metadata or weights: {missing_metadata}"
+        )
+    missing = sorted(
+        name for name in native_referenced_files(path) if not (path / name).is_file()
+    )
+    if missing:
+        raise RuntimeError(
+            f"native checkpoint is missing referenced shards: {missing[:8]}"
+        )
+
+
+def publish_native_directory(path: Path) -> None:
+    """Every node commits its native files before the coordinator can commit the adapter."""
+    name = os.environ.get("SPINDLE_CHECKPOINT_VOLUME")
+    relative = _checkpoint_volume_path(path)
+    if name is not None and relative is None:
+        raise RuntimeError("native checkpoint capture is outside the checkpoint volume")
+    written = _native_file_inventory(path)
+    sync_checkpoint_volume("commit")
+
+    def verify():
+        expected = written | native_referenced_files(path)
+        if name is None:
+            available = {
+                str(p.relative_to(path)) for p in path.rglob("*") if p.is_file()
+            }
+        else:
+            assert relative is not None
+            volume = modal.Volume.from_name(name)
+            prefix = relative.rstrip("/") + "/"
+            available = {
+                entry.path.lstrip("/").removeprefix(prefix)
+                for entry in volume.listdir(relative, recursive=True)
+            }
+        missing = sorted(expected - available)
+        if missing:
+            raise RuntimeError(
+                f"native checkpoint publication is missing peer files: {missing[:8]}"
+            )
+
+    _on_rank_zero(verify)
+
+
+def install_native_checkpoint_publish(adapter_dir) -> None:
+    original = adapter_dir.write_adapter_dir
+    if getattr(original, "__spindle_native_publish__", False):
+        return
+
+    @contextmanager
+    def write_adapter_dir(*args, **kwargs):
+        with original(*args, **kwargs) as written:
+            yield written
+            publish_native_directory(written.path)
+
+    write_adapter_dir.__spindle_native_publish__ = True
+    adapter_dir.write_adapter_dir = write_adapter_dir
+
+
+def refresh_native_capture(path: Path) -> None:
+    name = os.environ.get("SPINDLE_CHECKPOINT_VOLUME")
+    if name is None:
+        return
+    if _checkpoint_volume_path(path) is None:
+        raise RuntimeError("native capture is outside the checkpoint volume")
+    volume = modal.Volume.from_name(name)
+    volume.commit()
+    volume.reload()

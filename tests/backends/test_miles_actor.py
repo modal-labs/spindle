@@ -61,6 +61,11 @@ class FakeDist:
         output[:] = [self._gathered[rank] for rank in range(self.world_size)]
         self._barrier.wait()
 
+    def broadcast_object_list(self, values, src):
+        gathered = [None] * self.world_size
+        self.all_gather_object(gathered, values[0] if self.get_rank() == src else None)
+        values[0] = gathered[src]
+
 
 def _module(monkeypatch, name: str) -> types.ModuleType:
     module = types.ModuleType(name)
@@ -133,7 +138,15 @@ def _load_actor(monkeypatch):
         monkeypatch, "miles.utils.replay_base"
     ).routing_replay_manager = types.SimpleNamespace()
     lora_actor = _module(monkeypatch, "miles.backends.megatron_utils.lora.actor")
-    lora_actor.MultiLoRATrainRayActor = type("MultiLoRATrainRayActor", (), {})
+    lora_actor.MultiLoRATrainRayActor = type(
+        "MultiLoRATrainRayActor",
+        (),
+        {
+            "load_slot": lambda self, slot, rank, alpha, ckpt_path=None, load_optimizer=True: (
+                None
+            )
+        },
+    )
     training_cp_utils = _module(monkeypatch, "miles.backends.training_utils.cp_utils")
     training_cp_utils.get_logits_and_tokens_offset_with_cp = lambda *args: None
     training_cp_utils.slice_log_prob_with_cp = lambda *args: None
@@ -470,3 +483,53 @@ def test_sync_checkpoint_volume_fails_on_every_rank(monkeypatch) -> None:
     errors = [future.exception() for future in futures]
     assert all(isinstance(error, RuntimeError) for error in errors)
     assert all("volume commit failed" in str(error) for error in errors)
+
+
+@pytest.mark.parametrize("failure", [None, "missing_peer", "commit_error"])
+def test_native_publish_waits_for_every_node_and_rejects_missing_shards(
+    monkeypatch, tmp_path, failure
+):
+    volumes, world = _distributed_actor(monkeypatch, ["a", "a", "b", "b"])
+    roots = {node: tmp_path / node / ".capture.0123456789abcdef" for node in ("a", "b")}
+    for node, root in roots.items():
+        root.mkdir(parents=True)
+        (root / f"{node}.distcp").write_bytes(node.encode())
+    cloud = set()
+    commits = []
+    lock = threading.Lock()
+    monkeypatch.setattr(volumes, "_checkpoint_volume_path", lambda path: path.name)
+
+    class Volume:
+        def commit(self):
+            node = world.identity()
+            with lock:
+                commits.append(node)
+                if failure == "commit_error" and node == "b":
+                    raise RuntimeError("native volume denied")
+                if not (failure == "missing_peer" and node == "b"):
+                    cloud.update(
+                        f"{roots[node].name}/{p.name}" for p in roots[node].iterdir()
+                    )
+
+        def listdir(self, relative, *, recursive):
+            assert recursive
+            assert sorted(commits) == ["a", "b"]
+            return [types.SimpleNamespace(path=name) for name in cloud]
+
+    volumes.modal.Volume = types.SimpleNamespace(from_name=lambda _: Volume())
+    futures = world.run_ranks(
+        lambda _: volumes.publish_native_directory(roots[world.identity()])
+    )
+    for future in futures:
+        if failure is not None:
+            message = (
+                "missing peer files"
+                if failure == "missing_peer"
+                else "volume commit failed"
+            )
+            with pytest.raises(RuntimeError, match=message):
+                future.result()
+        else:
+            future.result()
+    assert sorted(commits) == ["a", "b"]
+    assert not (roots["a"] / "b.distcp").exists()

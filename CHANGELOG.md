@@ -18,7 +18,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
-- The shared Miles v0.1.2 trainer and default SGLang sampler include Beam LoRA support; Beam uses those images without model-specific image builders.
+- Beam uses the Miles v0.2.0 trainer and default SGLang sampler with Beam LoRA support; existing Miles v0.1.1 and v0.1.2 recipes retain their trainer images.
 - Samplers run SGLang v0.5.23 with PyTorch 2.14.1 and Transformers 5.19. A server's samplers switch over when it is redeployed with a new Spindle version. DeepSeek-V4.1-Flash samplers switch at their next deploy, and they recompile their kernels once on first start.
 - `inference_target_concurrency` now defaults to `None`, which adds a sampler replica only when every replica holds `sglang_cfg.max_running_requests` requests. New `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long.
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.

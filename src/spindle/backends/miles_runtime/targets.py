@@ -10,6 +10,8 @@ from functools import wraps
 import torch
 import torch.distributed as dist
 
+from .config import backend_config
+
 
 class CandidateLogProbs(torch.autograd.Function):
     """Log probabilities of K label columns from vocabulary-parallel logits [T, V/TP].
@@ -69,10 +71,10 @@ def install_multi_target_hooks(tinker_losses, math_utils=None) -> None:
             # A CP rank may own no rows of a short 1-D padding row; Miles hands back that
             # shard as 1-D and the v0.1.1 CP gather would all-reduce mismatched shapes.
             and (
-                args.context_parallel_size == 1
+                backend_config(args).context_parallel_size == 1
                 or all(target.ndim == 2 for target in targets)
             )
-            and not args.allgather_cp
+            and not backend_config(args).allgather_cp
             and not args.true_on_policy_mode
             and "rollout_sampling_mask_ids" not in batch
         ):

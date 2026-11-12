@@ -143,6 +143,7 @@ def test_require_cluster_nodes_rejects_short_gpu_total(monkeypatch):
 
 def test_upstream_error_result_invalidates_runtime():
     runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._native_checkpoints = None
     runtime._closed = False
     runtime._failure = None
     runtime._call = asyncio.run
@@ -161,6 +162,7 @@ def test_weights_only_worker_error_invalidates_runtime_before_capture(
     tmp_path, failed_rank
 ):
     runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._native_checkpoints = None
     runtime._closed = False
     runtime._failure = None
     runtime._call = asyncio.run
@@ -304,3 +306,45 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch):
     assert [o["logprobs"].tolist() for o in outputs] == [[-1.0] * 3, [-2.0] * 2]
     assert outputs[0]["logprobs"].dtype == np.float32
     assert store.removed == [0]
+
+
+def test_native_source_rejection_keeps_runtime_available():
+    from spindle.backends.miles_runtime.native_checkpoints import NativeSourceError
+
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+
+    async def rejected():
+        raise NativeSourceError("checkpoint rank mismatch")
+
+    async def healthy():
+        return {"grad_norm": 1.0}
+
+    with pytest.raises(ValueError, match="rank mismatch"):
+        runtime._run(rejected())
+    assert runtime._failure is None
+    assert runtime._run(healthy()) == {"grad_norm": 1.0}
+
+
+def test_native_type_error_after_bridge_call_is_fatal():
+    from spindle.backends.miles_runtime.native_checkpoints import NativeCheckpoints
+
+    changed = []
+
+    async def bridge_load(*args, **kwargs):
+        changed.append("slot-mutated")
+        raise TypeError("restore failed after bridge invocation")
+
+    io = NativeCheckpoints.__new__(NativeCheckpoints)
+    io.bridge = SimpleNamespace(load_slot=bridge_load)
+    io.slots = {}
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    with pytest.raises(BackendFailed, match="after bridge invocation"):
+        runtime._run(io.load_slot(0, 2, 4.0))
+    assert changed == ["slot-mutated"]
+    assert isinstance(runtime._failure, TypeError)

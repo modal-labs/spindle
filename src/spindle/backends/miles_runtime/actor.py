@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from inspect import signature
 
 import torch
 import torch.distributed as dist
@@ -44,7 +45,12 @@ except ImportError:
 from spindle.startup_timing import timeline
 
 from . import allgather_cp_lora, expert_lora_compat, host_syncs
-from .volumes import install_cross_node_checkpoint_publish, sync_checkpoint_volume
+from .config import backend_config
+from .volumes import (
+    install_cross_node_checkpoint_publish,
+    install_native_checkpoint_publish,
+    sync_checkpoint_volume,
+)
 from .profiling import RankProfiler, TorchProfileConfig
 from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
 from .replay import install_replay_hooks
@@ -86,7 +92,13 @@ def _publish_checkpoints_across_nodes() -> None:
     install_cross_node_checkpoint_publish(checkpoint_io, checkpoint, snapshot_publisher)
 
 
-_publish_checkpoints_across_nodes()
+_NATIVE_CHECKPOINTS = "source" in signature(MultiLoRATrainRayActor.load_slot).parameters
+if _NATIVE_CHECKPOINTS:
+    from miles.backends.training_utils.checkpoint.adapter import adapter_dir
+
+    install_native_checkpoint_publish(adapter_dir)
+else:
+    _publish_checkpoints_across_nodes()
 
 
 def _sync_checkpoint_volume(action: str) -> None:
@@ -116,7 +128,9 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
     """Upstream multi-LoRA actor with Qwen MTP and weights-only save support."""
 
     def init(self, args, role, **kwargs):
-        _use_distributed_timeout_for_gloo(args.distributed_timeout_minutes)
+        _use_distributed_timeout_for_gloo(
+            backend_config(args).distributed_timeout_minutes
+        )
         # Miles's LoRA builder inherits checkpoint MTP heads without honoring
         # enable_mtp_training. Qwen3.5 then injects an auxiliary backward loss
         # even for a client datum whose weights are all zero.
@@ -170,7 +184,19 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
         alpha: float,
         ckpt_path: str | None = None,
         load_optimizer: bool = True,
+        *,
+        source: dict | None = None,
     ):
+        if _NATIVE_CHECKPOINTS:
+            if ckpt_path is not None:
+                raise ValueError(
+                    "native Miles checkpoints require a validated source descriptor"
+                )
+            if source is not None:
+                _sync_checkpoint_volume("reload")
+            return super().load_slot(slot, rank, alpha, source=source)
+        if source is not None:
+            raise ValueError("legacy Miles cannot load a native source descriptor")
         if ckpt_path:
             _sync_checkpoint_volume("reload")
         result = super().load_slot(
