@@ -62,7 +62,6 @@ class MilesCommandBackend(Backend):
         base_model: str,
         runtime: Any | None = None,
     ) -> None:
-        config.validate()
         self.config = config
         self.base_model = base_model
         self.checkpoint_dir = checkpoint_dir
