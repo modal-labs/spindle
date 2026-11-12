@@ -181,6 +181,14 @@ def test_learning_criterion_uses_final_not_best_checkpoint(tmp_path):
 def test_partial_final_evaluation_cannot_claim_learning(tmp_path):
     with beam.Journal(tmp_path) as journal:
         for step in [0, 100]:
+            journal.event(
+                "evaluation",
+                step=step,
+                completions=240,
+                accuracy=float(step > 0),
+                mean_tokens=100,
+                problem_accuracy=[float(step > 0)] * 30,
+            )
             journal.append(
                 f"aime25-step-{step:04d}.jsonl",
                 dict(problem=0, sample=0, correct=float(step > 0), tokens=100),
@@ -188,6 +196,58 @@ def test_partial_final_evaluation_cannot_claim_learning(tmp_path):
     summary = beam.summarize(tmp_path)
     assert summary["final_comparison"] is None
     assert all(not r["complete"] for r in summary["evaluations"])
+
+
+@pytest.mark.parametrize("final_accuracy", [0.0, 1.0])
+def test_compact_metrics_preserve_summary_without_generated_answers(
+    tmp_path, final_accuracy
+):
+    with beam.Journal(tmp_path) as journal:
+        journal.event("run", time=1)
+        for step in range(1, 101):
+            journal.event("update", step=step, time=step + 1)
+        for step, correct in [(0, 0.0), (60, 1.0), (100, final_accuracy)]:
+            journal.event(
+                "evaluation",
+                step=step,
+                completions=240,
+                accuracy=correct,
+                mean_tokens=100,
+                problem_accuracy=[correct] * 30,
+            )
+            for problem in range(30):
+                for sample in range(8):
+                    journal.append(
+                        f"aime25-step-{step:04d}.jsonl",
+                        dict(
+                            problem=problem, sample=sample, correct=correct, tokens=100
+                        ),
+                    )
+        journal.event("completed", step=100, time=200)
+    original = beam.summarize(tmp_path)
+    for path in tmp_path.glob("aime25-step-*.jsonl"):
+        path.unlink()
+    compact = beam.summarize(tmp_path)
+    assert compact == original
+    assert compact["elapsed_seconds"] == 199
+    assert compact["final_comparison"]["learning_demonstrated"] == bool(final_accuracy)
+
+
+@pytest.mark.parametrize("problem_accuracy", [None, [1.0] * 29])
+def test_missing_problem_coverage_cannot_claim_final_learning(
+    tmp_path, problem_accuracy
+):
+    with beam.Journal(tmp_path) as journal:
+        for step in [0, 100]:
+            journal.event(
+                "evaluation",
+                step=step,
+                completions=240,
+                accuracy=float(step > 0),
+                mean_tokens=100,
+                problem_accuracy=[0.0] * 30 if step == 0 else problem_accuracy,
+            )
+    assert beam.summarize(tmp_path)["final_comparison"] is None
 
 
 @pytest.mark.parametrize("stop_after", [None, 9])

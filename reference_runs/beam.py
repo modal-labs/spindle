@@ -8,7 +8,8 @@ Install/run from the repository root:
 Resume: add --resume CHECKPOINT_URI (the most recent saved checkpoint).
 Set TINKER_BASE_URL and TINKER_API_KEY; optional MODAL_KEY and MODAL_SECRET
 supply frontend authentication. --plan and --plot-only perform no remote work.
-Metrics, configuration and evaluations in --output are intended for Git.
+Check in configuration, compact metrics and plots, not generated answers.
+Raw evaluations and recovery diagnostics stay local and are ignored by Git.
 Large routing records live in --replay-cache, outside the checked-in results.
 After update10, rebuild/restart the deployment and resume from the printed and journaled
 checkpoint URI using the SAME output and cache paths, without --stop-after.
@@ -322,6 +323,10 @@ def evaluate(sampler, rows, step, config, tokenizer, journal):
         mean_tokens=statistics.mean(r["tokens"] for r in records),
         capped=sum(r["stop_reason"] == "length" for r in records),
         completions=len(records),
+        problem_accuracy=[
+            statistics.mean(r["correct"] for r in records if r["problem"] == problem)
+            for problem in range(len(rows))
+        ],
         seconds=time.monotonic() - started,
     )
 
@@ -582,6 +587,10 @@ def run(args, config):
         ):
             raise ValueError("Replay cache belongs to another run")
         atomic_json(cache_identity, identity)
+        if not any(event["event"] == "run" for event in events):
+            journal.event(
+                "run", time=identity["started"], planned_updates=config.updates
+            )
         journal.event(
             "segment",
             segment=uuid.uuid4().hex,
@@ -977,51 +986,66 @@ def supervise(command, seconds, termination_grace=30):
 
 
 def summarize(directory):
-    evaluations = []
-    records_by_step = {}
+    events = read_records(directory / "metrics.jsonl")
+    evaluations = {}
+    problem_accuracy = {}
+    for event in events:
+        if event["event"] != "evaluation":
+            continue
+        step = event["step"]
+        complete = event["completions"] == 240
+        evaluations[step] = dict(
+            step=step,
+            completions=event["completions"],
+            expected_completions=240,
+            complete=complete,
+            accuracy=event["accuracy"],
+            mean_tokens=event["mean_tokens"],
+        )
+        values = event.get("problem_accuracy", [])
+        if (
+            complete
+            and isinstance(values, list)
+            and len(values) == 30
+            and all(math.isfinite(value) and 0 <= value <= 1 for value in values)
+        ):
+            problem_accuracy[step] = values
     for path in sorted(directory.glob("aime25-step-*.jsonl")):
         records = read_records(path)
         if not records:
             continue
         step = int(path.stem.rsplit("-", 1)[1])
-        records_by_step[step] = records
-        evaluations.append(
-            dict(
-                step=step,
-                completions=len(records),
-                expected_completions=240,
-                complete=len(records) == 240
-                and {(r["problem"], r["sample"]) for r in records}
-                == {(p, s) for p in range(30) for s in range(8)},
-                accuracy=statistics.mean(r["correct"] for r in records),
-                mean_tokens=statistics.mean(r["tokens"] for r in records),
-            )
+        evaluations[step] = dict(
+            step=step,
+            completions=len(records),
+            expected_completions=240,
+            complete=len(records) == 240
+            and {(r["problem"], r["sample"]) for r in records}
+            == {(p, s) for p in range(30) for s in range(8)},
+            accuracy=statistics.mean(r["correct"] for r in records),
+            mean_tokens=statistics.mean(r["tokens"] for r in records),
         )
+        problem_accuracy.pop(step, None)
+        if evaluations[step]["complete"]:
+            problem_accuracy[step] = [
+                statistics.mean(
+                    r["correct"] for r in records if r["problem"] == problem
+                )
+                for problem in range(30)
+            ]
     improvement = None
-    if 0 in records_by_step and 100 in records_by_step:
-        before, after = records_by_step[0], records_by_step[100]
-        expected = {(p, s) for p in range(30) for s in range(8)}
-        if {(r["problem"], r["sample"]) for r in before} == expected == {
-            (r["problem"], r["sample"]) for r in after
-        } and len(before) == len(after) == 240:
-            delta = np.array(
-                [
-                    statistics.mean(r["correct"] for r in after if r["problem"] == p)
-                    - statistics.mean(r["correct"] for r in before if r["problem"] == p)
-                    for p in range(30)
-                ]
-            )
-            rng = np.random.default_rng(1234)
-            draws = delta[rng.integers(0, 30, size=(20000, 30))].mean(axis=1)
-            lo, hi = np.quantile(draws, [0.025, 0.975]).tolist()
-            improvement = dict(
-                accuracy_delta=float(delta.mean()),
-                paired_problem_bootstrap_95=[lo, hi],
-                learning_demonstrated=lo > 0,
-                draws=20000,
-                seed=1234,
-            )
-    events = read_records(directory / "metrics.jsonl")
+    if 0 in problem_accuracy and 100 in problem_accuracy:
+        delta = np.array(problem_accuracy[100]) - np.array(problem_accuracy[0])
+        rng = np.random.default_rng(1234)
+        draws = delta[rng.integers(0, 30, size=(20000, 30))].mean(axis=1)
+        lo, hi = np.quantile(draws, [0.025, 0.975]).tolist()
+        improvement = dict(
+            accuracy_delta=float(delta.mean()),
+            paired_problem_bootstrap_95=[lo, hi],
+            learning_demonstrated=lo > 0,
+            draws=20000,
+            seed=1234,
+        )
     updates = [r for r in events if r["event"] == "update"]
     intervals = [b["time"] - a["time"] for a, b in zip(updates, updates[1:])]
     identity_path = directory / "identity.json"
@@ -1032,9 +1056,12 @@ def summarize(directory):
             time.time(),
         )
         elapsed = end - json.loads(identity_path.read_text())["started"]
+    elif any(event["event"] == "run" for event in events):
+        started = next(event["time"] for event in events if event["event"] == "run")
+        elapsed = events[-1]["time"] - started
     median = statistics.median(intervals) if intervals else None
     return dict(
-        evaluations=evaluations,
+        evaluations=[evaluations[step] for step in sorted(evaluations)],
         final_comparison=improvement,
         accepted_updates=len(updates),
         median_seconds_between_updates=median,

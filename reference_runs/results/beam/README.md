@@ -10,7 +10,7 @@ evaluation is update 40; no update-42 accuracy is reported. The originally plann
 | Update 40 | 154/240 (64.17%) | 2,492.28 |
 
 Each evaluation uses 30 problems, eight samples per problem and a 4,096-token
-response cap. Independent strict regrading agreed with all 2,160 saved responses
+response cap. Independent strict regrading agreed with all 2,160 local responses
 across nine evaluations. The update-40 accuracy change is +23.75 percentage points,
 with a descriptive paired-problem 95% bootstrap interval of +12.92 to +35.83 points.
 This is an intermediate comparison, not the predeclared update-100 test.
@@ -26,13 +26,19 @@ The green curves are approximate digitizations of the
 Its reported step axis has not been verified as optimizer updates. Hardware and
 orchestration differ; the comparison does not establish parity.
 
-The cold restart at update 10 matched all 1,664 adapter/master/Adam tensors and 221
-non-tensor payloads. The final checkpoint preserves optimizer step 42; the journal
-records the pending policy-41 batch. Update 43 completed backward but was cancelled before optimizer
-submission. Both GPU apps were stopped and had zero remaining containers.
+The run used 16 H200 trainer GPUs and eight B300 sampler GPUs. Runtime pins were
+Miles `6f5a4a84`, trainer SGLang `9ac1c65b` and sampler SGLang `991fb37566`.
+Client code was `6bcf5aa` through update 10 and `35f365f` afterward.
 
-See [run status](run-status.json), [configuration](config.json),
-[deployment provenance](deployment.json), [incremental metrics](metrics.jsonl),
-[summary](summary.json), [cold-restore comparison](restore-comparison-step-0010.json),
-[final checkpoint audit](checkpoint-audit-step-0042.json) and
-[live hardware audit](hardware-audit.json).
+Only [configuration](config.json), [metrics](metrics.jsonl), the plot and this README
+are checked in. Metrics contain update/evaluation aggregates and accuracy per problem
+in dataset order, averaged over eight samples. They contain no prompts, answers,
+labels or routing payloads. Detailed responses,
+checkpoint journals and audit files stay local and are ignored by Git.
+
+Regenerate the plot from these metrics without the detailed responses:
+
+```bash
+uv run --with matplotlib==3.11.2 python reference_runs/beam.py \
+  --output reference_runs/results/beam --plot-only
+```

@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- Beam LoRA reference-run script with incremental metrics, evaluation records, checkpoint resume, recovery after reporting failures, and comparison plots.
+- Beam LoRA reference-run script with incremental aggregate metrics, local evaluation records, checkpoint resume, recovery after reporting failures, and plots that regenerate from metrics alone.
 
 - Miles LoRA configs can bypass checkpoint revision checks for debugging with `dangerously_allow_checkpoint_revision_mismatch`, disabled by default.
 
