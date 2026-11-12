@@ -145,7 +145,8 @@ class _SumVocabShards(torch.autograd.Function):
         return result
 
     @staticmethod
-    def backward(ctx, grad):
+    def backward(ctx, *grad_outputs):
+        (grad,) = grad_outputs
         return grad, None
 
 
