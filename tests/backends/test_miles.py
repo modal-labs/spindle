@@ -528,6 +528,91 @@ def test_checkpoint_capture_persist_and_restore(tmp_path, monkeypatch) -> None:
     assert backend.jobs["model-a"].optimizer_step == 3
 
 
+@pytest.mark.parametrize(
+    "allow_mismatch,target_revision,accepted",
+    [
+        (False, "b" * 40, False),
+        (True, "b" * 40, True),
+        (False, "a" * 40, True),
+    ],
+)
+def test_checkpoint_revision_mismatch_requires_dangerous_opt_in(
+    tmp_path, allow_mismatch, target_revision, accepted
+):
+    source = _backend(tmp_path / "source")
+    source.accept_model("model-a", _spec())
+    source.jobs["model-a"].optimizer_step = 7
+    source.capture_checkpoint(
+        "model-a", "original", destination="step-7", include_optimizer=True
+    )
+    checkpoint = Path(source.persist_checkpoint("original", "step-7"))
+    original_metadata = (checkpoint / "metadata.json").read_bytes()
+    runtime = FakeMilesRuntime()
+    runtime.revision = target_revision
+    target = _backend(tmp_path / "target", runtime)
+    target.config = target.config.model_copy(
+        update={"dangerously_allow_checkpoint_revision_mismatch": allow_mismatch}
+    )
+    target.accept_model("model-b", _spec())
+    if not accepted:
+        with pytest.raises(ValueError, match="Miles revision"):
+            target.load_checkpoint("model-b", str(checkpoint), restore_optimizer=True)
+        return
+    target.load_checkpoint("model-b", str(checkpoint), restore_optimizer=True)
+    assert target.jobs["model-b"].optimizer_step == 7
+    assert (checkpoint / "metadata.json").read_bytes() == original_metadata
+    target.capture_checkpoint(
+        "model-b", "upgraded", destination="upgraded", include_optimizer=True
+    )
+    upgraded = Path(target.persist_checkpoint("upgraded", "upgraded"))
+    metadata = json.loads((upgraded / "metadata.json").read_text())
+    assert metadata["miles_revision"] == target_revision
+    assert metadata["optimizer_step"] == 7
+    assert metadata["has_optimizer"] is True
+    metadata["miles_revision"] = FakeMilesRuntime.revision
+    metadata["checkpoint_format"] = "unsupported"
+    with pytest.raises(ValueError, match="checkpoint format"):
+        target._validate_checkpoint(metadata, target.jobs["model-b"], True)
+
+
+@pytest.mark.parametrize("allow_mismatch", [None, "true", 1, {}])
+def test_checkpoint_revision_override_requires_bool(allow_mismatch):
+    with pytest.raises(
+        ValueError, match="dangerously_allow_checkpoint_revision_mismatch"
+    ):
+        _config(dangerously_allow_checkpoint_revision_mismatch=allow_mismatch)
+
+
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("schema_version", 2, "schema"),
+        ("backend", "other", "Miles backend"),
+        ("base_model", "other", "base model"),
+        ("lora_config", {"rank": 1}, "LoRA configuration"),
+        ("topology", {}, "topology"),
+        ("has_optimizer", False, "optimizer state"),
+    ],
+)
+def test_revision_override_preserves_other_checkpoint_guards(
+    tmp_path, field, value, error
+):
+    backend = _backend(tmp_path)
+    backend.config = backend.config.model_copy(
+        update={"dangerously_allow_checkpoint_revision_mismatch": True}
+    )
+    backend.accept_model("model-a", _spec())
+    backend.capture_checkpoint(
+        "model-a", "original", destination="original", include_optimizer=True
+    )
+    checkpoint = Path(backend.persist_checkpoint("original", "original"))
+    metadata = json.loads((checkpoint / "metadata.json").read_text())
+    metadata["miles_revision"] = "b" * 40
+    metadata[field] = value
+    with pytest.raises(ValueError, match=error):
+        backend._validate_checkpoint(metadata, backend.jobs["model-a"], True)
+
+
 def test_checkpoint_restore_refreshes_files_saved_by_another_container(
     tmp_path, monkeypatch
 ):
@@ -997,3 +1082,159 @@ def test_a_capture_short_of_a_nodes_shards_is_refused(monkeypatch, tmp_path):
 )
 def test_hf_targets_match_tinker_training_flags(targets, expected):
     assert lora_target_flags(targets) == expected
+
+
+@pytest.mark.parametrize("optimizer", [False, True])
+def test_native_checkpoint_identity_is_distinct_and_strict(tmp_path, optimizer):
+    runtime = FakeMilesRuntime()
+    runtime.native_checkpoint_api = True
+    backend = _backend(tmp_path, runtime)
+    # Use the same creation helper as the legacy lifecycle tests.
+    backend.accept_model("native-model", _spec())
+    backend.capture_checkpoint(
+        "native-model", "native", destination="weights", include_optimizer=optimizer
+    )
+    metadata = json.loads(
+        (backend.capture_dir / "checkpoints/native/metadata.json").read_text()
+    )
+    assert metadata["schema_version"] == 2
+    assert metadata["checkpoint_format"] == (
+        "miles_adapter_state_v1" if optimizer else "miles_sampler_export_v1"
+    )
+    state = backend.jobs["native-model"]
+    backend._validate_checkpoint(metadata, state, restore_optimizer=optimizer)
+    with pytest.raises(ValueError, match="schema"):
+        backend._validate_checkpoint(
+            metadata | {"schema_version": 1, "checkpoint_format": "miles_torch_dist"},
+            state,
+            optimizer,
+        )
+    with pytest.raises(ValueError, match="format"):
+        backend._validate_checkpoint(
+            metadata | {"checkpoint_format": "miles_torch_dist"}, state, optimizer
+        )
+    with pytest.raises(ValueError, match="revision"):
+        backend._validate_checkpoint(
+            metadata | {"miles_revision": "different"}, state, optimizer
+        )
+
+
+@pytest.mark.parametrize("sampler", [False, True])
+@pytest.mark.parametrize("source_io", ["checkpoint", "sampler-read", "sampler-cleanup"])
+def test_native_capture_refresh_waits_for_source_io(
+    tmp_path, monkeypatch, sampler, source_io
+):
+    runtime = FakeMilesRuntime()
+    runtime.native_checkpoint_api = True
+    backend = _backend(tmp_path, runtime)
+    backend.accept_model("model-a", _spec())
+    bulletin_root = tmp_path / "bulletin"
+    monkeypatch.setenv("SPINDLE_BULLETIN_ROOT", str(bulletin_root))
+    monkeypatch.delenv("SPINDLE_BULLETIN_VOLUME", raising=False)
+    if source_io == "checkpoint":
+        backend.capture_checkpoint(
+            "model-a", "older", destination="older", include_optimizer=True
+        )
+    else:
+        backend.capture_sampler_snapshot("model-a", "older", 3)
+    older_sampler = backend.capture_dir / "sampler/older"
+    monkeypatch.setattr(miles_lora, "_commit_volume", lambda _: None)
+    persistence_open = threading.Event()
+    release_persistence = threading.Event()
+    capture_progress = threading.Event()
+    refreshed = threading.Event()
+    threads = threading.local()
+    original_lock = backend._checkpoint_io_lock
+    original_install = miles_lora._install_capture
+    original_publish = SnapshotBulletin.publish
+    original_cleanup = miles_lora.shutil.rmtree
+    opened = []
+
+    class ObservedLock:
+        def __enter__(self):
+            if getattr(threads, "capture", False):
+                capture_progress.set()
+            return original_lock.__enter__()
+
+        def __exit__(self, *args):
+            return original_lock.__exit__(*args)
+
+    backend._checkpoint_io_lock = ObservedLock()
+
+    def hold_source(source):
+        with source.open() as handle:
+            opened.append(handle)
+            persistence_open.set()
+            assert release_persistence.wait(5)
+
+    def persist(source, target, **kwargs):
+        hold_source(source / "metadata.json")
+        return original_install(source, target, **kwargs)
+
+    def publish(bulletin, ref, source, *args, **kwargs):
+        if source_io == "sampler-read":
+            hold_source(source / "adapter_model.safetensors")
+        return original_publish(bulletin, ref, source, *args, **kwargs)
+
+    def cleanup(path, *args, **kwargs):
+        if source_io == "sampler-cleanup" and Path(path) == older_sampler:
+            persistence_open.set()
+            assert release_persistence.wait(5)
+        return original_cleanup(path, *args, **kwargs)
+
+    monkeypatch.setattr(miles_lora, "_install_capture", persist)
+    monkeypatch.setattr(SnapshotBulletin, "publish", publish)
+    monkeypatch.setattr(miles_lora.shutil, "rmtree", cleanup)
+    original_save = runtime.export_slot_peft if sampler else runtime.save_slot
+
+    def native_refresh(*args, **kwargs):
+        refreshed.set()
+        capture_progress.set()
+        if opened:
+            assert opened[0].closed
+        if source_io != "checkpoint":
+            assert not older_sampler.exists()
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(
+        runtime, "export_slot_peft" if sampler else "save_slot", native_refresh
+    )
+
+    def capture():
+        threads.capture = True
+        if sampler:
+            return backend.capture_sampler_snapshot("model-a", "new", 7)
+        return backend.capture_checkpoint(
+            "model-a", "new", destination="new", include_optimizer=True
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        persisting = (
+            workers.submit(backend.persist_checkpoint, "older", "older")
+            if source_io == "checkpoint"
+            else workers.submit(backend.publish_sampler_snapshot, "older")
+        )
+        try:
+            assert persistence_open.wait(5)
+            capturing = workers.submit(capture)
+            assert capture_progress.wait(5)
+            assert not refreshed.is_set()
+            assert not capturing.done()
+        finally:
+            release_persistence.set()
+        result = persisting.result(timeout=5)
+        capturing.result(timeout=5)
+    assert refreshed.is_set()
+    if source_io == "checkpoint":
+        assert (
+            Path(result) / "miles/adapter_megatron_tp0_pp0.pt"
+        ).read_bytes() == b"weights"
+    else:
+        published = SnapshotBulletin(bulletin_root).resolve(VersionRef("model-a", 3))
+        assert (published / "adapter_model.safetensors").read_bytes() == b"adapter"
+    if sampler:
+        assert (
+            backend.capture_dir / "sampler/new/adapter_model.safetensors"
+        ).read_bytes() == b"adapter"
+    else:
+        assert (backend.capture_dir / "checkpoints/new/metadata.json").is_file()

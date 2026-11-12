@@ -512,6 +512,16 @@ def test_deepseek_v41_lora_trainer_image_is_registered():
     )
 
 
+@pytest.mark.parametrize(
+    "backend,field", [("miles", "trainer_image"), ("sglang", "inference_image")]
+)
+def test_beam_runtime_images_resolve(backend, field):
+    recipe = load(config_path("beam-501b-a23b-lora-5k"))
+    assert isinstance(
+        deployment_apps.image_for(backend, getattr(recipe, field)), modal.Image
+    )
+
+
 def test_gpu_type_lists_become_modal_fallbacks(builders):
     row = deployment("qwen36-35b-a3b-lora-32k")
     row.recipe.trainer_gpu = ["H200", "B300"]

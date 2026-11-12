@@ -9,8 +9,8 @@ from .image_dependencies import (
 
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
-SGLANG_BRANCH = "spindle-sglang-v0.5.23"
-SGLANG_REVISION = "90785332b8e3e1202ae280d85ecec197473bd5a8"
+SGLANG_BRANCH = "fred/beam-spindle"
+SGLANG_REVISION = "991fb375666ad9b173dcc7f9123c5a993f3151fc"
 # v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
 CORE_SAMPLER_PACKAGES = (
     *(p for p in CORE_PACKAGES if not p.startswith("opentelemetry-")),

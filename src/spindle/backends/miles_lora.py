@@ -304,6 +304,9 @@ class MilesCommandBackend(Backend):
         capture_path.parent.mkdir(parents=True, exist_ok=True)
         state = self.jobs[model_id]
         with (
+            self._checkpoint_io_lock
+            if getattr(self.runtime, "native_checkpoint_api", False)
+            else contextlib.nullcontext(),
             self._timer.phase(
                 "save_checkpoint", state.optimizer_step, model_id=model_id
             ),
@@ -315,8 +318,18 @@ class MilesCommandBackend(Backend):
                 include_optimizer=include_optimizer,
             )
         metadata = {
-            "schema_version": 1,
-            "checkpoint_format": "miles_torch_dist",
+            "schema_version": 2
+            if getattr(self.runtime, "native_checkpoint_api", False)
+            else 1,
+            "checkpoint_format": (
+                (
+                    "miles_adapter_state_v1"
+                    if include_optimizer
+                    else "miles_sampler_export_v1"
+                )
+                if getattr(self.runtime, "native_checkpoint_api", False)
+                else "miles_torch_dist"
+            ),
             "backend": "miles",
             "miles_revision": self.runtime.revision,
             "base_model": self.base_model,
@@ -433,6 +446,9 @@ class MilesCommandBackend(Backend):
         path = self.capture_dir / "sampler" / capture_id
         path.parent.mkdir(parents=True, exist_ok=True)
         with (
+            self._checkpoint_io_lock
+            if getattr(self.runtime, "native_checkpoint_api", False)
+            else contextlib.nullcontext(),
             self._timer.phase(
                 "save_sampler_weights", state.optimizer_step, model_id=model_id
             ),
@@ -460,6 +476,14 @@ class MilesCommandBackend(Backend):
         )
 
     def publish_sampler_snapshot(self, capture_id: str) -> None:
+        with (
+            self._checkpoint_io_lock
+            if getattr(self.runtime, "native_checkpoint_api", False)
+            else contextlib.nullcontext()
+        ):
+            self._publish_sampler_capture(capture_id)
+
+    def _publish_sampler_capture(self, capture_id: str) -> None:
         try:
             capture = self._sampler_captures[capture_id]
             volume_name = os.environ.get("SPINDLE_BULLETIN_VOLUME")
@@ -639,13 +663,26 @@ class MilesCommandBackend(Backend):
         state: MilesJobState,
         restore_optimizer: bool,
     ) -> None:
-        if metadata.get("schema_version") != 1:
+        native = getattr(self.runtime, "native_checkpoint_api", False)
+        if metadata.get("schema_version") != (2 if native else 1):
             raise ValueError("unsupported Miles checkpoint schema")
         if metadata.get("backend") != "miles":
             raise ValueError("checkpoint was not created by the Miles backend")
-        if metadata.get("miles_revision") != self.runtime.revision:
+        if (
+            metadata.get("miles_revision") != self.runtime.revision
+            and not self.config.dangerously_allow_checkpoint_revision_mismatch
+        ):
             raise ValueError("checkpoint Miles revision does not match the deployment")
-        if metadata.get("checkpoint_format") != "miles_torch_dist":
+        expected_format = (
+            (
+                "miles_adapter_state_v1"
+                if metadata.get("has_optimizer")
+                else "miles_sampler_export_v1"
+            )
+            if native
+            else "miles_torch_dist"
+        )
+        if metadata.get("checkpoint_format") != expected_format:
             raise ValueError("unsupported Miles checkpoint format")
         if metadata.get("base_model") != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")

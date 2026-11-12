@@ -111,6 +111,9 @@ class MilesBackendConfig(BaseModel):
     align_sequences_to_parallel_layout: bool = False
     extra_args: tuple[str, ...] = ()
     cli_options: dict[str, Any] = Field(default_factory=dict)
+    dangerously_allow_checkpoint_revision_mismatch: bool = Field(
+        default=False, strict=True
+    )
 
     @property
     def world_size(self) -> int:

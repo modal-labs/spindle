@@ -6,11 +6,11 @@ its native replay queues and sampling-mask primitive with Tinker datum metadata.
 
 from __future__ import annotations
 
-from argparse import Namespace
 from functools import wraps
 
 import torch
 
+from .config import backend_config, replace_config
 from .targets import install_multi_target_hooks
 
 _replayed_run = None
@@ -105,15 +105,15 @@ def install_replay_hooks(
                 strict=True,
             )
         ]
-        vocab_size = args.vocab_size
+        vocab_size = backend_config(args).vocab_size
         if vocab_size is None:
             raise ValueError("sampling replay requires the true model vocabulary size")
         if any(torch.any(mask._ids >= vocab_size) for mask in masks):
             raise ValueError(
                 "sampling mask contains a token outside the model vocabulary"
             )
-        args = Namespace(**vars(args))
-        args.rollout_temperature = batch["loss_fn_config"]["sampling_temperature"]
+        temperature = batch["loss_fn_config"]["sampling_temperature"]
+        args = replace_config(args, rollout_temperature=temperature)
         label_tokens = [
             torch.cat(
                 [
@@ -162,7 +162,9 @@ def install_replay_hooks(
     original_run = lora_model.run_forward_backward
 
     @wraps(original_run)
-    def run(args, batch_id, model, rollout_data, **kwargs):
+    def run(args, batch_id, model, *slot_and_data, **kwargs):
+        # v0.2.0 passes adapter_slots before rollout_data; preserve both native arguments.
+        rollout_data = slot_and_data[-1] if slot_and_data else kwargs["rollout_data"]
         replay = manager.data_key in rollout_data
         enabled, stage = manager.enabled, manager.stage
         if replay and (not enabled or not manager.replays):
@@ -175,7 +177,7 @@ def install_replay_hooks(
             # Miles switches to replay_forward around each forward; recompute
             # consumes the separate backward cursor after that stage restores.
             manager.stage = "replay_backward"
-            return original_run(args, batch_id, model, rollout_data, **kwargs)
+            return original_run(args, batch_id, model, *slot_and_data, **kwargs)
         finally:
             manager.clear_all()
             manager.enabled, manager.stage = enabled, stage

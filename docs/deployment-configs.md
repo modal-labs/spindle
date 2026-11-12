@@ -111,9 +111,11 @@ Miles argument conversion lives in [miles_arguments.py](../src/spindle/backends/
 
 Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, the default, or `raw`: the converter Miles uses to export weights, for models without a Megatron-Bridge mapping) and `dynamic_batch_size`.
 
+Miles checkpoints require the same runtime commit by default. For debugging only, set `miles_cfg["dangerously_allow_checkpoint_revision_mismatch"] = True` to bypass this check for every restore on the deployment. This can load incompatible training state; leave it disabled for normal use. Model, adapter, topology, format, and optimizer-state checks still apply. Restoring preserves the source checkpoint metadata, and subsequent saves record the actual runtime commit.
+
 ### Images
 
-`trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1 and v0.1.2.
+`trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1, v0.1.2 and v0.2.0. Beam selects `miles-v0.2.0`; other recipes retain their existing trainer images. Miles v0.2.0 uses a different adapter checkpoint format. Checkpoints from v0.1.x are rejected even when revision checks are disabled.
 
 ## Prepare and launch
 

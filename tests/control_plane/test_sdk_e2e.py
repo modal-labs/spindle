@@ -5,6 +5,7 @@ import json
 import os
 import time
 from types import SimpleNamespace
+from pathlib import Path
 
 import httpx
 import pytest
@@ -168,6 +169,173 @@ def test_real_sdk_recreates_lora_client_from_state(base_url: str) -> None:
     assert resumed.optim_step(types.AdamParams(learning_rate=1e-4)).result(
         timeout=30
     ).metrics == {"lr": 1e-4}
+
+
+@pytest.fixture
+def native_checkpoint_metadata():
+    return json.loads(
+        (Path(__file__).parent / "fixtures/miles_native_checkpoint0.json").read_text()
+    )
+
+
+@pytest.mark.parametrize(
+    ("optimizer", "sampler_export"), [(False, False), (True, False), (False, True)]
+)
+def test_real_sdk_restores_native_miles_checkpoint(
+    native_checkpoint_metadata, optimizer, sampler_export
+):
+    metadata = native_checkpoint_metadata
+    if sampler_export:
+        metadata = metadata | {
+            "checkpoint_format": "miles_sampler_export_v1",
+            "has_optimizer": False,
+        }
+    definition_id = metadata["engine_definition_id"]
+    definitions = (
+        SimpleNamespace(
+            definition_id=definition_id,
+            name=definition_id,
+            model=metadata["base_model"],
+            parameterization="lora",
+            max_context_length=5120,
+        ),
+    )
+    loaded = []
+
+    class RestoreExecutor(TinkerStubExecutor):
+        async def execute(self, model_id, kind, payload):
+            if kind == OperationKind.LOAD_WEIGHTS:
+                loaded.append((payload.uri, payload.restore_optimizer))
+            return await super().execute(model_id, kind, payload)
+
+    async def read_metadata(path):
+        return metadata
+
+    plane = ControlPlane(
+        InMemoryKeyValueStore(),
+        LocalEnginePlatform(definition_id, RestoreExecutor),
+        read_checkpoint_metadata=read_metadata,
+    )
+    app = create_control_plane_app(
+        plane, definitions, api_key=API_KEY, retrieve_window=5.0
+    )
+    with serve(app) as url:
+        service = tinker.ServiceClient(base_url=url, api_key=API_KEY)
+        path = "tinker://native-run/weights/checkpoint0"
+        info = (
+            service.create_rest_client()
+            .get_weights_info_by_tinker_path(path)
+            .result(timeout=30)
+        )
+        assert (info.base_model, info.is_lora, info.lora_rank) == (
+            metadata["base_model"],
+            True,
+            16,
+        )
+        create = (
+            service.create_training_client_from_state_with_optimizer
+            if optimizer
+            else service.create_training_client_from_state
+        )
+        restored = create(path)
+        if isinstance(restored, tinker.APIFuture):
+            restored = restored.result(timeout=30)
+        assert loaded == [("/checkpoints/checkpoint0/native-run", optimizer)]
+        assert restored.get_info().model_name == metadata["base_model"]
+        assert restored.optim_step(types.AdamParams(learning_rate=1e-4)).result(
+            timeout=30
+        ).metrics == {"lr": 1e-4}
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"schema_version": 3},
+        {"schema_version": True},
+        {"schema_version": 2.0},
+        {"backend": "unknown"},
+        {"backend": None},
+        {"checkpoint_format": "unknown"},
+        {"checkpoint_format": "miles_torch_dist"},
+        {"checkpoint_format": "miles_sampler_export_v1"},
+        {"has_optimizer": False},
+        {"has_optimizer": 1},
+        {"parameterization": {"type": "full"}, "lora_config": None},
+    ],
+)
+@pytest.mark.parametrize("endpoint", ["weights_info", "load_weights"])
+def test_native_checkpoint_metadata_rejected_over_http(
+    native_checkpoint_metadata, invalid, endpoint
+):
+    metadata = native_checkpoint_metadata | invalid
+
+    async def read_metadata(path):
+        return metadata
+
+    plane = ControlPlane(
+        InMemoryKeyValueStore(),
+        LocalEnginePlatform(DEFINITION, TinkerStubExecutor),
+        read_checkpoint_metadata=read_metadata,
+    )
+    app = create_control_plane_app(plane, DEFINITIONS, api_key=API_KEY)
+    with (
+        serve(app) as url,
+        httpx.Client(base_url=url, headers={"X-API-Key": API_KEY}) as client,
+    ):
+        path = "tinker://native-run/weights/checkpoint0"
+        body = (
+            {"tinker_path": path}
+            if endpoint == "weights_info"
+            else {
+                "path": path,
+                "session_id": "session",
+                "model_seq_id": 0,
+                "optimizer": True,
+            }
+        )
+        response = client.post(f"/api/v1/{endpoint}", json=body)
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
+
+
+def test_native_sampler_export_cannot_restore_optimizer(native_checkpoint_metadata):
+    metadata = native_checkpoint_metadata | {
+        "checkpoint_format": "miles_sampler_export_v1",
+        "has_optimizer": False,
+    }
+    allocations = []
+
+    def executor():
+        allocations.append(True)
+        return TinkerStubExecutor()
+
+    async def read_metadata(path):
+        return metadata
+
+    plane = ControlPlane(
+        InMemoryKeyValueStore(),
+        LocalEnginePlatform(metadata["engine_definition_id"], executor),
+        read_checkpoint_metadata=read_metadata,
+    )
+    definitions = (
+        SimpleNamespace(
+            definition_id=metadata["engine_definition_id"],
+            name="beam",
+            model=metadata["base_model"],
+            parameterization="lora",
+            max_context_length=5120,
+        ),
+    )
+    app = create_control_plane_app(plane, definitions, api_key=API_KEY)
+    with serve(app) as url:
+        service = tinker.ServiceClient(base_url=url, api_key=API_KEY)
+        with pytest.raises(tinker.BadRequestError, match="does not include optimizer"):
+            restored = service.create_training_client_from_state_with_optimizer(
+                "tinker://native-run/weights/checkpoint0"
+            )
+            if isinstance(restored, tinker.APIFuture):
+                restored.result(timeout=30)
+    assert allocations == []
 
 
 def test_real_sdk_recreates_full_client_from_state(full_base_url: str) -> None:

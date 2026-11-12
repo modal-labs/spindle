@@ -467,8 +467,17 @@ class ControlPlane:
         except FileNotFoundError:
             raise RecordNotFound("checkpoint metadata", path) from None
         schema_version = metadata.get("schema_version")
-        if isinstance(schema_version, bool) or schema_version != 1:
+        if isinstance(schema_version, bool) or schema_version not in (1, 2):
             raise ValueError("unsupported checkpoint metadata")
+        if schema_version == 2 and (
+            not isinstance(schema_version, int)
+            or metadata.get("backend") != "miles"
+            or metadata.get("checkpoint_format")
+            not in ("miles_adapter_state_v1", "miles_sampler_export_v1")
+            or metadata.get("has_optimizer")
+            is not (metadata.get("checkpoint_format") == "miles_adapter_state_v1")
+        ):
+            raise ValueError("unsupported native Miles checkpoint metadata")
         saved_base_model = metadata.get("base_model")
         definition_id = metadata.get("engine_definition_id")
         parameterization = metadata.get("parameterization")
@@ -481,6 +490,8 @@ class ControlPlane:
             "type"
         ) not in {"lora", "full"}:
             raise ValueError("checkpoint metadata has invalid parameterization")
+        if schema_version == 2 and parameterization["type"] != "lora":
+            raise ValueError("native Miles checkpoint requires LoRA parameterization")
         if parameterization["type"] == "lora" and not isinstance(lora_config, Mapping):
             raise ValueError("checkpoint metadata has no lora_config")
         if parameterization["type"] == "full" and lora_config is not None:
@@ -499,6 +510,12 @@ class ControlPlane:
         definition_ids: Collection[str] | None = None,
     ) -> ModelCreation:
         metadata = await self.checkpoint_metadata(path)
+        if (
+            metadata["schema_version"] == 2
+            and optimizer
+            and not metadata["has_optimizer"]
+        ):
+            raise ValueError("checkpoint does not include optimizer state")
         path = self.resolve_checkpoint_path(path)
         saved_base_model = metadata["base_model"]
         definition_id = metadata["engine_definition_id"]

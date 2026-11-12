@@ -22,6 +22,12 @@ from spindle.backends.miles_config import MilesBackendConfig
 from spindle.errors import BackendFailed
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
+from .config import backend_config
+from .native_checkpoints import (
+    NativeCheckpoints,
+    NativeSourceError,
+    uses_native_checkpoints,
+)
 from .replay_data import install_bridge_replay, validate_routed_experts
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
@@ -51,6 +57,16 @@ try:
     from miles.ray.wiring import shutdown_worker_manager
 except ImportError:
     create_trainer_handles = None
+
+
+try:
+    from miles.ray.train.init_request import TrainerControllerInitRequest
+    from miles.ray.wiring import compute_backend_capability
+    from miles.utils.args.trainer_utils import compute_trainer_config
+    from miles.utils.hf_utils.config import load_hf_config
+    from miles.utils.lora.hf_lora_targets import get_hf_lora_targets
+except ImportError:
+    TrainerControllerInitRequest = None
 
 
 class MilesRuntime:
@@ -85,6 +101,7 @@ class MilesRuntime:
         self._trainer = None
         self._worker_manager = None
         self._bridge = None
+        self._native_checkpoints = None
         self._owns_ray = False
         self._owns_object_store = False
         self._unit_ids = count(1)
@@ -105,6 +122,17 @@ class MilesRuntime:
         checkpoint: str | None = None,
         restore_optimizer: bool = True,
     ) -> None:
+        if self._native_checkpoints is not None:
+            self._run(
+                self._native_checkpoints.load_slot(
+                    slot,
+                    rank,
+                    alpha,
+                    checkpoint=checkpoint,
+                    restore_optimizer=restore_optimizer,
+                )
+            )
+            return
         self._run(
             self._bridge.load_slot(
                 slot,
@@ -115,8 +143,14 @@ class MilesRuntime:
             )
         )
 
+    @property
+    def native_checkpoint_api(self) -> bool:
+        return self._native_checkpoints is not None
+
     def unload_slot(self, slot: int) -> None:
         self._run(self._bridge.unload_slot(slot))
+        if self._native_checkpoints is not None:
+            self._native_checkpoints.slots.pop(slot, None)
 
     def forward_backward(
         self,
@@ -129,10 +163,10 @@ class MilesRuntime:
         if any("routed_experts" in row for _, row in slot_rows):
             validate_routed_experts(
                 slot_rows,
-                num_layers=self._args.num_layers,
-                num_experts=self._args.num_experts,
-                topk=self._args.moe_router_topk,
-                moe_layer_freq=getattr(self._args, "moe_layer_freq", 1),
+                num_layers=backend_config(self._args).num_layers,
+                num_experts=backend_config(self._args).num_experts,
+                topk=backend_config(self._args).moe_router_topk,
+                moe_layer_freq=getattr(backend_config(self._args), "moe_layer_freq", 1),
             )
         unit_id = next(self._unit_ids)
         method = (
@@ -155,6 +189,13 @@ class MilesRuntime:
     def save_slot(
         self, slot: int, path: str, *, include_optimizer: bool = True
     ) -> None:
+        if self._native_checkpoints is not None:
+            self._run(
+                self._native_checkpoints.capture(
+                    slot, path, include_optimizer=include_optimizer
+                )
+            )
+            return
         if include_optimizer:
             self._run(self._bridge.save_slot(slot, path))
         else:
@@ -174,6 +215,15 @@ class MilesRuntime:
         target_modules: tuple[str, ...],
         lora_dropout: float,
     ) -> None:
+        if self._native_checkpoints is not None:
+            if self._native_checkpoints.slots[slot] != (rank, alpha):
+                raise ValueError(
+                    "sampler export rank/alpha do not match the loaded slot"
+                )
+            self._run(
+                self._native_checkpoints.capture(slot, path, include_optimizer=False)
+            )
+            return
         self._run(self._bridge.export_slot(slot, rank, alpha, path))
         _materialize_capture(path)
 
@@ -205,6 +255,8 @@ class MilesRuntime:
             result = self._call(coroutine)
             _check_result(result)
             return result
+        except NativeSourceError:
+            raise
         except Exception as exc:
             self._failure = exc
             raise BackendFailed(f"Miles trainer failed: {exc}") from exc
@@ -255,15 +307,17 @@ class MilesRuntime:
                         parser, self.config.cli_options, sys.argv
                     )
 
-                args = parse_args(add_custom_arguments=configure, entry="serve")
+                args = parse_args(
+                    add_custom_arguments=configure,
+                    entry="serve",
+                    preprocess_args=_configure_training_args,
+                )
             else:
-                args = parse_args(entry="serve")
+                args = parse_args(
+                    entry="serve", preprocess_args=_configure_training_args
+                )
         self._args = args
 
-        # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
-        args.lora_A_init_method = "kaiming"
-        args.use_dynamic_global_batch_size = True
-        args.delay_split_train_data_by_dp = True
         configure_logger(args, source=_main_process_identity())
         startup = timeline(BACKEND_COMPONENT)
         startup.mark("miles_args_parsed")
@@ -302,9 +356,20 @@ class MilesRuntime:
         if create_trainer_handles is not None:
             configs = compute_trainer_configs(args)
             (actor_config,) = [c for c in configs if c.role == ACTOR_ROLE]
-            handles = create_trainer_handles(args, trainer_configs=configs)
+            if TrainerControllerInitRequest is not None:
+                capability = compute_backend_capability(args)
+                handles = create_trainer_handles(
+                    args, trainer_configs=configs, capability=capability
+                )
+                self._args = compute_trainer_config(args, actor_config)
+                request = TrainerControllerInitRequest.from_args(
+                    args, trainer=actor_config
+                )
+            else:
+                handles = create_trainer_handles(args, trainer_configs=configs)
+                request = compute_trainer_args(args, actor_config)
             self._trainer = handles[actor_config.trainer_id]
-            await self._trainer.init(compute_trainer_args(args, actor_config))
+            await self._trainer.init(request)
         else:
             self._trainer = TrainerController(
                 args=args,
@@ -316,7 +381,16 @@ class MilesRuntime:
             )
             await self._trainer.init()
         startup.mark("trainer_actors_initialized")
-        self._bridge = _array_bridge(self._trainer)
+        lora_layout = (
+            get_hf_lora_targets(load_hf_config(self.config.hf_checkpoint).to_dict())
+            if TrainerControllerInitRequest is not None
+            else None
+        )
+        self._bridge = _array_bridge(self._trainer, lora_layout=lora_layout)
+        if uses_native_checkpoints(self._bridge):
+            self._native_checkpoints = NativeCheckpoints(
+                self._bridge, args, self.config
+            )
         startup.mark("miles_backend_ready")
 
     async def _close(self) -> None:
@@ -350,6 +424,13 @@ class MilesRuntime:
             self._worker_manager = None
 
 
+def _configure_training_args(args) -> None:
+    """Set trainer options before Miles validates and freezes its configuration."""
+    args.lora_A_init_method = "kaiming"
+    args.use_dynamic_global_batch_size = True
+    args.delay_split_train_data_by_dp = True
+
+
 _WORKER_ENV_VARS = (
     "SPINDLE_CHECKPOINT_VOLUME",
     "SPINDLE_BULLETIN_VOLUME",
@@ -361,7 +442,7 @@ _WORKER_ENV_VARS = (
 )
 
 
-def _array_bridge(trainer):
+def _array_bridge(trainer, *, lora_layout=None):
     """Miles's ``_execute_batch`` builds per-token Python lists and returns log
     probabilities with ``.tolist()``; this keeps rows and outputs as arrays."""
 
@@ -411,7 +492,10 @@ def _array_bridge(trainer):
                         outputs[index] = recorded
             return [outputs[index] for index in range(len(slot_datums))]
 
-    return ArrayBackend(trainer, router_url="", dp_size=1)
+    kwargs = {"router_url": "", "dp_size": 1}
+    if lora_layout is not None:
+        kwargs["lora_layout"] = lora_layout
+    return ArrayBackend(trainer, **kwargs)
 
 
 def _worker_env() -> dict[str, str]:
@@ -468,7 +552,12 @@ def _main_process_identity():
 
 
 def _configure_actor_spec(train_specs) -> None:
-    original = train_specs._compute_spec_trainer
+    legacy = hasattr(train_specs, "_compute_spec_trainer")
+    original = (
+        train_specs._compute_spec_trainer
+        if legacy
+        else train_specs.TrainerSpec.create.__func__
+    )
     if getattr(original, "_spindle_actor_spec", False):
         return
 
@@ -487,7 +576,10 @@ def _configure_actor_spec(train_specs) -> None:
         return spec
 
     compute._spindle_actor_spec = True
-    train_specs._compute_spec_trainer = compute
+    if legacy:
+        train_specs._compute_spec_trainer = compute
+    else:
+        train_specs.TrainerSpec.create = classmethod(compute)
 
 
 def _allow_allgather_cp_bshd_multi_lora(lora_arguments) -> None:
