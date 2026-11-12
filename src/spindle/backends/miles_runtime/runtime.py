@@ -81,8 +81,6 @@ class MilesRuntime:
             ],
             text=True,
         ).strip()
-        if self._v020 is not None:
-            self.revision += "+" + os.environ["SPINDLE_MILES_PATCH_SHA256"]
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._run_loop,
