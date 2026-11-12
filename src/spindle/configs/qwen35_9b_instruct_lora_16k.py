@@ -5,7 +5,7 @@ class Config(BaseConfig):
     name = "qwen35-9b-instruct-lora-16k"
     model = "Qwen/Qwen3.5-9B"
     max_context_length = 16384
-    trainer_gpu = "H100"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 8
     miles_cfg = {
         "model_type": "qwen3.5-9B",
@@ -34,7 +34,7 @@ class Config(BaseConfig):
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
     }
     trainer_max_clients_per_instance = 6
-    inference_gpu = ["B200", "H200"]
+    inference_gpu = "B200"
     sglang_cfg = {
         "tp_size": 1,
         "ep_size": 1,

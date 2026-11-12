@@ -6,7 +6,7 @@ class Config(BaseConfig):
     model = "openai/gpt-oss-20b"
     model_weights = "lmsys/gpt-oss-20b-bf16"
     max_context_length = 32768
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 8
     trainer_max_clients_per_instance = 8
     miles_cfg = {
@@ -47,7 +47,7 @@ class Config(BaseConfig):
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
         "EXPERT_LORA_COMPAT": "1",
     }
-    inference_gpu = "H200"
+    inference_gpu = "B200"
     inference_gpus_per_node = 4
     sglang_cfg = {
         "tp_size": 4,

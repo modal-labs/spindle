@@ -4,7 +4,7 @@ from spindle.configs.nemotron3_super_120b_a12b_lora_64k_b300 import Config as Pa
 class Config(Parent):
     name = "nemotron3-super-120b-a12b-lora-256k"
     max_context_length = 262144
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
     trainer_nodes = 2
     trainer_gpus_per_node = 8
     trainer_max_clients_per_instance = 2

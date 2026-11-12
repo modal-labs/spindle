@@ -72,7 +72,7 @@ probe_image = (
     .env({"MODAL_ENVIRONMENT": MODAL_ENV})
     .add_local_python_source("spindle", "synthetic_monitoring")
     .add_local_dir(
-        str(REPO_ROOT / "examples/dapo-27b-4h200-12b200"),
+        str(REPO_ROOT / "examples/dapo-27b-4b200-12b200"),
         remote_path=DAPO_DIR,
     )
     .add_local_file(

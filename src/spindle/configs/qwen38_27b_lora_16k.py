@@ -5,7 +5,7 @@ class Config(BaseConfig):
     name = "qwen38-27b-lora-16k"
     model = "Qwen/Qwen3.8-27B"
     max_context_length = 16384
-    trainer_gpu = ["H200", "B300", "B200"]
+    trainer_gpu = ["B300", "B200"]
     trainer_gpus_per_node = 8
     miles_cfg = {
         "model_type": "qwen3.8-27B",
@@ -34,12 +34,14 @@ class Config(BaseConfig):
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
     }
     trainer_max_clients_per_instance = 6
-    inference_gpu = ["H200", "B300", "B200"]
+    inference_gpu = "B200"
     sglang_cfg = {
         "tp_size": 1,
         "ep_size": 1,
         "mem_fraction_static": 0.9,
-        "mamba_full_memory_ratio": 0.6,
+        "mamba_full_memory_ratio": 0.4,
+        "attention_backend": "trtllm_mha",
+        "page_size": 64,
         "max_running_requests": 32,
         "max_queued_requests": 8,
         "max_loaded_loras": 256,

@@ -5,7 +5,7 @@ class Config(BaseConfig):
     name = "deepseek-v31-lora-32k"
     model = "deepseek-ai/DeepSeek-V3.1"
     max_context_length = 32768
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 8
     trainer_nodes = 2
     trainer_cpu = 32

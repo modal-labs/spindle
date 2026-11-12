@@ -11,12 +11,12 @@ class Config(BaseConfig):
     model = "Qwen/Qwen3.5-9B-Base"
     max_context_length = 16384
     backend = "miles"
-    trainer_gpu = "H100"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 4
     trainer_cpu = 16
     trainer_memory_mib = 65536
     trainer_max_clients_per_instance = 6
-    inference_gpu = "H200"
+    inference_gpu = "B200"
     inference_max_replicas = 8
     miles_cfg = {
         "model_type": "qwen3.5-9B",
@@ -53,9 +53,11 @@ class Config(Parent):
 config = Config()
 ```
 
-Each parent's settings and overrides apply before its child's. Constructor fields and overrides apply last: `Config(trainer_gpu="H200", overrides={"sglang_cfg.max_running_requests": 16})`. Assigning a dictionary or list replaces that value; `trainer_env = {}` clears inherited environment settings. Instances own independent copies of mutable values and can also be edited directly.
+Each parent's settings and overrides apply before its child's. Constructor fields and overrides apply last: `Config(trainer_gpu="B200", overrides={"sglang_cfg.max_running_requests": 16})`. Assigning a dictionary or list replaces that value; `trainer_env = {}` clears inherited environment settings. Instances own independent copies of mutable values and can also be edited directly.
 
-`trainer_gpu` and `inference_gpu` take one GPU type or a list in preference order, such as `["H200", "B300"]`. Modal schedules the first type with capacity. GPU counts and parallelism settings apply to every entry, so list only types the recipe fits on.
+`trainer_gpu` and `inference_gpu` take one GPU type or a list in preference order, such as `["B200", "B300"]`. Modal schedules the first type with capacity. GPU counts and parallelism settings apply to every entry, so list only types the recipe fits on.
+
+Bundled recipes use B200 or B300 GPUs. The `qwen35-9b-lora-16k-h200` and `qwen35-4b-fft-64k-h200` recipes retain H200 trainers and samplers for legacy deployments. Select these names explicitly to keep using H200. GPU counts, parallelism, and context limits match their Blackwell parents.
 
 When several clients share a trainer, it trains all of their queued batches together by default, and each client waits for the whole step to finish. For RL, where clients sample at different times, set `trainer_max_clients_per_batch = 1`. The trainer then runs one client at a time, so each client can go back to sampling as soon as its own step is done.
 
@@ -138,7 +140,7 @@ The launcher consumes the saved settings. It does not reparse backend configurat
 
 ## Multi-node Miles
 
-[qwen38_27b_lora_256k.py](../src/spindle/configs/qwen38_27b_lora_256k.py) configures two nodes with eight H200s per node, TP2 and CP8. The trainer app uses Modal's clustered launcher and RDMA. Every rank mounts the same volumes; rank 0 starts the engine, and the other ranks join Ray using the launcher merged in #39. The driver receives the Ray address. GPU counts cannot be independently overridden through Miles options.
+[qwen38_27b_lora_256k.py](../src/spindle/configs/qwen38_27b_lora_256k.py) configures two nodes with eight B200s per node, TP2 and CP8. The trainer app uses Modal's clustered launcher and RDMA. Every rank mounts the same volumes; rank 0 starts the engine, and the other ranks join Ray using the launcher merged in #39. The driver receives the Ray address. GPU counts cannot be independently overridden through Miles options.
 
 This path has CPU construction/topology tests. This refactor has not been redeployed or tested on multiple GPU nodes.
 
@@ -232,14 +234,14 @@ Anyone with the frontend's API key can add and remove configs. There are two way
 ### SDK
 
 ~~~bash
-uv run spindle add qwen35-9b-lora-16k-h200 --base qwen35-9b-lora-16k \
-  --trainer_gpu=H200 --miles_cfg.max_tokens_per_gpu=8192
+uv run spindle add qwen35-9b-lora-16k-b200 --base qwen35-9b-lora-16k \
+  --trainer_gpu=B200 --miles_cfg.max_tokens_per_gpu=8192
 ~~~
 
 `spindle add` waits until the config's apps are ready. To remove a config:
 
 ~~~bash
-uv run spindle remove qwen35-9b-lora-16k-h200
+uv run spindle remove qwen35-9b-lora-16k-b200
 ~~~
 
 If models still train on it, `spindle remove` lists them and prompts the user first; `--force` skips the interactive prompt.
@@ -251,9 +253,9 @@ If models still train on it, `spindle remove` lists them and prompts the user fi
 ~~~bash
 curl -sS -i -X POST "$TINKER_BASE_URL/api/v1/spindle/deployments" \
   -H "X-API-Key: $TINKER_API_KEY" -H "Content-Type: application/json" \
-  -d '{"name": "qwen35-9b-lora-16k-h200",
+  -d '{"name": "qwen35-9b-lora-16k-b200",
        "base": "qwen35-9b-lora-16k",
-       "overrides": {"trainer_gpu": "H200", "miles_cfg.max_tokens_per_gpu": 8192}}'
+       "overrides": {"trainer_gpu": "B200", "miles_cfg.max_tokens_per_gpu": 8192}}'
 ~~~
 
 `DELETE /api/v1/spindle/deployments/{name}` removes a config and stops its trainer and inference apps, and `GET /api/v1/spindle/deployments` lists them. If models still train on the config, `DELETE` returns HTTP 409 listing them; add `?force=true` to remove it anyway, which ends their training.

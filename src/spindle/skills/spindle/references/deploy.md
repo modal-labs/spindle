@@ -35,7 +35,7 @@ spindle config validate my_model.py
 spindle deploy my_model.py
 ```
 
-Subclass `BaseConfig` or a bundled `Config`. Dotted `overrides` set single backend options (`{"miles_cfg.max_tokens_per_gpu": 8192}`). `trainer_gpu`/`inference_gpu` accept a preference list like `["H200", "B300"]`; Modal schedules the first with capacity. Platform settings (`platform.frontend`, `.modal.environment`, `.modal.region`, `.secrets.*`, `.storage.*`) must match across all configs in one deploy; `--app`/`--env`/`--region` flags override.
+Subclass `BaseConfig` or a bundled `Config`. Dotted `overrides` set single backend options (`{"miles_cfg.max_tokens_per_gpu": 8192}`). `trainer_gpu`/`inference_gpu` accept a preference list like `["B200", "B300"]`; Modal schedules the first with capacity. Platform settings (`platform.frontend`, `.modal.environment`, `.modal.region`, `.secrets.*`, `.storage.*`) must match across all configs in one deploy; `--app`/`--env`/`--region` flags override.
 
 Fixed a bundled config? See the `spindle-dev` skill's upstream-config.md.
 

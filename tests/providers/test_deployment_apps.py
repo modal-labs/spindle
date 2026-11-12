@@ -78,7 +78,7 @@ def test_trainer_declaration_and_executor_configuration(
     app, trainer = deployment_apps.build_trainer_app(row, platform, image=image)
     assert app.tags["spindle_role"] == "trainer"
     declaration, _ = app.functions["trainer"]
-    assert declaration["gpu"] == "H100:4"
+    assert declaration["gpu"] == "B200:4"
     assert declaration["ephemeral_disk"] is None
     assert declaration["region"] is None
     assert declaration["max_containers"] is None
@@ -136,7 +136,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     )
     settings, _ = app.servers["Server"]
     assert app.name == pool.app_name
-    assert settings["gpu"] == (["B200:1", "H200:1"] if kind == "lora" else "H100:1")
+    assert settings["gpu"] == "B200:1"
     assert settings["min_containers"] == 0
     assert settings["target_concurrency"] == (128 if kind == "lora" else 32)
     assert settings.get("scaleup_window") is None
@@ -617,7 +617,7 @@ def test_multinode_trainer_uses_cluster_launcher(builders, monkeypatch):
     app, _ = deployment_apps.build_trainer_app(row, image="test")
     settings, _ = app.functions["trainer"]
     assert clusters == [(2, True)]
-    assert settings["gpu"] == "H200:8"
+    assert settings["gpu"] == "B200:8"
     assert settings["experimental_options"] == {"efa_enabled": True}
     calls = []
     monkeypatch.setattr(deployment_apps, "shared_kv", lambda: "store")

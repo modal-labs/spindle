@@ -5,7 +5,7 @@ class Config(BaseConfig):
     name = "nemotron3-nano-30b-a3b-lora-64k"
     model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
     max_context_length = 65536
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 2
     trainer_cpu = 16
     trainer_memory_mib = 131072
@@ -42,7 +42,7 @@ class Config(BaseConfig):
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
     }
-    inference_gpu = "H200"
+    inference_gpu = "B200"
     inference_gpus_per_node = 1
     inference_memory_mib = 131072
     inference_max_replicas = 4

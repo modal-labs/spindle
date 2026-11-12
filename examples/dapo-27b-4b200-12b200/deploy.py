@@ -1,6 +1,6 @@
-"""4×H200 trainer and 12×B200 sampler for the Qwen3.8-27B DAPO run.
+"""4×B200 trainer and 12×B200 sampler for the Qwen3.8-27B DAPO run.
 
-This is the compute layout from the Training API post: one trainer node and
+Adapted from the Training API post with a B200 trainer: one trainer node and
 three TP4 sampling replicas. The client loop is client.py.
 """
 
@@ -18,9 +18,9 @@ ROOT = Path(__file__).resolve().parent
 
 
 class Config(Parent):
-    name = "dapo27-4h200-12b200"
+    name = "dapo27-4b200-12b200"
     max_context_length = 32768
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 4
     trainer_cpu = 32
     trainer_memory_mib = 262144
@@ -51,9 +51,9 @@ class Config(Parent):
         # A 32,768-token packing trial OOMed. Keep the full optimizer batch
         # and pack it into smaller microbatches.
         "miles_cfg.max_tokens_per_gpu": 18432,
-        "platform.frontend": "spindle-dapo27-4h200-12b200",
-        "platform.storage.checkpoints": "dapo27-4h200-12b200-checkpoints",
-        "platform.storage.bulletin": "dapo27-4h200-12b200-bulletin",
+        "platform.frontend": "spindle-dapo27-4b200-12b200",
+        "platform.storage.checkpoints": "dapo27-4b200-12b200-checkpoints",
+        "platform.storage.bulletin": "dapo27-4b200-12b200-bulletin",
         "sglang_cfg.tp_size": 4,
         "sglang_cfg.max_running_requests": 80,
         "sglang_cfg.max_queued_requests": 8,

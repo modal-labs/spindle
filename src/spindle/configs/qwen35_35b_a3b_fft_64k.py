@@ -6,7 +6,7 @@ class Config(BaseConfig):
     parameterization = "full"
     model = "Qwen/Qwen3.5-35B-A3B"
     max_context_length = 65536
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 8
     backend = "megatron"
     megatron_cfg = {
@@ -40,7 +40,7 @@ class Config(BaseConfig):
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
     }
     sampler_persistence_concurrency = 1
-    inference_gpu = "H200"
+    inference_gpu = "B200"
     inference_gpus_per_node = 4
     sglang_cfg = {
         "tp_size": 4,

@@ -5,7 +5,7 @@ class Config(BaseConfig):
     name = "gpt-oss-120b-lora-32k"
     model = "openai/gpt-oss-120b"
     max_context_length = 32768
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
     trainer_gpus_per_node = 4
     trainer_max_clients_per_instance = 6
     trainer_cpu = 32
@@ -47,7 +47,7 @@ class Config(BaseConfig):
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
         "EXPERT_LORA_COMPAT": "1",
     }
-    inference_gpu = "H200"
+    inference_gpu = "B200"
     # Marlin serves the original 120B MXFP4 weights on one GPU.
     inference_gpus_per_node = 1
     inference_max_replicas = 4

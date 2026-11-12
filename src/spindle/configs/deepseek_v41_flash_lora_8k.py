@@ -15,7 +15,7 @@ class Config(BaseConfig):
     max_context_length = 8192
     backend = "miles"
     trainer_image = "miles-v0.1.2"
-    trainer_gpu = ["B300", "B200", "H200"]
+    trainer_gpu = ["B300", "B200"]
     trainer_gpus_per_node = 8
     trainer_nodes = 2
     trainer_cpu = 64
@@ -72,7 +72,7 @@ class Config(BaseConfig):
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
     }
     inference_image = "spindle.providers.modal.deepseek_v41_image:inference_image"
-    inference_gpu = ["B300", "B200", "H200"]
+    inference_gpu = ["B300", "B200"]
     inference_gpus_per_node = 8
     inference_cpu = 32
     inference_memory_mib = 700_000

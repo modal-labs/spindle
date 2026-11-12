@@ -7,7 +7,7 @@ class Config(Parent):
     # Miles has no 2B preset; keep the shared Qwen3.5 spec and tied embeddings.
     # Linear-attention dimensions are loaded from the checkpoint's text_config.
     overrides = {
-        "inference_gpu": "H100",
+        "inference_gpu": "B200",
         "sglang_cfg.max_running_requests": 64,
         "sglang_cfg.max_queued_requests": 8,
         "miles_cfg.cli_options.num_layers": 24,

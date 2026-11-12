@@ -10,7 +10,7 @@ class Config(Parent):
     trainer_cpu = 32
     trainer_memory_mib = 131072
     trainer_max_clients_per_instance = 8
-    inference_gpu = ["B200", "H100"]
+    inference_gpu = "B200"
     overrides = {
         "miles_cfg.model_type": "qwen3.5-4B",
         "miles_cfg.tensor_model_parallel_size": 1,

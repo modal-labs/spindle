@@ -5,8 +5,8 @@ def test_codegolf_preserves_existing_eight_gpu_recipe():
     engine = qwen3_5_9b_full_64k()
     engine.validate()
     assert engine.model == "Qwen/Qwen3.5-9B"
-    assert engine.trainer_gpu == "H200:8"
-    assert engine.sampler_gpu == "H200:1"
+    assert engine.trainer_gpu == "B200:8"
+    assert engine.sampler_gpu == "B200:1"
     config = engine.training
     assert config.tensor_model_parallel_size == config.context_parallel_size == 2
     assert config.seq_length == config.max_tokens_per_microbatch == 65536

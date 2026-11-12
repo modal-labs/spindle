@@ -5,7 +5,7 @@ class Config(Parent):
     name = "qwen35-9b-lora-2k"
     max_context_length = 2048
     overrides = {
-        "trainer_gpu": "H200",
+        "trainer_gpu": "B200",
         "trainer_cpu": 8,
         "trainer_memory_mib": 32768,
         "trainer_max_clients_per_instance": 4,
