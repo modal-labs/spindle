@@ -136,7 +136,9 @@ def test_routing_prefixes_are_bounded_and_favor_new_paths():
 
 
 def test_publisher_config_has_single_rank_endpoints():
-    assert publisher_config()["replay_endpoint"] == "tcp://*:5558"
+    assert publisher_config()["endpoint"] == "tcp://127.0.0.1:5557"
+    assert publisher_config()["replay_endpoint"] == "tcp://127.0.0.1:5558"
+    assert publisher_config()["bind"] is True
 
 
 @pytest.mark.parametrize(

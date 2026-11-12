@@ -166,23 +166,20 @@ each column separately, and their vocabulary work and memory grow with
 
 The deterministic path aims to give each client the same training results regardless of which other clients share its batches (think of it as batch-invariance for training). It uses deterministic attention kernels, fixed reduction layouts, and ordered per-client gradient accumulation, alongside batch-invariant inference.
 
-To enable it, build the patched FA3 artifacts, set SPINDLE_MILES_FA3_ARTIFACTS to their directory before deployment, and use the qwen3_5_9b_base_miles_lora_deterministic definition. The Tinker training code stays the same. We've validated on small math experiments (see  [LoRA validation](lora_validation.md) deterministic training section) but still need to do larger validation. Our changes to fa3 to make it deterministic also come at a throughput cost, and so this path remains experimental for now.
+To enable it, build the patched FA3 artifacts, set SPINDLE_MILES_FA3_ARTIFACTS to their directory before deployment, and use the qwen3_5_9b_base_miles_lora_deterministic definition. The Tinker training code stays the same. We've validated on small math experiments (see  [LoRA validation](lora_validation.md) deterministic training section) but still need to do larger validation. Our changes to fa3 to make it deterministic also come at a throughput cost, and so this path remains experimental for now. 
 
 ### Cache routing snapshots
 
-Cache-aware LoRA routing reads replica snapshots from `/routing-state`. Set
-`inference_lora_routing_source = "kv_events"` on a recipe to use SGLang's native
-KV events; the default is `"hook"`, which keeps the scheduler snapshot hook.
-Native events count prefixes and load alongside `/v1/loads`. The hook remains
-the default because the router uses its GPU adapter list when it estimates
-adapter loading cost.
+For a LoRA recipe using `cache_wait`, set `inference_lora_routing_source = "kv_events"` to route from KV events. The default, `"hook"`, uses the scheduler snapshot.
+
+KV events provide cached prefixes; `/v1/loads` provides replica load.
 
 Set `inference_lora_routing_source = "compare"` to serve the hook snapshot while
 both producers run on the replica. `GET /routing-state/compare` shows prefix
 counts, overlap, sample differences, load values, view ages and whether the
-native event subscriber is ready. KV events and comparison require an image with
-adapter names in KV events and the `/v1/loads` endpoint; the DeepSeek-V4.1-Flash
-image uses SGLang v0.5.21 and rejects those settings.
+native event subscriber is ready. KV event routing and comparison require a
+sampler image that records adapter names in KV events and supports `/v1/loads`.
+Use `"hook"` with the DeepSeek-V4.1-Flash image.
 
 The two views can differ in these ways:
 

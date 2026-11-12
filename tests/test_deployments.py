@@ -264,7 +264,8 @@ def test_deepseek_v051_image_rejects_native_kv_routing(source):
     recipe = load(config_path("deepseek-v41-flash-lora-8k"))
     recipe.inference_lora_routing_source = source
     with pytest.raises(
-        ValueError, match=r"DeepSeek-V4.1-Flash image uses SGLang v0\.5\.21"
+        ValueError,
+        match=r'Use inference_lora_routing_source="hook" with the DeepSeek-V4.1-Flash image',
     ):
         DeploymentConfig.create(recipe)
 
@@ -330,6 +331,15 @@ def test_switching_routing_redeploys_the_pool():
     # Only cache_wait pools run the observer.
     affinity = resolved(inference_lora_routing="affinity")
     assert affinity.inference_identity() != resolved().inference_identity()
+
+
+@pytest.mark.parametrize("source", ["kv_events", "compare"])
+def test_switching_routing_source_redeploys_only_the_inference_pool(source):
+    original = resolved()
+    switched = resolved(inference_lora_routing_source=source)
+    assert switched.inference_identity() != original.inference_identity()
+    assert switched.trainer_identity() == original.trainer_identity()
+    assert len(switched.inference_identity()) == len(original.inference_identity()) + 1
 
 
 def test_trainer_image_is_part_of_trainer_identity():
