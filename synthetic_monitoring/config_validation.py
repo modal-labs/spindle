@@ -362,6 +362,7 @@ def _row(
 
 def _post_report(rows: list[dict]) -> None:
     from slack_sdk import WebClient
+    from slack_sdk.errors import SlackApiError
 
     client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
     channel = os.environ["SLACK_CHANNEL_ID"]
@@ -408,15 +409,25 @@ def _post_report(rows: list[dict]) -> None:
             if row.get("modal_app_url"):
                 text += f"\n<{row['modal_app_url']}|Trainer logs>"
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
-            client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=text,
-                blocks=blocks,
-                mrkdwn=True,
-                unfurl_links=False,
-                unfurl_media=False,
-            )
+            for attempt in range(5):
+                try:
+                    client.chat_postMessage(
+                        channel=channel,
+                        thread_ts=thread_ts,
+                        text=text,
+                        blocks=blocks,
+                        mrkdwn=True,
+                        unfurl_links=False,
+                        unfurl_media=False,
+                    )
+                    break
+                except SlackApiError as exc:
+                    if attempt == 4 or not any(
+                        "invalid slack file" in error
+                        for error in exc.response.get("errors", [])
+                    ):
+                        raise
+                    time.sleep(2**attempt)
         except Exception as exc:
             print(f"error: reply failed for {row['config']}: {exc}")
 
