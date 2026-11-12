@@ -28,7 +28,9 @@ uv run spindle deploy reference_runs/dapo_math_config.py --app reference --env d
 ```
 
 The recipe fixes training at four H100 GPUs and sampling at two replicas with
-one H100 each. It has no GPU fallback or sampler autoscaling, and admits one
+one H100 each. It uses Modal's `H100!` selector to disable
+[automatic H200 upgrades](https://modal.com/docs/guide/gpu#automatic-upgrades-to-h200s).
+It has no GPU fallback or sampler autoscaling, and admits one
 training client. Use a dedicated deployment without other sampling clients.
 The client requests `dapo-math-qwen35-4b-h100` through the stock Tinker SDK and
 records this hardware contract. Point it at the deployment of this recipe;

@@ -40,8 +40,8 @@ class Config:
 
 
 HARDWARE = {
-    "trainer": {"gpu": "H100", "gpus": 4},
-    "sampler": {"gpu": "H100", "gpus_per_replica": 1, "replicas": 2},
+    "trainer": {"gpu": "H100!", "gpus": 4},
+    "sampler": {"gpu": "H100!", "gpus_per_replica": 1, "replicas": 2},
 }
 RECIPE = "dapo-math-qwen35-4b-h100"
 
