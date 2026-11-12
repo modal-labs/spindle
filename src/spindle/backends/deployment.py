@@ -149,6 +149,7 @@ def serving_options(spec, draft_model_path=None):
         options["speculative_draft_model_revision"] = None
     return options
 
+
 def resolve_backend_settings(spec, asset_path):
     base_model = spec.model_weights or spec.model
     if spec.inference_draft_model and spec.inference_draft_model == base_model:

@@ -210,7 +210,7 @@ async def prepare_model_assets(definition_id: str) -> None:
             )
         )
     for repo_id, revision, checkpoint in assets:
-        checkpoint = os.path.normpath(checkpoint)
+        checkpoint = os.path.normpath(checkpoint)  # noqa: ASYNC240 - lexical normalization, no I/O
         if (
             os.path.commonpath((MODEL_ASSET_ROOT, checkpoint)) != MODEL_ASSET_ROOT
             or checkpoint == MODEL_ASSET_ROOT
@@ -227,6 +227,7 @@ async def prepare_model_assets(definition_id: str) -> None:
         "assets_ready"
     )
     await shared_kv().put(await _weights_ready_key(definition_id), time.time())
+
 
 @app.function(image=image)
 async def start_weights_download(definition_id: str) -> bool:
@@ -309,6 +310,7 @@ async def _weights_call_key(definition_id: str) -> str:
         else definition.asset_path
     )
     return f"model_assets_call:{key}"
+
 
 async def _legacy_weights_ready(store, weights: str) -> bool:
     for d in await DEPLOYMENTS.definitions():

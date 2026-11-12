@@ -1276,7 +1276,6 @@ async def test_a_config_another_frontend_container_just_added_shows_at_once(read
         assert await read(client) & {other.name, other.model}
 
 
-
 def test_speculative_draft_model_is_downloaded_asset_and_sglang_path():
     row = resolved(
         recipe(
@@ -1286,7 +1285,9 @@ def test_speculative_draft_model_is_downloaded_asset_and_sglang_path():
         )
     )
     assert row.draft_asset_path == "/assets/org/model-dflash"
-    assert row.inference_settings["speculative_draft_model_path"] == row.draft_asset_path
+    assert (
+        row.inference_settings["speculative_draft_model_path"] == row.draft_asset_path
+    )
     assert row.inference_settings["speculative_draft_model_revision"] is None
 
 
