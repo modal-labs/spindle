@@ -15,6 +15,7 @@ def _apply_overrides(values, overrides):
 class BaseConfig:
     platform = {
         "frontend": "spindle",
+        "requires_proxy_auth": True,
         "modal": {"environment": None, "region": None},
         "secrets": {
             "api": "spindle-api",
