@@ -12,20 +12,30 @@ in a registry we control protects deployment rebuilds from that removal.
 ## Preserve the existing bases
 
 Run **Preserve runtime images** in GitHub Actions. It copies every platform and
-layer to `ghcr.io/<repository-owner>/spindle-runtimes/<image-name>`, using the
-repository's `GITHUB_TOKEN` with `packages: write`. It needs no Docker Hub write
-credentials. The token must be allowed to create and update those packages.
+layer to `docker.io/modalresearch/spindle-<image-name>`. Configure the repository
+or organization secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` with permission
+to publish those repositories, as in Dojo's image publishing workflow. Keep the
+repositories public so Modal can pull them without a registry secret. Exempt the
+preserved versions from cleanup while supported Spindle releases reference them.
 
-New GHCR packages are private by default. Make each package public in its package
-settings, then rerun the workflow if its anonymous verification failed. Spindle's
-Modal images pull these public bases without a registry secret. Keep the packages
-public and exempt the preserved versions from deletion or cleanup while a
-supported Spindle release references them.
+You can also publish from a Modal worker using an existing Docker Hub secret:
+
+```sh
+SPINDLE_REGISTRY_SECRET=dockerhub-modalresearch \
+  modal run scripts/images/publish_modal.py --username <docker-hub-account> \
+  --output /tmp/owned-runtime-images.py
+```
+
+The secret must contain `DOCKERHUB_TOKEN` or `REGISTRY_PASSWORD`. If it supplies
+`DOCKERHUB_USERNAME` or `REGISTRY_USERNAME`, the username argument is optional.
+Credentials stay inside the worker; only verified deployment pins return to the
+caller. This runs the same preservation script as the GitHub workflow.
 
 The script resolves each current reference to a digest before copying. It copies
 the full manifest list with `skopeo copy --all --preserve-digests`, then checks
 that every destination has the same digest and can be read anonymously after
-all copies finish. Failure produces no replacement lock file. Reruns read the current deployment references,
+all copies finish. Failure produces no replacement lock file. Reruns read the
+current deployment references,
 so an already-promoted owned copy does not require the upstream registry.
 
 Download the `preserved-runtime-images` artifact and replace
@@ -41,7 +51,7 @@ For a local run, install Skopeo, log in to the destination registry, and run:
 
 ```sh
 python scripts/images/preserve.py \
-  --namespace ghcr.io/modal-projects/spindle-runtimes \
+  --namespace docker.io/modalresearch --repository-prefix spindle- \
   --output /tmp/preserved-runtime-images.py
 ```
 
@@ -76,7 +86,7 @@ APT, Rust, and wheel dependencies at build time. Retain promoted candidate
 images and the wheel artifacts needed to rebuild them. A source commit alone
 does not freeze the complete CUDA stack.
 
-Before promotion, make the candidate public and verify an anonymous pull. Check
+Before promotion, make the Docker Hub candidate public and verify an anonymous pull. Check
 imports and release commits, trainer forward/backward and optimizer steps,
 adapter export and sampler loading, and a sampling request with the stock Tinker
 SDK. Exercise the relevant GPU, model, LoRA overlap loading, and Rust routing

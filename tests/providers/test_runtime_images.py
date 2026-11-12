@@ -42,10 +42,12 @@ def test_preservation_resolves_tag_once_and_writes_verified_owned_pin(
     images = {
         "sglang": {"upstream": "upstream/sglang:v1", "image": "upstream/sglang:v1"}
     }
-    preserved = preservation.preserve(images, "ghcr.io/example/runtimes")
+    preserved = preservation.preserve(
+        images, "docker.io/example", repository_prefix="spindle-"
+    )
     preservation.write_lock(preserved, tmp_path / "runtime_images.py")
     lock = runpy.run_path(str(tmp_path / "runtime_images.py"))
-    assert lock["BASE_IMAGES"]["sglang"] == f"ghcr.io/example/runtimes/sglang@{DIGEST}"
+    assert lock["BASE_IMAGES"]["sglang"] == f"docker.io/example/spindle-sglang@{DIGEST}"
     assert lock["IMAGES"]["sglang"]["upstream"] == "upstream/sglang:v1"
     assert images["sglang"]["image"] == "upstream/sglang:v1"
     copy_command = commands[1]
