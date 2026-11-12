@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import httpx
+from tinker.lib import internal_client_holder
 
 
 spec = importlib.util.spec_from_file_location(
@@ -21,6 +23,45 @@ assert spec and spec.loader
 beam = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = beam
 spec.loader.exec_module(beam)
+
+
+def test_proxy_headers_reach_the_stock_sdk_transport(tmp_path, monkeypatch):
+    provenance = tmp_path / "deployment.json"
+    provenance.write_text("{}")
+    args = SimpleNamespace(
+        output=tmp_path / "results",
+        replay_cache=tmp_path / "cache",
+        deployment_provenance=provenance,
+        resume=None,
+        stop_after=None,
+    )
+    monkeypatch.setattr(
+        beam.PreTrainedTokenizerFast, "from_pretrained", lambda *a, **kw: None
+    )
+    monkeypatch.setattr(
+        beam, "load_data", lambda *a: ([({}, [1])] * 3200, [({}, [1])] * 30)
+    )
+    monkeypatch.setattr(beam, "plot", lambda *a, **kw: None)
+    monkeypatch.setenv("TINKER_BASE_URL", "https://example.invalid")
+    monkeypatch.setenv("TINKER_API_KEY", "tml-test")
+    monkeypatch.setenv("MODAL_KEY", "test-proxy-key")
+    monkeypatch.setenv("MODAL_SECRET", "test-proxy-secret")
+
+    def request(request):
+        assert request.headers["Modal-Key"] == "test-proxy-key"
+        assert request.headers["Modal-Secret"] == "test-proxy-secret"
+        return httpx.Response(400, json={"error": "stop_before_model_creation"})
+
+    async_client = internal_client_holder.AsyncTinker
+    monkeypatch.setattr(
+        internal_client_holder,
+        "AsyncTinker",
+        lambda **kw: async_client(
+            **kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(request))
+        ),
+    )
+    with pytest.raises(beam.tinker.BadRequestError, match="stop_before_model_creation"):
+        beam.run(args, beam.Config())
 
 
 def test_interrupted_append_recovery_preserves_completed_records(tmp_path):

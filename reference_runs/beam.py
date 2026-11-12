@@ -43,6 +43,7 @@ import dataclasses
 import fcntl
 import hashlib
 import importlib.metadata
+import inspect
 import json
 import math
 import os
@@ -613,10 +614,16 @@ def run(args, config):
             ]
             if var in os.environ
         }
+        header_option = (
+            "default_headers_overrides"
+            if "default_headers_overrides"
+            in inspect.signature(tinker.ServiceClient).parameters
+            else "default_headers"
+        )
         service = tinker.ServiceClient(
             base_url=os.environ["TINKER_BASE_URL"],
             api_key=os.environ["TINKER_API_KEY"],
-            default_headers_overrides=headers,
+            **{header_option: headers},
         )
 
         async def create_training():
