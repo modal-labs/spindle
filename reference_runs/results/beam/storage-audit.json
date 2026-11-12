@@ -1,0 +1,47 @@
+{
+  "observed_at": 1794455796.9165962,
+  "volumes": {
+    "model_assets": {
+      "filesystem_version": 1,
+      "mount": "/assets"
+    },
+    "checkpoints": {
+      "filesystem_version": 2,
+      "mount": "/checkpoints"
+    }
+  },
+  "method": "Read hydrated Modal Volume metadata; no writes or mount changes.",
+  "loader": {
+    "tensor_parallel_size": 8,
+    "file_reader_threads_per_rank": 2,
+    "memory_mapping": true,
+    "progress_scope": "Shard progress includes tensor consumption and GPU placement; it does not measure raw filesystem throughput."
+  },
+  "historical_weight_load_seconds": [
+    599.81,
+    735.37,
+    775.17
+  ],
+  "notes": [
+    "The original assets staging helper used the default filesystem version.",
+    "No raw Volume throughput benchmark has been performed.",
+    "Rank-local tensor slicing and shared page cache mean eight rank iterators do not prove eight physical reads of the checkpoint."
+  ],
+  "current_weight_load_seconds_by_rank": {
+    "6": 698.4,
+    "0": 698.51,
+    "1": 698.79,
+    "4": 698.82,
+    "3": 699.08,
+    "7": 699.27,
+    "5": 699.47,
+    "2": 700.47
+  },
+  "current_slowest_rank_weight_load_seconds": 700.47,
+  "current_shard_iteration_seconds": 674,
+  "startup_preemption_times_utc": [
+    "2026-11-12T03:33:52Z",
+    "2026-11-12T03:34:57Z",
+    "2026-11-12T03:42:44Z"
+  ]
+}
