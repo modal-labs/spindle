@@ -182,26 +182,19 @@ Port 5557 carries live publications; port 5558 serves bounded replay. With multi
 SGLang DP ranks, the replay base moves past the live port range to avoid overlap.
 Cache-aware routing still requires one DP rank per Modal replica.
 
-The LoRA sidecar subscribes locally, recovers missed events through replay, and
-combines device block residency with SGLang's `/v1/loads` observations. Exact
-adapter versions travel in the request cache salt so replay remains attributable
-after requests finish. User-salted requests retain isolation and contribute no
-unsalted routing hints. Lost replay history drops hints for unknown ancestors;
-evictions and publisher restarts invalidate old hints. GPU KV residency is a
-routing estimate: native block events do not prove auxiliary Mamba/SWA state
-residency, and native load metrics report GPU adapter slot counts without names.
-The router therefore does not invent named GPU-adapter residency.
+Cache-aware LoRA routing reads replica snapshots from `/routing-state`. By
+default, SGLang's scheduler hook produces the snapshot. Set
+`inference_lora_routing_source = "kv_events"` on a recipe to use SGLang's native
+KV events instead. The sidecar replays missed events locally and combines cached
+prefixes with `/v1/loads`; user cache salts remain isolated. The native producer
+cannot identify which named adapters are on the GPU, so its `gpu_adapters` list
+is empty. The scheduler hook remains the default because the router uses that
+list when it estimates adapter loading cost.
 
-The router consumes `spindle.routing.v1.RoutingObserver/Watch` over gRPC through
-the existing Modal Server gateway, using its proxy credentials and
-`Modal-Flash-Upstream` replica pin. Each stream carries full protobuf snapshots
-and observation timestamps, and reconnects independently. Stale or unavailable
-replicas retain the existing bounded gateway fallback behavior. There is no
-scheduler tree walk, JSON snapshot file, or `/routing-state` polling.
-
-Inside a LoRA replica, nginx listens for HTTP/2 cleartext on port 8000 (Modal's
-Server gateway speaks HTTP/2 to it), forwarding generation HTTP to loopback 8002
-and gRPC to loopback 8003. Local startup health checks use port 8002. The sampler
-image includes nginx; custom sampler images must also provide it. The wire schema
-is `src/spindle/proto/routing.proto`; regenerate its checked-in Python binding with
-`protoc -I src/spindle/proto --python_out=src/spindle/proto --pyi_out=src/spindle/proto src/spindle/proto/routing.proto`.
+Set `inference_lora_routing_source = "compare"` to keep the scheduler hook as the
+served view while enabling both producers. Read `/routing-state/compare` on the
+replica to compare prefix counts, overlap, sample differences, load values, view
+ages, subscriber readiness and adapter-name support. The v0.5.21 fork does not
+include adapter names in KV events, so its comparison reports that prefix
+attribution is unavailable; native KV routing there uses the request cache salt.
+Comparison is available on the sidecar's usual HTTP port 8000.

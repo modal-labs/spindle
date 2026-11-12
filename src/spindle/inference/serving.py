@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import os
 import signal
@@ -11,8 +10,6 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
-
-from .kv_events import publisher_config
 
 
 def start_sglang(
@@ -88,8 +85,6 @@ def start_sglang(
         "127.0.0.1",
         "--port",
         str(port),
-        "--kv-events-config",
-        json.dumps(publisher_config(attention_data_parallel_size)),
         "--tp-size",
         str(world_size),
     ]
@@ -199,6 +194,7 @@ def start_lora_sidecar(
     sglang_port: int,
     bulletin_root: str,
     bulletin_volume: str,
+    routing_source: str = "hook",
 ) -> subprocess.Popen:
     command = [
         sys.executable,
@@ -212,6 +208,8 @@ def start_lora_sidecar(
         bulletin_root,
         "--bulletin-volume",
         bulletin_volume,
+        "--routing-source",
+        routing_source,
     ]
     return subprocess.Popen(command, start_new_session=True)
 

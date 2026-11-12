@@ -110,6 +110,9 @@ class DeploymentConfig(BaseModel):
         routing = pinned.inference_lora_routing
         if routing not in {None, "affinity", "cache_wait"}:
             raise ValueError(f"unknown inference_lora_routing: {routing}")
+        routing_source = pinned.inference_lora_routing_source
+        if routing_source not in {"hook", "kv_events", "compare"}:
+            raise ValueError(f"unknown inference_lora_routing_source: {routing_source}")
         prefill_rate = pinned.inference_routing_prefill_tokens_per_second
         if prefill_rate is not None and not (
             isinstance(prefill_rate, (int, float))

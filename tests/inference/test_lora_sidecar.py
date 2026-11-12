@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -8,6 +9,105 @@ from stitch.types import VersionRef
 
 from spindle.inference.bulletin import SnapshotBulletin
 from spindle.inference.lora_sidecar import create_app
+
+
+@pytest.mark.parametrize(
+    ("source", "salted"),
+    [("hook", False), ("kv_events", True), ("compare", False)],
+)
+def test_routing_source_controls_cache_salt_rewrite(tmp_path, source, salted):
+    received = []
+
+    def upstream(request):
+        if request.url.path == "/generate":
+            received.append(request.read())
+            return httpx.Response(200, json={})
+        return httpx.Response(200, json={})
+
+    app = create_app(
+        SnapshotBulletin(tmp_path / "bulletin"),
+        "http://sglang",
+        transport=httpx.MockTransport(upstream),
+        routing_source=source,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/generate", json={"input_ids": [1, 2], "lora_path": "adapter/v1"}
+        )
+        assert response.status_code == 200
+    sent = json.loads(received[0])
+    assert ("cache_salt" in sent) is salted
+    if salted:
+        assert json.loads(sent["cache_salt"].removeprefix("spindle-kv:")) == [
+            "adapter/v1",
+            None,
+        ]
+
+
+@pytest.mark.parametrize("source", ["hook", "kv_events", "compare"])
+def test_routing_state_has_router_work_shape_and_compare_summary(
+    tmp_path, monkeypatch, source
+):
+    import spindle.inference.lora_sidecar as sidecar
+
+    catalog = tmp_path / "routing-work.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "timestamp": time.time(),
+                "prefixes": ["01" * 16],
+                "cpu_adapters": ["adapter/v1"],
+                "gpu_adapters": ["adapter/v1"],
+                "requests": [],
+                "snapshot_seconds": 0.01,
+                "cache_kind": "radix",
+                "running_requests": 2,
+                "waiting_requests": 1,
+                "kv_used_tokens": 30,
+                "kv_capacity_tokens": 100,
+            }
+        )
+    )
+    monkeypatch.setattr(sidecar, "ROUTING_CATALOG_PATH", catalog)
+    app = create_app(
+        SnapshotBulletin(tmp_path / "bulletin"),
+        "http://sglang",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+        routing_source=source,
+    )
+    with TestClient(app) as client:
+        if source != "hook":
+            subscriber = app.state.kv_events
+            subscriber.ready = True
+            subscriber.checked_at = time.monotonic()
+            subscriber.cache.prefixes.update(["01" * 16, "02" * 16])
+            app.state.loads = {
+                "timestamp": time.time(),
+                "num_running_reqs": 3,
+                "num_waiting_reqs": 0,
+                "num_used_tokens": 40,
+                "max_total_num_tokens": 100,
+            }
+            app.state.loads_at = time.monotonic()
+        state = client.get("/routing-state").json()
+        work = state["work"]
+        assert {
+            "age_seconds",
+            "prefixes",
+            "cpu_adapters",
+            "gpu_adapters",
+            "request_ids",
+            "pending_adapters",
+            "waiting_requests",
+            "kv_used_tokens",
+            "kv_capacity_tokens",
+        } <= work.keys()
+        if source == "compare":
+            comparison = client.get("/routing-state/compare").json()
+            assert comparison["intersection"] == 1
+            assert comparison["hook_only"] == 0
+            assert comparison["kv_events_only"] == 1
+            assert "adapter_attribution_supported" in comparison
 
 
 def test_generation_concurrency_does_not_block_health_or_metrics(tmp_path):

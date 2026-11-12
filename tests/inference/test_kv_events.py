@@ -40,6 +40,26 @@ def packet(events, ts=1.0):
     return msgspec.msgpack.encode([ts, events, 0])
 
 
+def test_kv_prefix_hash_matches_router_request_hash():
+    tokens = list(range(128))
+    cache = KVCache()
+    cache.apply(stored([1, 2], tokens, adapter="adapter-v1"))
+    assert set(cache.prefixes) == {
+        digest("adapter-v1", tokens[:64]),
+        digest("adapter-v1", tokens),
+    }
+
+
+def test_native_adapter_name_needs_no_cache_salt():
+    cache = KVCache()
+    event = stored([1], list(range(64)))
+    event["cache_salt"] = None
+    event["lora_name"] = "adapter-v1"
+    cache.apply(event)
+    assert digest("adapter-v1", list(range(64))) in cache.prefixes
+    assert cache.adapter_names_seen
+
+
 def test_chained_pages_eviction_and_adapter_versions():
     cache = KVCache()
     tokens = list(range(192))
@@ -64,7 +84,8 @@ def test_small_pages_cross_router_boundary_and_unknown_parent():
     cache = KVCache()
     cache.apply(stored(list(range(1, 81)), list(range(80))))
     assert set(cache.prefixes) == {digest("adapter-v1", list(range(64)))}
-    cache.apply(stored([100], list(range(64)), parent=999))
+    with pytest.raises(ValueError, match="parent is unknown"):
+        cache.apply(stored([100], list(range(64)), parent=999))
     assert 100 not in cache.blocks
     cache.apply(stored([101], list(range(64)), medium="CPU_PINNED"))
     assert 101 not in cache.blocks
@@ -88,13 +109,16 @@ def test_duplicate_gap_and_unsalted_events():
 
 def test_dp_publisher_port_ranges_do_not_overlap():
     assert publisher_config()["replay_endpoint"] == "tcp://*:5558"
-    assert publisher_config(4)["replay_endpoint"] == "tcp://*:5561"
+    with pytest.raises(ValueError, match="one data-parallel rank"):
+        publisher_config(4)
 
 
 @pytest.mark.parametrize(
     "with_topic", [False, True], ids=["sglang-0.5.21", "sglang-0.5.23"]
 )
-def test_replay_uses_sglang_router_framing_and_detects_restarts(tmp_path, with_topic):
+def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
+    tmp_path, with_topic
+):
     async def scenario():
         context = zmq.asyncio.Context()
         router = context.socket(zmq.ROUTER)
@@ -134,14 +158,14 @@ def test_replay_uses_sglang_router_framing_and_detects_restarts(tmp_path, with_t
             await replay()  # Anchor is deduplicated, including a quiet stream.
             assert len(subscriber.cache.prefixes) == 2
             history[:] = [(0, packet([], ts=2.0))]
-            await replay()  # Empty replay after seq rollback invalidates old hints.
-            assert not subscriber.ready
-            assert not subscriber.cache.prefixes
-            await replay()
-            assert subscriber.sequence == 0
-            history[:] = [(0, packet([], ts=3.0))]
-            await replay()  # Same seq, different payload: new publisher incarnation.
+            await (
+                replay()
+            )  # Replay has no latest-sequence marker when the buffer is empty.
+            assert subscriber.ready
+            assert len(subscriber.cache.prefixes) == 2
+            assert not subscriber.apply_publication(0, packet([], ts=2.0))
             assert subscriber.sequence == -1
+            assert not subscriber.cache.prefixes
         finally:
             router.close(0)
             context.term()

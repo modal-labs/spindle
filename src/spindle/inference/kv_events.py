@@ -14,6 +14,7 @@ import struct
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from typing import Protocol
 
 import msgspec
 import xxhash
@@ -21,6 +22,16 @@ import zmq
 import zmq.asyncio
 
 logger = logging.getLogger(__name__)
+
+
+class Digest(Protocol):
+    def copy(self) -> Digest: ...
+
+    def update(self, data: bytes) -> None: ...
+
+    def hexdigest(self) -> str: ...
+
+
 TOPIC = b"kv-events"
 SALT_PREFIX = "spindle-kv:"
 KV_EVENTS_CONFIG = {
@@ -33,9 +44,8 @@ KV_EVENTS_CONFIG = {
 
 def publisher_config(dp_size: int = 1) -> dict:
     config = dict(KV_EVENTS_CONFIG)
-    # SGLang offsets both ports by DP rank. Keep their ranges disjoint.
-    if dp_size > 1:
-        config["replay_endpoint"] = f"tcp://*:{5557 + dp_size}"
+    if dp_size != 1:
+        raise ValueError("KV cache routing requires one data-parallel rank")
     return config
 
 
@@ -49,7 +59,7 @@ class Block:
     parent: int | None
     adapter: str
     length: int
-    digest: object
+    digest: Digest
     prefixes: list[str]
 
 
@@ -58,11 +68,13 @@ class KVCache:
         self.blocks: dict[int, Block] = {}
         self.children: dict[int, set[int]] = defaultdict(set)
         self.prefixes: Counter[str] = Counter()
+        self.adapter_names_seen = False
 
     def clear(self):
         self.blocks.clear()
         self.children.clear()
         self.prefixes.clear()
+        self.adapter_names_seen = False
 
     def remove(self, key: int):
         pending = [key]
@@ -95,13 +107,21 @@ class KVCache:
             return
         if kind != "BlockStored":
             raise ValueError(f"Unknown KV event: {kind}")
+        adapter = event.get("lora_name")
         salt = event.get("cache_salt") or ""
-        if not salt.startswith(SALT_PREFIX):
+        if salt.startswith(SALT_PREFIX):
+            salted_adapter, original_salt = json.loads(salt[len(SALT_PREFIX) :])
+            if original_salt:
+                return
+            adapter = adapter or salted_adapter
+        elif adapter:
+            self.adapter_names_seen = True
+            if salt:
+                return
+        else:
             return
-        adapter, original_salt = json.loads(salt[len(SALT_PREFIX) :])
-        # The router's request hashes represent unsalted token sequences only.
-        if original_salt:
-            return
+        if event.get("lora_name"):
+            self.adapter_names_seen = True
         size = event["block_size"]
         tokens = event["token_ids"]
         keys = event["block_hashes"]
@@ -111,8 +131,7 @@ class KVCache:
         for index, key in enumerate(keys):
             ancestor = self.blocks.get(parent)
             if parent is not None and ancestor is None:
-                # Replay may begin after the parent was dropped from the buffer.
-                return
+                raise ValueError("KV block parent is unknown")
             if ancestor is not None and ancestor.adapter != adapter:
                 raise ValueError("KV block crosses adapter namespaces")
             digest = (
@@ -133,6 +152,8 @@ class KVCache:
                 if parent is not None:
                     self.children[parent].add(key)
             parent = key
+        while len(self.blocks) > 100_000:
+            self.remove(next(iter(self.blocks)))
 
 
 class KVEventSubscriber:
@@ -158,20 +179,38 @@ class KVEventSubscriber:
             return
         if sequence != self.sequence + 1:
             self.cache.clear()
+            return False
         batch = msgspec.msgpack.decode(payload)
-        for event in batch[1]:
-            self.cache.apply(event)
+        try:
+            for event in batch[1]:
+                self.cache.apply(event)
+        except (KeyError, TypeError, ValueError, IndexError):
+            self.cache.clear()
+            raise
         self.sequence = sequence
         self.anchor = payload
         self.checked_at = time.monotonic()
+        return True
+
+    def apply_publication(self, sequence: int, payload: bytes) -> bool:
+        if sequence < self.sequence:
+            self.reset()
+            return False
+        if sequence == self.sequence:
+            if payload != self.anchor:
+                self.reset()
+                return False
+            return True
+        return self.apply(sequence, payload)
 
     async def replay(self, context):
         socket = context.socket(zmq.DEALER)
         socket.setsockopt(zmq.LINGER, 0)
         socket.connect(self.replay_endpoint)
         try:
-            # Replaying the last payload also detects publisher sequence resets.
-            await socket.send_multipart([b"", max(self.sequence, 0).to_bytes(8, "big")])
+            await socket.send_multipart(
+                [b"", max(self.sequence + 1, 0).to_bytes(8, "big")]
+            )
             batches = []
             async with asyncio.timeout(2):
                 while True:
@@ -191,18 +230,22 @@ class KVEventSubscriber:
                     if topic != TOPIC:
                         raise ValueError("Invalid KV replay topic")
                     batches.append((sequence, payload))
-            if not batches and self.sequence >= 0:
-                self.reset()
-                return
             if (
                 batches
-                and batches[0][0] == self.sequence
-                and batches[0][1] != self.anchor
+                and self.sequence >= 0
+                and batches[0][0] == 0
+                and self.sequence > 0
             ):
+                self.reset()
+            if batches and batches[0][0] > self.sequence + 1:
                 self.reset()
                 return
             for sequence, payload in batches:
-                self.apply(sequence, payload)
+                if sequence <= self.sequence:
+                    continue
+                if not self.apply(sequence, payload):
+                    self.reset()
+                    return
             self.ready = True
             self.checked_at = time.monotonic()
         finally:
@@ -227,21 +270,16 @@ class KVEventSubscriber:
                             await asyncio.sleep(0.5)
                             continue
                         replay = False
-                        next_replay = time.monotonic() + 0.5
+                        next_replay = time.monotonic() + 1.5
                     async with asyncio.timeout(0.5):
                         topic, seq, payload = await socket.recv_multipart()
                         if topic != TOPIC or len(seq) != 8:
                             raise ValueError("Invalid KV publication frames")
                         sequence = int.from_bytes(seq, "big")
-                        if sequence == self.sequence and payload != self.anchor:
-                            self.reset()
-                            replay = True
-                        elif sequence == self.sequence + 1:
-                            self.apply(sequence, payload)
-                        elif sequence > self.sequence + 1:
+                        if not self.apply_publication(sequence, payload):
                             replay = True
                 except TimeoutError:
-                    replay = True
+                    continue
                 except (
                     ValueError,
                     TypeError,

@@ -264,6 +264,10 @@ def test_model_weights_override_assets_but_not_the_served_model():
     [
         (dict(inference_lora_routing="nearest"), "unknown inference_lora_routing"),
         (
+            dict(inference_lora_routing_source="other"),
+            "unknown inference_lora_routing_source",
+        ),
+        (
             dict(inference_routing_prefill_tokens_per_second=0),
             "prefill_tokens_per_second",
         ),
