@@ -50,7 +50,7 @@ def test_custom_sampler_images_are_built_once_each(monkeypatch):
     assert built == [("", app), ("custom:inference", app)]
 
 
-def test_sampler_fetches_pinned_commit_outside_default_branch(tmp_path, monkeypatch):
+def test_sampler_checks_out_pinned_revision_on_selected_branch(tmp_path, monkeypatch):
     source = tmp_path / "source"
     source.mkdir()
 
@@ -69,6 +69,8 @@ def test_sampler_fetches_pinned_commit_outside_default_branch(tmp_path, monkeypa
     (source / "model").write_text("pinned")
     git("commit", "-am", "feature")
     revision = git("rev-parse", "HEAD")
+    (source / "model").write_text("newer")
+    git("commit", "-am", "advance feature")
     git("checkout", "main")
 
     commands = []
@@ -84,7 +86,9 @@ def test_sampler_fetches_pinned_commit_outside_default_branch(tmp_path, monkeypa
 
     monkeypatch.setattr(rollout_image.modal.Image, "from_registry", lambda *a: Build())
     monkeypatch.setattr(rollout_image, "SGLANG_REPOSITORY", source.as_uri())
-    rollout_image.runtime_image_for(image="unused", revision=revision, core_packages=())
+    rollout_image.runtime_image_for(
+        image="unused", branch="feature", revision=revision, core_packages=()
+    )
     checkout = tmp_path / "checkout"
     subprocess.run(
         commands[0].replace("/tmp/spindle-sglang-overlay", shlex.quote(str(checkout))),

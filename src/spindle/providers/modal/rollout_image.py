@@ -9,6 +9,7 @@ from .image_dependencies import (
 
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
+SGLANG_BRANCH = "fred/beam-spindle"
 SGLANG_REVISION = "991fb375666ad9b173dcc7f9123c5a993f3151fc"
 # v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
 CORE_SAMPLER_PACKAGES = (
@@ -18,7 +19,7 @@ CORE_SAMPLER_PACKAGES = (
 )
 
 
-def runtime_image_for(*, image: str, revision: str, core_packages):
+def runtime_image_for(*, image: str, branch: str, revision: str, core_packages):
     """Build a matched SGLang image/source pair, including the fork's Rust binding."""
     return (
         modal.Image.from_registry(image)
@@ -29,10 +30,9 @@ def runtime_image_for(*, image: str, revision: str, core_packages):
         .env({"SGLANG_RUST_BUILD_MODE": "auto"})
         .run_commands(
             "rm -rf /tmp/spindle-sglang-overlay"
-            " && git init -q /tmp/spindle-sglang-overlay"
-            " && git -C /tmp/spindle-sglang-overlay fetch --depth=1 --no-tags"
-            f" {SGLANG_REPOSITORY} {revision}"
-            " && git -C /tmp/spindle-sglang-overlay checkout --detach FETCH_HEAD",
+            f" && git clone --filter=blob:none --single-branch --branch {branch}"
+            f" {SGLANG_REPOSITORY} /tmp/spindle-sglang-overlay"
+            f" && git -C /tmp/spindle-sglang-overlay checkout {revision}",
             "cp -a /tmp/spindle-sglang-overlay/python/. /sgl-workspace/sglang/python/"
             " && rm -rf /sgl-workspace/sglang/rust"
             " && cp -a /tmp/spindle-sglang-overlay/rust /sgl-workspace/sglang/rust"
@@ -65,6 +65,7 @@ def runtime_image_for(*, image: str, revision: str, core_packages):
 
 runtime_image = runtime_image_for(
     image=SGLANG_IMAGE,
+    branch=SGLANG_BRANCH,
     revision=SGLANG_REVISION,
     core_packages=CORE_SAMPLER_PACKAGES,
 )
