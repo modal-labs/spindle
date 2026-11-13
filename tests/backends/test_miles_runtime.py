@@ -156,6 +156,40 @@ def test_upstream_error_result_invalidates_runtime():
         runtime._run(error())
 
 
+@pytest.mark.parametrize("operation", ["save_slot", "export_slot_peft"])
+def test_rejected_native_capture_fails_only_its_request(tmp_path, operation):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    runtime._v020 = SimpleNamespace()
+    capture = tmp_path / "capture"
+    incomplete = tmp_path / ".capture.1234"
+    incomplete.mkdir()
+
+    async def written(*args, **kwargs):
+        return incomplete
+
+    runtime._bridge = SimpleNamespace(save_slot=written, export_slot=written)
+    if operation == "save_slot":
+        call = lambda: runtime.save_slot(0, str(capture))  # noqa: E731
+    else:
+        call = lambda: runtime.export_slot_peft(  # noqa: E731
+            slot=0,
+            path=str(capture),
+            rank=8,
+            alpha=16.0,
+            base_model="m",
+            target_modules=(),
+            lora_dropout=0.0,
+        )
+
+    with pytest.raises((ValueError, FileNotFoundError)):
+        call()
+    assert runtime._failure is None
+    assert not capture.exists()
+
+
 @pytest.mark.parametrize("failed_rank", [0, 1])
 def test_weights_only_worker_error_invalidates_runtime_before_capture(
     tmp_path, failed_rank
