@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-
 import json
 import os
-import shutil
-import uuid
 from pathlib import Path
 
-import modal
-from modal.types import FileEntryType
 from torch.distributed.checkpoint import FileSystemReader
 from torch.distributed.checkpoint.metadata import MetadataIndex, TensorStorageMetadata
-
-from .volumes import _checkpoint_volume_path
 
 
 def validate_adapter(path: Path, *, checkpoint: bool) -> None:
@@ -62,34 +55,7 @@ def materialize_adapter(source: Path, target: Path, *, checkpoint: bool) -> None
     source, target = Path(source), Path(target)
     if source.parent != target.parent or not source.name.startswith(f".{target.name}."):
         raise ValueError("Miles returned a capture outside its operation directory")
-    temporary = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
-    relative = _checkpoint_volume_path(source)
-    name = os.environ.get("SPINDLE_CHECKPOINT_VOLUME")
-    volume = None if name is None or relative is None else modal.Volume.from_name(name)
-    try:
-        temporary.mkdir(parents=True)
-        if volume is None or relative is None:
-            shutil.copytree(source, temporary, dirs_exist_ok=True)
-        else:
-            for entry in volume.listdir(relative, recursive=True):
-                if entry.type != FileEntryType.FILE:
-                    continue
-                child = Path(entry.path.lstrip("/")).relative_to(relative)
-                destination = temporary / child
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                local = source / child
-                if local.is_file() and local.stat().st_size == entry.size:
-                    shutil.copyfile(local, destination)
-                else:
-                    with destination.open("wb") as output:
-                        for data in volume.read_file(entry.path):
-                            output.write(data)
-        validate_adapter(temporary, checkpoint=checkpoint)
-        if target.exists():
-            raise FileExistsError(f"capture already exists: {target}")
-        os.rename(temporary, target)
-        if volume is not None:
-            volume.commit()
-        shutil.rmtree(source, ignore_errors=True)
-    finally:
-        shutil.rmtree(temporary, ignore_errors=True)
+    validate_adapter(source, checkpoint=checkpoint)
+    if target.exists():
+        raise FileExistsError(f"capture already exists: {target}")
+    os.rename(source, target)

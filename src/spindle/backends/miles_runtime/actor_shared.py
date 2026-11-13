@@ -53,7 +53,7 @@ def install_replay_patches(
 def use_distributed_timeout_for_gloo(minutes: int) -> None:
     timeout = max(timedelta(minutes=minutes), default_pg_timeout)
 
-    def init_gloo_group():
+    def init_gloo_group() -> object:
         if distributed_utils.GLOO_GROUP is None:
             distributed_utils.GLOO_GROUP = dist.new_group(
                 backend="gloo", timeout=timeout

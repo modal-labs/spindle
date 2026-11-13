@@ -44,7 +44,7 @@ from .actor_shared import (
     use_distributed_timeout_for_gloo,
 )
 from .native_checkpoint import validate_adapter
-from .volumes import commit_if_on_checkpoint_volume, sync_checkpoint_volume
+from .volumes import sync_checkpoint_volume
 
 
 class WeightsOnlyMembers(LayerWiseSlotMembers):
@@ -54,34 +54,6 @@ class WeightsOnlyMembers(LayerWiseSlotMembers):
 
 
 class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
-    def save_slot(
-        self,
-        slot: int,
-        root: str,
-        name: str,
-        tenant_digest: str,
-        parametrization_fields: dict,
-    ) -> object:
-        result = super().save_slot(
-            slot, root, name, tenant_digest, parametrization_fields
-        )
-        commit_if_on_checkpoint_volume(root)
-        return result
-
-    def export_slot(
-        self,
-        slot: int,
-        root: str,
-        name: str,
-        tenant_digest: str,
-        parametrization_fields: dict,
-    ) -> object:
-        result = super().export_slot(
-            slot, root, name, tenant_digest, parametrization_fields
-        )
-        commit_if_on_checkpoint_volume(root)
-        return result
-
     def init(self, args: TrainerConfig, role: str, **kwargs: object) -> int | None:
         use_distributed_timeout_for_gloo(args.backend.distributed_timeout_minutes)
         result = MultiLoRATrainRayActor.init(self, args, role, **kwargs)
@@ -104,7 +76,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
     def save_slot_weights(
         self, slot: int, root: str, name: str, parametrization_fields: dict[str, object]
     ) -> object:
-        result = save_adapter_dir(
+        return save_adapter_dir(
             Path(root),
             name,
             WeightsOnlyMembers(self.adapter_slots, self.slot_optimizers),
@@ -112,8 +84,6 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             self.adapter_slots.parametrization(**parametrization_fields),
             tenant_digest="spindle",
         )
-        commit_if_on_checkpoint_volume(root)
-        return result
 
 
 def _with_vocabulary(function: Callable[..., object]) -> Callable[..., object]:

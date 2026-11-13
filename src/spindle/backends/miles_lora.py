@@ -75,12 +75,6 @@ class MilesCommandBackend(Backend):
         # A volume refresh must not race checkpoint writes on the persistence lane.
         self._checkpoint_io_lock = threading.RLock()
         self._native = self.runtime.checkpoint_format == "miles_adapter_state"
-        # A restore's volume reload must not race native captures that live on the volume.
-        self._capture_lock = (
-            self._checkpoint_io_lock
-            if self._native and capture_dir.is_relative_to(checkpoint_dir)
-            else contextlib.nullcontext()
-        )
         self._checkpoint_captures: dict[str, dict[str, Any]] = {}
         self._sampler_captures: dict[str, dict[str, Any]] = {}
         self._timer = StepPhaseTimer()
@@ -315,7 +309,6 @@ class MilesCommandBackend(Backend):
                 "save_checkpoint", state.optimizer_step, model_id=model_id
             ),
             self._record("spindle/save_checkpoint"),
-            self._capture_lock,
         ):
             self.runtime.save_slot(
                 self.job_to_slot[model_id],
@@ -451,7 +444,6 @@ class MilesCommandBackend(Backend):
                 "save_sampler_weights", state.optimizer_step, model_id=model_id
             ),
             self._record("spindle/save_sampler_weights"),
-            self._capture_lock,
         ):
             self.runtime.export_slot_peft(
                 slot=self.job_to_slot[model_id],
@@ -493,7 +485,6 @@ class MilesCommandBackend(Backend):
                     "publish_weights", publish_step, model_id=capture["model_id"]
                 ),
                 self._record("spindle/publish_weights"),
-                self._capture_lock,
             ):
                 bulletin.publish(
                     VersionRef(

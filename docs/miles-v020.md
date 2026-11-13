@@ -76,24 +76,17 @@ schema bump is needed. Miles owns the native tensor and optimizer serialization.
 A weights-only save omits moments through Miles' checkpoint-member interface.
 A weights-only load passes `load_optimizer=False` and resets Spindle's step count.
 
-Native captures go where legacy captures do. On one node they stay on the
-trainer's local disk, and only persisting a checkpoint commits the volume. On
-several nodes they go to the checkpoint volume, and every node commits its
-native files before capture assembly. The driver then reads
-the committed volume listing, copies complete local files or downloads missing
-files into a unique staging directory, and checks every shard
-referenced by DCP metadata, including its byte extent. Sampler captures require
-`adapter_config.json` and final `adapter_model.safetensors`. Unrelated files and
-temporary files cannot satisfy these checks. Assembly does not reload the
-volume while other operations may have files open.
+The new image supports single-node trainers with `megatron_to_hf_mode` bridge
+only; deploying it with several nodes or raw mode is rejected. Captures stay on
+the trainer's local disk, as on the existing images, and persisting a
+checkpoint copies it to the checkpoint volume with one commit.
 
-The capture is exposed only after validation. Native checkpoint persistence
-installs this complete local copy through a staging-directory rename before
-committing the volume. Cleanup is limited to the native
-operation directory and its staging directory. A failed assembly leaves the
-native source available for inspection and invalidates the runtime. Checkpoint
-capture and persistence serialize volume access; native sampler publication
-also holds that lock so a restore cannot reload its source during publication.
+Miles writes each capture to an uncommitted directory. Spindle checks it before
+renaming it into place: a checkpoint must have every shard its DCP metadata
+references, at its full byte extent, and a sampler export must have
+`adapter_config.json` and a non-empty `adapter_model.safetensors`. A capture that
+fails these checks fails only its request and stays in place for inspection;
+the trainer remains available.
 
 ## Validation
 

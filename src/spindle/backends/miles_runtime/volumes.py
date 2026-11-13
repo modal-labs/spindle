@@ -124,12 +124,6 @@ def _node_identity() -> str:
     return os.environ.get("MODAL_TASK_ID") or socket.gethostname()
 
 
-def commit_if_on_checkpoint_volume(root: str) -> None:
-    """Commit a capture written to the checkpoint volume; local captures need none."""
-    if _checkpoint_volume_path(Path(root)) is not None:
-        sync_checkpoint_volume("commit")
-
-
 def sync_checkpoint_volume(action: str) -> None:
     """Commit or reload the checkpoint volume once per node."""
     name = os.environ.get("SPINDLE_CHECKPOINT_VOLUME")

@@ -723,6 +723,18 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
         backend_config(spec)
 
 
+@pytest.mark.parametrize(
+    "changes, match",
+    [
+        ({"miles_cfg__megatron_to_hf_mode": "raw"}, "megatron_to_hf_mode"),
+        ({"trainer_nodes": 2}, "single-node"),
+    ],
+)
+def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
+    with pytest.raises(ValueError, match=match):
+        backend_config(recipe(trainer_image="miles-v0.2.0", **changes))
+
+
 def test_backend_dispatch_rejects_unknown_backend():
     with pytest.raises(ValueError, match="backend"):
         backend_config(recipe(backend="missing"))

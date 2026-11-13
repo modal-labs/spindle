@@ -22,7 +22,6 @@ from miles.ray.wiring import compute_backend_capability
 from miles.utils.hf_utils.config import load_hf_config
 from miles.utils.lora.hf_lora_targets import get_hf_lora_targets
 
-from .native_checkpoint import materialize_adapter
 
 CHECKPOINT_FORMAT = "miles_adapter_state"
 ACTOR_CLASS = "spindle.backends.miles_runtime.actor_v020.SpindleMilesTrainRayActor"
@@ -113,7 +112,8 @@ class AdapterBridge:
 
     async def save_slot(
         self, slot: int, path: str, *, include_optimizer: bool = True
-    ) -> None:
+    ) -> Path:
+        """Write the slot under ``path``'s parent and return Miles' uncommitted directory."""
         target = Path(path)
         rank, alpha = self.slots[slot]
         fields = self.fields(rank, alpha)
@@ -130,11 +130,11 @@ class AdapterBridge:
                 parametrization_fields=fields,
             )
             written = results[0]
-        materialize_adapter(written.path, target, checkpoint=True)
+        return Path(written.path)
 
-    async def export_slot(self, slot: int, rank: int, alpha: float, path: str) -> None:
+    async def export_slot(self, slot: int, rank: int, alpha: float, path: str) -> Path:
         target = Path(path)
         written = await self.bridge.export_slot(
             slot, str(target.parent), target.name, "spindle", self.fields(rank, alpha)
         )
-        materialize_adapter(written.path, target, checkpoint=False)
+        return Path(written.path)

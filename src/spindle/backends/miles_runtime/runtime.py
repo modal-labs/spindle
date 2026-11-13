@@ -22,6 +22,7 @@ from spindle.backends.miles_config import MilesBackendConfig
 from spindle.errors import BackendFailed
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
+from .native_checkpoint import materialize_adapter
 from .replay_data import install_bridge_replay, validate_routed_experts
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
@@ -168,10 +169,13 @@ class MilesRuntime:
         self, slot: int, path: str, *, include_optimizer: bool = True
     ) -> None:
         if self._v020 is not None:
-            self._run(
+            written = self._run(
                 self._bridge.save_slot(slot, path, include_optimizer=include_optimizer)
             )
-        elif include_optimizer:
+            # Outside _run: a bad capture fails this request, not the shared trainer.
+            materialize_adapter(written, Path(path), checkpoint=True)
+            return
+        if include_optimizer:
             self._run(self._bridge.save_slot(slot, path))
         else:
             self._run(
@@ -190,7 +194,10 @@ class MilesRuntime:
         target_modules: tuple[str, ...],
         lora_dropout: float,
     ) -> None:
-        self._run(self._bridge.export_slot(slot, rank, alpha, path))
+        written = self._run(self._bridge.export_slot(slot, rank, alpha, path))
+        if self._v020 is not None:
+            materialize_adapter(written, Path(path), checkpoint=False)
+            return
         _materialize_capture(path)
 
     def torch_profile_start(self) -> None:
