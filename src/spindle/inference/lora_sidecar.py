@@ -21,11 +21,13 @@ from spindle.startup_timing import timeline
 
 from .bulletin import SnapshotBulletin, SnapshotNotFound
 from .request_replay import RequestReplay
+from .kv_events import KVEventSubscriber
 
 
 ABORT_TIMEOUT_SECONDS = 2.0
 ROUTING_CATALOG_PATH = Path("/tmp/spindle-routing-work.json")
 ROUTING_CATALOG_REFRESH_SECONDS = 0.5
+ROUTING_SUBSCRIBER_MAX_AGE_SECONDS = 2.5
 
 
 def _routing_adapter(payload: dict) -> str:
@@ -40,11 +42,161 @@ def _routing_adapter(payload: dict) -> str:
 FETCH_METRICS_TIMEOUT_SECONDS = 2.0
 
 
+async def refresh_loads(app):
+    try:
+        response = await app.state.client.get(
+            "/v1/loads?include=core", timeout=FETCH_METRICS_TIMEOUT_SECONDS
+        )
+        response.raise_for_status()
+        loads = response.json()["loads"]
+        app.state.loads = (
+            {
+                key: loads[0][key]
+                for key in (
+                    "timestamp",
+                    "num_running_reqs",
+                    "num_waiting_reqs",
+                    "num_used_tokens",
+                    "max_total_num_tokens",
+                )
+            }
+            if len(loads) == 1
+            else None
+        )
+        app.state.loads_at = time.monotonic()
+    except (httpx.HTTPError, ValueError, LookupError, TypeError):
+        pass
+    finally:
+        app.state.loads_task = None
+
+
+async def hook_view(app):
+    now = time.monotonic()
+    if now - app.state.routing_read_at > ROUTING_CATALOG_REFRESH_SECONDS:
+        app.state.routing_read_at = now
+        try:
+            app.state.routing_catalog = json.loads(
+                await asyncio.to_thread(ROUTING_CATALOG_PATH.read_text)
+            )
+        except (OSError, ValueError):
+            app.state.routing_catalog = {}
+    snapshot = app.state.routing_catalog
+    if not snapshot:
+        return None
+    rows = {
+        row["rid"]: row
+        for row in snapshot["requests"]
+        if row["rid"] in app.state.routing_requests
+    }
+    rows.update(
+        (rid, row) for rid, row in app.state.request_work.items() if rid not in rows
+    )
+    return dict(
+        age_seconds=time.time() - snapshot["timestamp"],
+        prefixes=snapshot["prefixes"],
+        cpu_adapters=snapshot["cpu_adapters"],
+        gpu_adapters=snapshot["gpu_adapters"],
+        request_ids=list(rows),
+        pending_adapters=sorted(set(app.state.routing_requests.values())),
+        prefill_tokens=sum(row["prefill_tokens"] for row in rows.values()),
+        decode_tokens=sum(row["decode_tokens"] for row in rows.values()),
+        snapshot_seconds=snapshot["snapshot_seconds"],
+        cache_kind=snapshot["cache_kind"],
+        running_requests=snapshot["running_requests"],
+        waiting_requests=snapshot["waiting_requests"],
+        kv_used_tokens=snapshot.get("kv_used_tokens", 0),
+        kv_capacity_tokens=snapshot.get("kv_capacity_tokens", 0),
+    )
+
+
+def _compare_view(view):
+    if view is None:
+        return {"prefix_count": 0, "load": None, "age_seconds": None}
+    fields = (
+        "running_requests",
+        "waiting_requests",
+        "kv_used_tokens",
+        "kv_capacity_tokens",
+    )
+    return {
+        "prefix_count": len(view["prefixes"]),
+        "load": {key: view.get(key) for key in fields},
+        "age_seconds": view.get("age_seconds"),
+    }
+
+
+def _compare_routing_views(hook, kv, subscriber):
+    hook_prefixes = set((hook or {}).get("prefixes", []))
+    kv_prefixes = set((kv or {}).get("prefixes", []))
+    return {
+        "hook": _compare_view(hook),
+        "kv_events": _compare_view(kv),
+        "intersection": len(hook_prefixes & kv_prefixes),
+        "hook_only": len(hook_prefixes - kv_prefixes),
+        "kv_events_only": len(kv_prefixes - hook_prefixes),
+        "samples": {
+            "hook_only": sorted(hook_prefixes - kv_prefixes)[:5],
+            "kv_events_only": sorted(kv_prefixes - hook_prefixes)[:5],
+        },
+        "subscriber_ready": bool(subscriber and subscriber.snapshot[0]),
+    }
+
+
+def refresh_loads_if_needed(app):
+    now = time.monotonic()
+    if (
+        app.state.loads_task is None
+        and now - app.state.loads_at > ROUTING_CATALOG_REFRESH_SECONDS
+    ):
+        app.state.loads_task = asyncio.create_task(refresh_loads(app))
+
+
+def kv_view(app):
+    refresh_loads_if_needed(app)
+    subscriber = app.state.kv_events
+    load = app.state.loads
+    if load is None:
+        return None
+    ready, checked_at, prefixes = subscriber.snapshot
+    return dict(
+        age_seconds=max(0.0, time.time() - load["timestamp"]),
+        prefixes=(
+            list(prefixes)
+            if ready
+            and time.monotonic() - checked_at < ROUTING_SUBSCRIBER_MAX_AGE_SECONDS
+            else []
+        ),
+        cpu_adapters=list(app.state.registered_adapters),
+        gpu_adapters=[],
+        request_ids=list(app.state.routing_requests),
+        pending_adapters=sorted(set(app.state.routing_requests.values())),
+        running_requests=load["num_running_reqs"],
+        waiting_requests=load["num_waiting_reqs"],
+        kv_used_tokens=load["num_used_tokens"],
+        kv_capacity_tokens=load["max_total_num_tokens"],
+    )
+
+
+def routing_body(app, work):
+    return {
+        "replica": os.environ.get("MODAL_TASK_ID", "local"),
+        "active": len(app.state.routing_requests),
+        "adapters": dict(Counter(app.state.routing_requests.values())),
+        "request_ids": list(app.state.routing_requests),
+        "pending_adapters": sorted(set(app.state.routing_requests.values())),
+        "cpu_adapters": work["cpu_adapters"] if work else [],
+        "age_seconds": work["age_seconds"] if work else None,
+        "work": work,
+    }
+
+
 def create_app(
     bulletin: SnapshotBulletin,
     upstream_url: str,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    routing_source: str = "hook",
+    kv_subscriber: KVEventSubscriber | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -65,9 +217,22 @@ def create_app(
         app.state.routing_catalog = {}
         app.state.routing_read_at = 0.0
         app.state.request_replay = RequestReplay()
+        app.state.kv_events = (
+            (kv_subscriber or KVEventSubscriber()) if routing_source != "hook" else None
+        )
+        if app.state.kv_events:
+            app.state.kv_events.start_thread()
+        app.state.loads = None
+        app.state.loads_at = 0.0
+        app.state.loads_task = None
         try:
             yield
         finally:
+            if app.state.kv_events:
+                await asyncio.to_thread(app.state.kv_events.stop_thread)
+            if app.state.loads_task:
+                app.state.loads_task.cancel()
+                await asyncio.gather(app.state.loads_task, return_exceptions=True)
             await app.state.request_replay.aclose()
             pending = list(app.state.adapter_resolutions.values())
             for task in pending:
@@ -93,55 +258,17 @@ def create_app(
 
     @app.get("/routing-state")
     async def routing_state():
-        now = time.monotonic()
-        if now - app.state.routing_read_at > ROUTING_CATALOG_REFRESH_SECONDS:
-            app.state.routing_read_at = now
-            try:
-                app.state.routing_catalog = json.loads(
-                    await asyncio.to_thread(ROUTING_CATALOG_PATH.read_text)
-                )
-            except (OSError, ValueError):
-                app.state.routing_catalog = {}
-        snapshot = app.state.routing_catalog
-        pending_adapters = sorted(set(app.state.routing_requests.values()))
-        work = None
-        if snapshot:
-            rows = {
-                row["rid"]: row
-                for row in snapshot["requests"]
-                if row["rid"] in app.state.routing_requests
-            }
-            rows.update(
-                (rid, row)
-                for rid, row in app.state.request_work.items()
-                if rid not in rows
-            )
-            work = dict(
-                age_seconds=time.time() - snapshot["timestamp"],
-                prefixes=snapshot["prefixes"],
-                cpu_adapters=snapshot["cpu_adapters"],
-                gpu_adapters=snapshot["gpu_adapters"],
-                request_ids=list(rows),
-                pending_adapters=pending_adapters,
-                prefill_tokens=sum(row["prefill_tokens"] for row in rows.values()),
-                decode_tokens=sum(row["decode_tokens"] for row in rows.values()),
-                snapshot_seconds=snapshot["snapshot_seconds"],
-                cache_kind=snapshot["cache_kind"],
-                running_requests=snapshot["running_requests"],
-                waiting_requests=snapshot["waiting_requests"],
-                kv_used_tokens=snapshot.get("kv_used_tokens", 0),
-                kv_capacity_tokens=snapshot.get("kv_capacity_tokens", 0),
-            )
-        return {
-            "replica": os.environ.get("MODAL_TASK_ID", "local"),
-            "active": len(app.state.routing_requests),
-            "adapters": dict(Counter(app.state.routing_requests.values())),
-            "request_ids": list(app.state.routing_requests),
-            "pending_adapters": pending_adapters,
-            "cpu_adapters": snapshot.get("cpu_adapters", []),
-            "age_seconds": time.time() - snapshot["timestamp"] if snapshot else None,
-            "work": work,
-        }
+        if routing_source == "kv_events":
+            return routing_body(app, kv_view(app))
+        return routing_body(app, await hook_view(app))
+
+    if routing_source == "compare":
+
+        @app.get("/routing-state/compare")
+        async def routing_compare():
+            hook = await hook_view(app)
+            kv = kv_view(app)
+            return _compare_routing_views(hook, kv, app.state.kv_events)
 
     @app.get("/health")
     async def health() -> Response:
@@ -372,6 +499,9 @@ def main() -> None:
     parser.add_argument("--upstream-url", required=True)
     parser.add_argument("--bulletin-root", required=True)
     parser.add_argument("--bulletin-volume", default="")
+    parser.add_argument(
+        "--routing-source", choices=("hook", "kv_events", "compare"), default="hook"
+    )
     args = parser.parse_args()
 
     refresh = None
@@ -379,7 +509,7 @@ def main() -> None:
         refresh = modal.Volume.from_name(args.bulletin_volume, version=2).reload
     bulletin = SnapshotBulletin(Path(args.bulletin_root), refresh=refresh)
     uvicorn.run(
-        create_app(bulletin, args.upstream_url),
+        create_app(bulletin, args.upstream_url, routing_source=args.routing_source),
         host=args.host,
         port=args.port,
     )

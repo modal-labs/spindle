@@ -334,9 +334,14 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
             ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
             | recipe.inference_env
             | (
-                {
-                    "SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1",
-                }
+                {"SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1"}
+                if lora
+                and recipe.inference_lora_routing == "cache_wait"
+                and recipe.inference_lora_routing_source in {"hook", "compare"}
+                else {}
+            )
+            | (
+                {"SGLANG_SPINDLE_ROUTING_SOURCE": recipe.inference_lora_routing_source}
                 if lora and recipe.inference_lora_routing == "cache_wait"
                 else {}
             )
@@ -379,17 +384,20 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                     recipe.inference_startup_timeout_s,
                 )
                 startup.mark("sglang_healthy")
-                kwargs = dict(
-                    port=8000,
-                    sglang_port=8001,
-                    bulletin_root="/bulletin",
-                    bulletin_volume=platform["storage"]["bulletin"],
-                )
                 self.sidecar = (
-                    start_lora_sidecar(**kwargs)  # ty: ignore[invalid-argument-type]
+                    start_lora_sidecar(
+                        port=8000,
+                        sglang_port=8001,
+                        bulletin_root="/bulletin",
+                        bulletin_volume=platform["storage"]["bulletin"],
+                        routing_source=recipe.inference_lora_routing_source,
+                    )
                     if lora
                     else start_fft_sidecar(
-                        **kwargs,  # ty: ignore[invalid-argument-type]
+                        port=8000,
+                        sglang_port=8001,
+                        bulletin_root="/bulletin",
+                        bulletin_volume=platform["storage"]["bulletin"],
                         run_id=pool.model_id,
                         pinned_version=None if pool.latest else pool.version,
                     )

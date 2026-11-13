@@ -1,13 +1,141 @@
 import asyncio
 import json
+import time
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from stitch.types import VersionRef
 
+import spindle.inference.lora_sidecar as sidecar
 from spindle.inference.bulletin import SnapshotBulletin
 from spindle.inference.lora_sidecar import create_app
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["hook", "kv_events", "compare"],
+)
+def test_routing_source_preserves_user_cache_salt(tmp_path, source):
+    received = []
+
+    def upstream(request):
+        if request.url.path == "/generate":
+            received.append(request.read())
+            return httpx.Response(200, json={})
+        return httpx.Response(200, json={})
+
+    app = create_app(
+        SnapshotBulletin(tmp_path / "bulletin"),
+        "http://sglang",
+        transport=httpx.MockTransport(upstream),
+        routing_source=source,
+    )
+    with TestClient(app) as client:
+        assert (app.state.kv_events is None) is (source == "hook")
+        response = client.post(
+            "/generate",
+            json={
+                "input_ids": [1, 2],
+                "lora_path": "adapter/v1",
+                "cache_salt": "tenant",
+            },
+        )
+        assert response.status_code == 200
+    sent = json.loads(received[0])
+    assert sent["cache_salt"] == "tenant"
+
+
+@pytest.mark.parametrize("source", ["hook", "kv_events", "compare"])
+def test_routing_state_has_router_work_shape_and_compare_summary(
+    tmp_path, monkeypatch, source
+):
+    catalog = tmp_path / "routing-work.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "timestamp": time.time(),
+                "prefixes": ["01" * 16, "02" * 16],
+                "cpu_adapters": ["adapter/v1"],
+                "gpu_adapters": ["adapter/v1"],
+                "requests": [],
+                "snapshot_seconds": 0.01,
+                "cache_kind": "radix",
+                "running_requests": 2,
+                "waiting_requests": 1,
+                "kv_used_tokens": 30,
+                "kv_capacity_tokens": 100,
+            }
+        )
+    )
+    monkeypatch.setattr(sidecar, "ROUTING_CATALOG_PATH", catalog)
+    app = create_app(
+        SnapshotBulletin(tmp_path / "bulletin"),
+        "http://sglang",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+        routing_source=source,
+    )
+    with TestClient(app) as client:
+        if source != "hook":
+            subscriber = app.state.kv_events
+            subscriber.snapshot = (True, time.monotonic(), ("02" * 16, "03" * 16))
+            app.state.loads = {
+                "timestamp": time.time(),
+                "num_running_reqs": 3,
+                "num_waiting_reqs": 0,
+                "num_used_tokens": 40,
+                "max_total_num_tokens": 100,
+            }
+            app.state.loads_at = time.monotonic()
+        state = client.get("/routing-state").json()
+        if source == "kv_events":
+            assert app.state.routing_read_at == 0.0
+            assert state["work"]["prefixes"] == ["02" * 16, "03" * 16]
+        else:
+            assert state["work"]["prefixes"] == ["01" * 16, "02" * 16]
+        work = state["work"]
+        assert {
+            "age_seconds",
+            "prefixes",
+            "cpu_adapters",
+            "gpu_adapters",
+            "request_ids",
+            "pending_adapters",
+            "waiting_requests",
+            "kv_used_tokens",
+            "kv_capacity_tokens",
+        } <= work.keys()
+        compare_response = client.get("/routing-state/compare")
+        if source == "compare":
+            assert compare_response.status_code == 200
+            comparison = compare_response.json()
+            assert comparison["intersection"] == 1
+            assert comparison["hook_only"] == 1
+            assert comparison["kv_events_only"] == 1
+        else:
+            assert compare_response.status_code == 404
+
+
+def test_malformed_loads_response_keeps_last_good_snapshot():
+    async def scenario():
+        client = httpx.AsyncClient(
+            base_url="http://sglang",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"loads": None})
+            ),
+        )
+        state = SimpleNamespace(
+            client=client, loads={"timestamp": 1}, loads_task=object()
+        )
+        try:
+            await sidecar.refresh_loads(SimpleNamespace(state=state))
+            assert state.loads == {"timestamp": 1}
+            assert state.loads_task is None
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_generation_concurrency_does_not_block_health_or_metrics(tmp_path):

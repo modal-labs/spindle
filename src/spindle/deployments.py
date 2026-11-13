@@ -110,6 +110,9 @@ class DeploymentConfig(BaseModel):
         routing = pinned.inference_lora_routing
         if routing not in {None, "affinity", "cache_wait"}:
             raise ValueError(f"unknown inference_lora_routing: {routing}")
+        routing_source = pinned.inference_lora_routing_source
+        if routing_source not in {"hook", "kv_events", "compare"}:
+            raise ValueError(f"unknown inference_lora_routing_source: {routing_source}")
         prefill_rate = pinned.inference_routing_prefill_tokens_per_second
         if prefill_rate is not None and not (
             isinstance(prefill_rate, (int, float))
@@ -137,6 +140,21 @@ class DeploymentConfig(BaseModel):
                 else "affinity"
             )
             recipe.inference_lora_routing = routing
+        if routing_source != "hook":
+            if recipe.parameterization != "lora" or routing != "cache_wait":
+                raise ValueError(
+                    "inference_lora_routing_source='kv_events' or 'compare' requires "
+                    "a LoRA recipe with inference_lora_routing='cache_wait'; "
+                    "set inference_lora_routing_source='hook' otherwise"
+                )
+            if (
+                recipe.inference_image
+                == "spindle.providers.modal.deepseek_v41_image:inference_image"
+            ):
+                raise ValueError(
+                    'Use inference_lora_routing_source="hook" with the '
+                    "DeepSeek-V4.1-Flash image"
+                )
         if routing == "cache_wait":
             if recipe.inference_routing_balance_absolute is None:
                 running = deployment.inference_settings["max_running_requests"]
@@ -219,7 +237,7 @@ class DeploymentConfig(BaseModel):
 
     def inference_identity(self) -> tuple:
         recipe = self.recipe
-        return (
+        identity = (
             recipe.name,
             recipe.model,
             recipe.model_weights,
@@ -244,6 +262,11 @@ class DeploymentConfig(BaseModel):
             recipe.inference_lora_routing,
             self.inference_settings,
             self.spindle_version,
+        )
+        return identity + (
+            (recipe.inference_lora_routing_source,)
+            if recipe.inference_lora_routing_source != "hook"
+            else ()
         )
 
 

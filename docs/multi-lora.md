@@ -168,3 +168,25 @@ The deterministic path aims to give each client the same training results regard
 
 To enable it, build the patched FA3 artifacts, set SPINDLE_MILES_FA3_ARTIFACTS to their directory before deployment, and use the qwen3_5_9b_base_miles_lora_deterministic definition. The Tinker training code stays the same. We've validated on small math experiments (see  [LoRA validation](lora_validation.md) deterministic training section) but still need to do larger validation. Our changes to fa3 to make it deterministic also come at a throughput cost, and so this path remains experimental for now. 
 
+### Cache routing snapshots
+
+For a LoRA recipe using `cache_wait`, set `inference_lora_routing_source = "kv_events"` to route from KV events. The default, `"hook"`, uses the scheduler snapshot.
+
+KV events provide cached prefixes; `/v1/loads` provides replica load.
+
+Set `inference_lora_routing_source = "compare"` to serve the hook snapshot while
+both producers run on the replica. `GET /routing-state/compare` shows prefix
+counts, overlap, sample differences, load values, view ages and whether the
+native event subscriber is ready. KV event routing and comparison require a
+sampler image that records adapter names in KV events and supports `/v1/loads`.
+Use `"hook"` with the DeepSeek-V4.1-Flash image.
+
+The two views can differ in these ways:
+
+- The hook selects up to 8,192 recent prefixes and refreshes about once a second. KV events also cap the list at 8,192, favoring recently stored, deeper paths because events do not report cache-hit times.
+- On hybrid Mamba models, the hook counts only prefix boundaries with valid Mamba state. KV events cannot report that state.
+- On hybrid sliding-window pools, KV load reports the greater of full-pool and sliding-window token use; the hook reports full-pool use.
+- With SGLang disaggregation enabled, `/v1/loads` includes its prefill and decode queues in `waiting_requests`; the hook counts only the scheduler's main waiting queue.
+- KV events do not identify GPU-resident adapters, so `gpu_adapters` is empty and the router ranks a replica with the adapter on its GPU no higher than one that only has it loaded in CPU memory.
+
+With SGLang's default `page_size` of 1, the sidecar keeps about 60 MiB per million cached tokens and spends about 3 microseconds of CPU per cached token. Custom sampler images need `pyzmq` and `msgspec`.

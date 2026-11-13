@@ -20,6 +20,8 @@ dependencies = [
     "tinker>=0.26.0",
     "uvicorn>=0.52.0",
     "xxhash>=3.8.1",
+    "msgspec>=0.19",
+    "pyzmq>=26",
     "zstandard>=0.25.0",
     "questionary>=2.1",
 ]

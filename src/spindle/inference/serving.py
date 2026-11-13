@@ -195,6 +195,7 @@ def start_lora_sidecar(
     sglang_port: int,
     bulletin_root: str,
     bulletin_volume: str,
+    routing_source: str = "hook",
 ) -> subprocess.Popen:
     command = [
         sys.executable,
@@ -208,6 +209,8 @@ def start_lora_sidecar(
         bulletin_root,
         "--bulletin-volume",
         bulletin_volume,
+        "--routing-source",
+        routing_source,
     ]
     return subprocess.Popen(command, start_new_session=True)
 

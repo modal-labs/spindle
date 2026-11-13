@@ -16,6 +16,7 @@ CORE_PACKAGES = (
     "xxhash>=3.8.1",
     "zstandard>=0.25.0",
 )
+SAMPLER_PACKAGES = (*CORE_PACKAGES, "msgspec>=0.19", "pyzmq>=26")
 STITCH_PACKAGE = (
     "stitch @ git+https://github.com/modal-projects/stitch.git"
     "@d9f681fd894b02257da129ec3483a977659cd7ab"

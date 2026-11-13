@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import inspect
 import json
 import os
 import subprocess
@@ -151,15 +152,28 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     monkeypatch.setattr(deployment_apps, "log_scheduled_gpus", lambda role: None)
     monkeypatch.setattr(deployment_apps, "wait_http", lambda *args: None)
     monkeypatch.setattr(deployment_apps, "supervise_children", lambda *args: None)
+    lora_signature = inspect.signature(deployment_apps.start_lora_sidecar)
+    fft_signature = inspect.signature(deployment_apps.start_fft_sidecar)
+
+    def start_lora(**kwargs):
+        lora_signature.bind(**kwargs)
+        calls.append(("lora", kwargs))
+        return process
+
+    def start_fft(**kwargs):
+        fft_signature.bind(**kwargs)
+        calls.append(("fft", kwargs))
+        return process
+
     monkeypatch.setattr(
         deployment_apps,
         "start_lora_sidecar",
-        lambda **kw: calls.append(("lora", kw)) or process,
+        start_lora,
     )
     monkeypatch.setattr(
         deployment_apps,
         "start_fft_sidecar",
-        lambda **kw: calls.append(("fft", kw)) or process,
+        start_fft,
     )
     monkeypatch.setattr(deployment_apps, "terminate", stops.append)
     replica = server()
@@ -169,6 +183,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     native = json.loads(commands[0][4])
     assert native["context_length"] == row.max_context_length
     if kind == "lora":
+        assert calls[0][1]["routing_source"] == "hook"
         assert native["enable_lora"] is True
         assert native["max_lora_rank"] == 32
         assert native["lora_target_modules"] == [
@@ -182,6 +197,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
             "lm_head",
         ]
     else:
+        assert "routing_source" not in calls[0][1]
         assert native["weight_update_staging"] == "cpu"
         assert native["weight_version"] == "0"
         assert calls[0][1]["pinned_version"] == (
@@ -189,6 +205,76 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
         )
     replica.stop()
     assert stops == [process, process]
+
+
+@pytest.mark.parametrize("source", ["hook", "kv_events", "compare"])
+@pytest.mark.parametrize("routing", [None, "cache_wait", "affinity", "auto_affinity"])
+@pytest.mark.parametrize("lora", [True, False])
+def test_routing_source_gates_pool_environment_and_sidecar(
+    builders, monkeypatch, source, routing, lora
+):
+    spec = load(config_path("qwen35-9b-lora-16k" if lora else "qwen35-4b-fft-64k"))
+    spec.inference_lora_routing_source = source
+    spec.inference_lora_routing = None if routing == "auto_affinity" else routing
+    if routing == "auto_affinity" and lora:
+        spec.sglang_cfg = {**spec.sglang_cfg, "dp_size": 2}
+    effective = (
+        "affinity"
+        if routing == "auto_affinity" or (routing is None and not lora)
+        else "cache_wait"
+        if routing is None
+        else routing
+    )
+    if source != "hook" and (not lora or effective != "cache_wait"):
+        with pytest.raises(ValueError, match="LoRA recipe with inference_lora_routing"):
+            DeploymentConfig.create(spec)
+        return
+
+    row = DeploymentConfig.create(spec)
+    pool = (
+        LoraPoolSpec(row.definition_id) if lora else FFTPoolSpec.base(row.definition_id)
+    )
+    app, server = deployment_apps.build_rollout_app(row, pool, image="test-image")
+    env = app.servers["Server"][0]["env"]
+    assert {
+        k: v for k, v in env.items() if k.startswith("SGLANG_SPINDLE_ROUTING_")
+    } == (
+        {
+            "SGLANG_SPINDLE_ROUTING_SOURCE": source,
+            **(
+                {"SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1"}
+                if source in {"hook", "compare"}
+                else {}
+            ),
+        }
+        if lora and effective == "cache_wait"
+        else {}
+    )
+
+    process = object()
+    captured = []
+    lora_signature = inspect.signature(deployment_apps.start_lora_sidecar)
+    fft_signature = inspect.signature(deployment_apps.start_fft_sidecar)
+
+    def start_lora(**kwargs):
+        lora_signature.bind(**kwargs)
+        captured.append(kwargs)
+        return process
+
+    def start_fft(**kwargs):
+        fft_signature.bind(**kwargs)
+        captured.append(kwargs)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(deployment_apps, "log_scheduled_gpus", lambda role: None)
+    monkeypatch.setattr(deployment_apps, "wait_http", lambda *args: None)
+    monkeypatch.setattr(deployment_apps, "supervise_children", lambda *args: None)
+    monkeypatch.setattr(deployment_apps, "start_lora_sidecar", start_lora)
+    monkeypatch.setattr(deployment_apps, "start_fft_sidecar", start_fft)
+    replica = server()
+    replica.start()
+    assert captured[0].get("routing_source") == (source if lora else None)
 
 
 def test_pool_lookup_uses_definition_name(monkeypatch):
