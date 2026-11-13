@@ -1,6 +1,6 @@
 """Draw comparison charts from recorded reference runs. Needs no network.
 
-uv run --with matplotlib python reference_runs/plot.py RUN_DIR [RUN_DIR ...]
+uv run python reference_runs/plot.py RUN_DIR [RUN_DIR ...]
 """
 
 import argparse

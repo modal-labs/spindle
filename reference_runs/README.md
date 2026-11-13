@@ -90,7 +90,7 @@ An `update` record has:
 ## Compare runs
 
 ```bash
-uv run --with matplotlib python reference_runs/plot.py \
+uv run python reference_runs/plot.py \
   reference_runs/results/dapo-math-qwen35-4b reference_runs/runs/dapo
 ```
 
