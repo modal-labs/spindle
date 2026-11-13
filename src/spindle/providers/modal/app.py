@@ -26,7 +26,7 @@ from spindle.providers.contracts import (
 )
 from spindle.startup_timing import StartupTimeline
 from spindle.telemetry.otlp import sample_trace
-from spindle.usage import label_keys_from_env, meter_sample
+from spindle.usage import label_keys_from_env, meter_sample, usage_window
 from spindle.version import COMMIT_ENV, deployment_tag, source_commit
 
 from .app_tags import app_tags
@@ -809,7 +809,25 @@ def server():
         apps_status=_apps_status,
         deploy_apps=_start_app_deploy,
         stop_apps=_stop_apps,
+        usage_sink=usage_sink(APP_NAME),
     )
+
+
+@app.function(
+    image=image,
+    region=FRONTEND_REGION,
+    timeout=10 * 60,
+    volumes={USAGE_ROOT: usage_volume(APP_NAME)},
+)
+def usage_rows(starting_on: str, ending_before: str) -> dict:
+    """The window's usage rows and each session's labels, for `spindle usage`."""
+    sink = usage_sink(APP_NAME)
+    start, end = usage_window(starting_on, ending_before)
+    rows = sink.read(start.timestamp(), end.timestamp())
+    return {
+        "rows": [asdict(row) for row in rows],
+        "sessions": sink.sessions({row.session_id for row in rows if row.session_id}),
+    }
 
 
 APP_DEPLOY_CLAIM_S = 60.0

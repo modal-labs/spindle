@@ -424,6 +424,9 @@ a training step and read it in Perfetto.
 See [Observability](docs/observability.md) for OTLP export to Datadog or a custom
 destination, experiment labels, and the complete span/metric inventory.
 
+See [Cost attribution](docs/cost-attribution.md) for how to label runs and split
+the cost of shared trainers and samplers across them.
+
 ## Validation
 
 See [FFT validation](docs/validation.md) and [LoRA validation](docs/lora_validation.md)

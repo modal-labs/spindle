@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import math
 import time
+from datetime import UTC, datetime
 
 
 import pytest
@@ -54,6 +55,7 @@ def deployment(tmp_path):
             DEFINITIONS,
             api_key=API_KEY,
             retrieve_window=5.0,
+            usage_sink=sink,
         )
         yield stack.enter_context(serve(app)), meter, plane, sink
 
@@ -166,3 +168,38 @@ def test_labels_lost_at_session_creation_are_written_before_the_session_is_swept
     assert failures == [0]
     assert sink.sessions([session_id]) == {session_id: {"run_id": "487852"}}
     assert asyncio.run(plane.kv.get(session_key(session_id))) is None
+
+
+def test_stock_tinker_sdk_reads_training_usage_per_run(deployment) -> None:
+    base_url, meter, plane, _ = deployment
+    hour = math.floor(time.time() / 3600) * 3600
+    service = tinker.ServiceClient(
+        base_url=base_url,
+        api_key=API_KEY,
+        user_metadata={"run_id": "487852", "team_id": "t-42"},
+    )
+    training = service.create_lora_training_client(base_model=BASE_MODEL, rank=8)
+    datum = types.Datum(
+        model_input=types.ModelInput.from_ints([1, 2, 3, 4]),
+        loss_fn_inputs={"target_tokens": [2, 3, 4, 5], "weights": [1.0] * 4},
+    )
+    training.forward_backward([datum, datum, datum], "cross_entropy").result(timeout=30)
+    meter.flush(include_open=True)
+    wait_for_usage_writes(plane)
+
+    usage = (
+        service.create_rest_client()
+        .get_billing_usage(
+            datetime.fromtimestamp(hour, UTC),
+            datetime.fromtimestamp(hour + 7200, UTC),
+        )
+        .result(timeout=30)
+    )
+
+    [event] = usage.data
+    assert event.event_info == types.TrainingBillingEvent(token_count=12)
+    assert event.base_model == BASE_MODEL
+    assert usage.sessions[event.session_id].user_metadata == {
+        "run_id": "487852",
+        "team_id": "t-42",
+    }
