@@ -31,7 +31,7 @@ def _check_release(miles_commit: str) -> None:
     assert head == miles_commit, f"Miles is at {head}, not {miles_commit}"
 
 
-image = (
+release_image = (
     modal.Image.from_registry(BASE_IMAGE)
     .entrypoint([])
     .env(
@@ -48,10 +48,16 @@ image = (
         "tinker==0.36.0",
     )
     .run_function(_check_release, kwargs={"miles_commit": MILES_RELEASE_COMMIT})
-    .run_commands(
-        f"git -C {MILES_PATH} fetch --depth=1"
-        f" https://github.com/modal-projects/miles.git {MILES_COMMIT}"
-        f" && git -C {MILES_PATH} checkout -B {MILES_BRANCH} FETCH_HEAD",
-    )
-    .add_local_python_source("spindle", ignore=ignore_config_source)
 )
+
+
+def fork_image(branch: str, commit: str) -> modal.Image:
+    """The release image with a modal-projects/miles commit checked out over it."""
+    return release_image.run_commands(
+        f"git -C {MILES_PATH} fetch --depth=1"
+        f" https://github.com/modal-projects/miles.git {commit}"
+        f" && git -C {MILES_PATH} checkout -B {branch} FETCH_HEAD",
+    ).add_local_python_source("spindle", ignore=ignore_config_source)
+
+
+image = fork_image(MILES_BRANCH, MILES_COMMIT)

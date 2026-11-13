@@ -512,11 +512,12 @@ def test_deepseek_v41_lora_trainer_image_is_registered():
     )
 
 
+@pytest.mark.parametrize("name", ["beam-501b-a23b-lora-5k", "kimi-k3-lora-32k"])
 @pytest.mark.parametrize(
     "backend,field", [("miles", "trainer_image"), ("sglang", "inference_image")]
 )
-def test_beam_runtime_images_resolve(backend, field):
-    recipe = load(config_path("beam-501b-a23b-lora-5k"))
+def test_model_runtime_images_resolve(name, backend, field):
+    recipe = load(config_path(name))
     assert isinstance(
         deployment_apps.image_for(backend, getattr(recipe, field)), modal.Image
     )
