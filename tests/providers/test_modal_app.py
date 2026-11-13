@@ -1405,6 +1405,7 @@ def app_deploy_fakes(monkeypatch, deployed):
     modal_app = importlib.import_module("spindle.providers.modal.app")
     store = InMemoryKeyValueStore()
     monkeypatch.setattr(modal_app, "shared_kv", lambda: RoutedTestStore(store))
+    monkeypatch.setattr(modal_app, "fft_pool_kv", lambda: store)
 
     async def exists(name):
         return name in deployed
@@ -1502,6 +1503,32 @@ def test_stop_apps_stops_only_deployed_apps_and_forgets_the_deploy(monkeypatch):
     asyncio.run(modal_app._stop_apps(recipe))
     assert stopped == [recipe.trainer_app_name]
     assert asyncio.run(store.get(key)) is None
+
+
+def test_stop_apps_stops_and_forgets_the_configs_sampler_pools(monkeypatch):
+    modal_app = importlib.import_module("spindle.providers.modal.app")
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION))
+    lora = LoraPoolSpec(recipe.definition_id, modal_app.APP_NAME)
+    fft = FFTPoolSpec.base(recipe.definition_id, modal_app.APP_NAME)
+    other = FFTPoolSpec.base("other-config", modal_app.APP_NAME)
+    modal_app, store = app_deploy_fakes(monkeypatch, {lora.app_name})
+    stopped = []
+    monkeypatch.setattr(modal_app, "_stop_app", stopped.append)
+
+    async def run():
+        await store.put(f"lora_pool:{lora.app_name}", lora.as_dict())
+        for spec in (fft, other):
+            await store.put(f"fft_pool:{spec.app_name}", spec.as_dict())
+            await store.put(f"fft_pool_touch:{spec.app_name}", {"touched_at": 1.0})
+        await modal_app._stop_apps(recipe)
+        return {key for key, _ in await store.list_items("")}
+
+    remaining = asyncio.run(run())
+    assert sorted(stopped) == sorted([lora.app_name, fft.app_name])
+    assert remaining == {
+        f"fft_pool:{other.app_name}",
+        f"fft_pool_touch:{other.app_name}",
+    }
 
 
 def test_a_failing_app_lookup_reports_unknown_and_starts_no_deploy(monkeypatch):

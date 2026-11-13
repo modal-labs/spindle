@@ -28,6 +28,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - `spindle stop` no longer aborts on apps that `spindle remove` is already stopping, and removing a config while its apps are still deploying no longer leaves those apps running.
 - Sampling requests rejected with HTTP 429 or 503 can retry with the same request ID as soon as capacity is available, instead of replaying the rejection for 30 seconds.
 - `get_server_capabilities` now sets `trainable` and `sampleable` on each model, which Tinker SDK 0.26 and later read. Before, both were `null`.
+- `spindle remove` and `DELETE /api/v1/spindle/deployments/{name}` now also stop the config's sampler pools. Before, a config with `inference_min_replicas` above 0 kept its warm samplers running after removal.
 - Sampling recovers when SGLang loads an adapter but its acknowledgement is lost. A later load error is accepted only when SGLang's registry confirms the same adapter name and checkpoint path.
 
 ## 0.1.6 - 2026-11-06
