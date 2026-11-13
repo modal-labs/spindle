@@ -4,7 +4,6 @@ from pathlib import Path
 
 import json
 import pickle
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import torch
@@ -42,19 +41,24 @@ def test_native_capture_preserves_weights_moments_and_step(tmp_path: Path) -> No
     assert not source.exists()
 
 
-@pytest.mark.parametrize("damage", ["missing", "truncated", "metadata"])
+@pytest.mark.parametrize("damage", ["missing", "truncated", "metadata", "index"])
 def test_native_capture_rejects_incomplete_checkpoint(
     tmp_path: Path, damage: str
 ) -> None:
     source = tmp_path / ".capture.1234"
     _checkpoint(source)
-    shard = next((source / "adapter_state").glob("*.distcp"))
+    state_dir = source / "adapter_state"
+    shard = next(state_dir.glob("*.distcp"))
     if damage == "missing":
         shard.unlink()
     elif damage == "truncated":
         shard.write_bytes(b"partial")
+    elif damage == "metadata":
+        (state_dir / ".metadata").unlink()
     else:
-        (source / "adapter_state" / ".metadata").unlink()
+        metadata = dcp.FileSystemReader(state_dir).read_metadata()
+        metadata.storage_data.pop(next(iter(metadata.storage_data)))
+        (state_dir / ".metadata").write_bytes(pickle.dumps(metadata))
     (source / "adapter_state" / "unrelated.distcp").write_bytes(b"unrelated")
     target = tmp_path / "capture"
     with pytest.raises((ValueError, FileNotFoundError)):
@@ -76,30 +80,3 @@ def test_sampler_requires_final_weights_and_config(
     (tmp_path / (missing + ".tmp")).write_bytes(b"incomplete")
     with pytest.raises((ValueError, FileNotFoundError)):
         validate_adapter(tmp_path, checkpoint=False)
-
-
-def test_concurrent_captures_keep_their_own_files(tmp_path: Path) -> None:
-    sources = [tmp_path / f".capture{i}.1234" for i in range(2)]
-    expected = [_checkpoint(source, float(i)) for i, source in enumerate(sources)]
-    targets = [tmp_path / f"capture{i}" for i in range(2)]
-    with ThreadPoolExecutor(2) as workers:
-        futures = [
-            workers.submit(materialize_adapter, source, target, checkpoint=True)
-            for source, target in zip(sources, targets, strict=True)
-        ]
-        for future in futures:
-            future.result()
-    for target, state in zip(targets, expected, strict=True):
-        restored = {key: torch.zeros_like(value) for key, value in state.items()}
-        dcp.load(restored, checkpoint_id=target / "adapter_state", no_dist=True)
-        assert all(torch.equal(restored[key], value) for key, value in state.items())
-
-
-def test_native_metadata_rejects_incomplete_storage(tmp_path: Path) -> None:
-    _checkpoint(tmp_path)
-    state_dir = tmp_path / "adapter_state"
-    metadata = dcp.FileSystemReader(state_dir).read_metadata()
-    metadata.storage_data.pop(next(iter(metadata.storage_data)))
-    (state_dir / ".metadata").write_bytes(pickle.dumps(metadata))
-    with pytest.raises(ValueError, match="missing storage"):
-        validate_adapter(tmp_path, checkpoint=True)

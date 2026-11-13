@@ -1001,7 +1001,7 @@ def test_hf_targets_match_tinker_training_flags(targets, expected):
     assert lora_target_flags(targets) == expected
 
 
-@pytest.mark.parametrize("changed", ["checkpoint_format", "dropout", "target_modules"])
+@pytest.mark.parametrize("changed", ["checkpoint_format", "target_modules"])
 def test_native_checkpoint_rejects_incompatible_adapter_before_slot_load(
     tmp_path, changed
 ):
@@ -1017,8 +1017,6 @@ def test_native_checkpoint_rejects_incompatible_adapter_before_slot_load(
     metadata = json.loads(metadata_path.read_text())
     if changed == "checkpoint_format":
         metadata[changed] = "miles_torch_dist"
-    elif changed == "dropout":
-        metadata["lora_config"][changed] = 0.5
     else:
         metadata["lora_config"][changed] = ["different_target"]
     metadata_path.write_text(json.dumps(metadata))

@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-from collections.abc import Callable
-
-if TYPE_CHECKING:
-    from miles.utils.args.runtime import TrainerConfig
-
-
 from argparse import Namespace
+from collections.abc import Callable
 from dataclasses import replace
 from functools import wraps
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import model as qwen3_vl_model
 from miles.backends.megatron_utils import model as megatron_model
@@ -46,6 +41,9 @@ from .actor_shared import (
 from .native_checkpoint import validate_adapter
 from .volumes import sync_checkpoint_volume
 
+if TYPE_CHECKING:
+    from miles.utils.args.runtime import TrainerConfig
+
 
 class WeightsOnlyMembers(LayerWiseSlotMembers):
     def export_adapter_state(self, slot: int) -> object:
@@ -69,6 +67,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
     ) -> dict[str, object] | None:
         if source is not None:
             sync_checkpoint_volume("reload")
+            # Miles checks keys and shapes, not that each shard on the volume is complete.
             with agree_on_failure_context():
                 validate_adapter(Path(source["path"]), checkpoint=True)
         return MultiLoRATrainRayActor.load_slot(self, slot, rank, alpha, source=source)

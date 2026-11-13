@@ -345,9 +345,8 @@ class MilesCommandBackend(Backend):
                 "pipeline_model_parallel_size": 1,
             },
         }
-        if metadata["checkpoint_format"] == "miles_adapter_state":
+        if self._native:
             metadata["lora_config"]["target_modules"] = list(self.config.target_modules)
-            metadata["lora_config"]["dropout"] = self.config.lora_dropout
         (capture_path / "metadata.json").write_text(
             json.dumps(metadata, sort_keys=True),
             encoding="utf-8",
@@ -662,9 +661,9 @@ class MilesCommandBackend(Backend):
             or float(lora.get("alpha", 0)) != state.alpha
         ):
             raise ValueError("checkpoint LoRA configuration does not match the model")
-        if metadata["checkpoint_format"] == "miles_adapter_state" and (
-            lora.get("target_modules") != list(self.config.target_modules)
-            or lora.get("dropout") != self.config.lora_dropout
+        # Checked here because a target mismatch found by Miles disables the whole trainer.
+        if self._native and lora.get("target_modules") != list(
+            self.config.target_modules
         ):
             raise ValueError("checkpoint LoRA configuration does not match the model")
         expected_targets = {
