@@ -34,9 +34,5 @@ image = (
         f" && git -C /root/miles checkout -B {MILES_BRANCH} FETCH_HEAD",
         MEGATRON_RUNTIME_CHECK,
     )
-    .add_local_python_source("spindle", ignore=ignore_config_source, copy=True)
-    .run_commands(
-        "python -c 'from spindle.backends.miles_runtime import v020, actor_v020'",
-        gpu="H100",
-    )
+    .add_local_python_source("spindle", ignore=ignore_config_source)
 )
