@@ -181,6 +181,11 @@ class DeploymentConfig(BaseModel):
         return f"/assets/{self.weights_repo}"
 
     @property
+    def draft_asset_path(self) -> str | None:
+        model = self.recipe.inference_draft_model
+        return f"/assets/{model}" if model else None
+
+    @property
     def rollout_tensor_parallel_size(self) -> int:
         serving = self.inference_settings
         return serving.get("tp_size", self.recipe.inference_gpus_per_node) // (
@@ -224,6 +229,8 @@ class DeploymentConfig(BaseModel):
             recipe.model,
             recipe.model_weights,
             recipe.weights_revision,
+            recipe.inference_draft_model,
+            recipe.inference_draft_model_revision,
             recipe.parameterization,
             recipe.max_context_length,
             recipe.sglang_cfg,

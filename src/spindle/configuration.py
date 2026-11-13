@@ -81,6 +81,10 @@ class BaseConfig:
     inference_scaledown_window_s = 300
     inference_startup_timeout_s = 1200
     inference_env = {}
+    # Optional Hugging Face checkpoint used by SGLang speculative decoding.
+    # It is downloaded alongside the base model and passed as a local path.
+    inference_draft_model = ""
+    inference_draft_model_revision = ""
 
     miles_cfg = {}
     megatron_cfg = {}

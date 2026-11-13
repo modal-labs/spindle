@@ -70,6 +70,8 @@ SGLANG_MANAGED = {
     "encoder_only",
     "use_ray",
     "disaggregation_mode",
+    "speculative_draft_model_path",
+    "speculative_draft_model_revision",
 }
 
 
@@ -133,16 +135,24 @@ def backend_config(spec, asset_path="/assets/pending"):
     return settings
 
 
-def serving_options(spec):
+def serving_options(spec, draft_model_path=None):
     options = dict(spec.sglang_cfg)
     reject_managed_options(options, SGLANG_MANAGED)
     tp = options.get("tp_size", spec.inference_gpus_per_node)
     if tp != spec.inference_gpus_per_node:
         raise ValueError("sglang.tp_size must equal the replica GPU allocation")
+    if draft_model_path is not None:
+        options["speculative_draft_model_path"] = draft_model_path
+        # The draft is materialized locally by Spindle, so this must not cause
+        # SGLang/Hugging Face to resolve a second remote revision.
+        options["speculative_draft_model_revision"] = None
     return options
 
 
 def resolve_backend_settings(spec, asset_path):
+    base_model = spec.model_weights or spec.model
+    if spec.inference_draft_model and spec.inference_draft_model == base_model:
+        raise ValueError("inference_draft_model must be different from the base model")
     trainer = backend_config(spec, asset_path)
     inference = {
         "context_length": spec.max_context_length,
@@ -151,7 +161,12 @@ def resolve_backend_settings(spec, asset_path):
         "max_running_requests": 32,
         "enable_metrics": True,
         "weight_loader_disable_mmap": True,
-        **serving_options(spec),
+        **serving_options(
+            spec,
+            f"/assets/{spec.inference_draft_model}"
+            if spec.inference_draft_model
+            else None,
+        ),
     }
     if spec.parameterization == "lora":
         miles = MilesBackendConfig(**trainer["miles"])
