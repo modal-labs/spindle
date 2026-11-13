@@ -21,6 +21,7 @@ from spindle.backends.miles_arguments import (
 from spindle.configs.qwen35_9b_lora_16k import Config as Parent
 from spindle.configuration import BaseConfig
 from spindle.control_plane import ControlPlane, create_control_plane_app
+from spindle.control_plane import deployments as deployment_routes
 from spindle.control_plane.deployments import (
     DeploymentConflict,
     DeploymentRequest,
@@ -521,6 +522,35 @@ async def test_a_failed_read_serves_hits_but_never_answers_not_found(failing):
     async with client_for(routes) as client:
         listed = await client.get("/api/v1/spindle/deployments")
     assert (listed.status_code, listed.json()["error"]) == (503, "registry_unavailable")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failures, found", [(2, True), (5, False)])
+async def test_a_new_container_retries_its_first_registry_read_once_for_all_requests(
+    monkeypatch, failures, found
+):
+    monkeypatch.setattr(deployment_routes, "FIRST_READ_RETRY_S", (0.0,) * 4)
+    base = resolved()
+    routes, store = routes_for(base)
+    list_keys = store.list_keys
+    calls = 0
+
+    async def rate_limited(prefix):
+        nonlocal calls
+        calls += 1
+        if calls <= failures:
+            raise RuntimeError("list rate limit exceeded")
+        return await list_keys(prefix)
+
+    store.list_keys = rate_limited
+    results = await asyncio.gather(
+        *(routes.get(base.name) for _ in range(20)), return_exceptions=True
+    )
+    assert calls == min(failures + 1, 5)
+    if found:
+        assert all(result.name == base.name for result in results)
+    else:
+        assert all(isinstance(result, RegistryUnavailable) for result in results)
 
 
 @pytest.mark.anyio
