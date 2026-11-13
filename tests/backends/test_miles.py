@@ -1044,18 +1044,3 @@ def test_native_checkpoint_rejects_incompatible_adapter_before_slot_load(
     with pytest.raises(ValueError):
         backend.load_checkpoint("model-a", str(checkpoint), restore_optimizer=True)
     assert runtime.calls == previous
-
-
-@pytest.mark.parametrize("native", [False, True])
-def test_capture_storage_is_shared_and_owned_for_native_runtime(tmp_path, native):
-    runtime = FakeMilesRuntime()
-    runtime.checkpoint_format = "miles_adapter_state" if native else "miles_torch_dist"
-    first, second = _backend(tmp_path, runtime), _backend(tmp_path, runtime)
-    first.accept_model("model-a", _spec())
-    first.capture_sampler_snapshot("model-a", "capture-a", 1)
-    if native:
-        assert first.capture_dir.is_relative_to(first.checkpoint_dir)
-        assert first.capture_dir != second.capture_dir
-    else:
-        assert first.capture_dir == tmp_path / "captures"
-    assert first.capture_dir.is_dir()

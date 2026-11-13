@@ -65,13 +65,8 @@ class MilesCommandBackend(Backend):
         self.config = config
         self.base_model = base_model
         self.checkpoint_dir = checkpoint_dir
+        self.capture_dir = capture_dir
         self.runtime = runtime if runtime is not None else MilesRuntime(config)
-        self.capture_dir = (
-            checkpoint_dir / ".captures" / uuid.uuid4().hex
-            if getattr(self.runtime, "checkpoint_format", "miles_torch_dist")
-            == "miles_adapter_state"
-            else capture_dir
-        )
         self.max_slots = config.max_lora_slots
         self.free_slots = set(range(self.max_slots))
         self.jobs: dict[str, MilesJobState] = {}

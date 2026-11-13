@@ -73,8 +73,10 @@ schema bump is needed. Miles owns the native tensor and optimizer serialization.
 A weights-only save omits moments through Miles' checkpoint-member interface.
 A weights-only load passes `load_optimizer=False` and resets Spindle's step count.
 
-Native captures use unique directories on the checkpoint volume.
-Every node commits its native files before capture assembly. The driver reads
+Native captures go where legacy captures do. On one node they stay on the
+trainer's local disk, and only persisting a checkpoint commits the volume. On
+several nodes they go to the checkpoint volume, and every node commits its
+native files before capture assembly. The driver then reads
 the committed volume listing, copies complete local files or downloads missing
 files into a unique staging directory, and checks every shard
 referenced by DCP metadata, including its byte extent. Sampler captures require

@@ -79,6 +79,8 @@ def materialize_adapter(source: Path, target: Path, *, checkpoint: bool) -> None
     temporary = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
     root = Path(os.environ.get("SPINDLE_CHECKPOINT_ROOT", "/checkpoints"))
     name = os.environ.get("SPINDLE_CHECKPOINT_VOLUME")
+    if not source.is_relative_to(root):
+        name = None
     try:
         temporary.mkdir(parents=True)
         if name is None:

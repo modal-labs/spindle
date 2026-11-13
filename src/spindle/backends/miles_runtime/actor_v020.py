@@ -32,7 +32,7 @@ from .actor import (
     _use_distributed_timeout_for_gloo,
 )
 from .native_checkpoint import validate_adapter
-from .volumes import sync_checkpoint_volume
+from .volumes import commit_if_on_checkpoint_volume, sync_checkpoint_volume
 
 
 class WeightsOnlyMembers(LayerWiseSlotMembers):
@@ -61,14 +61,32 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
         LegacyActor._log_peak_memory(operation)
         return result
 
-    def save_slot(self, *args: object, **kwargs: object) -> object:
-        result = super().save_slot(*args, **kwargs)
-        sync_checkpoint_volume("commit")
+    def save_slot(
+        self,
+        slot: int,
+        root: str,
+        name: str,
+        tenant_digest: str,
+        parametrization_fields: dict,
+    ) -> object:
+        result = super().save_slot(
+            slot, root, name, tenant_digest, parametrization_fields
+        )
+        commit_if_on_checkpoint_volume(root)
         return result
 
-    def export_slot(self, *args: object, **kwargs: object) -> object:
-        result = super().export_slot(*args, **kwargs)
-        sync_checkpoint_volume("commit")
+    def export_slot(
+        self,
+        slot: int,
+        root: str,
+        name: str,
+        tenant_digest: str,
+        parametrization_fields: dict,
+    ) -> object:
+        result = super().export_slot(
+            slot, root, name, tenant_digest, parametrization_fields
+        )
+        commit_if_on_checkpoint_volume(root)
         return result
 
     def init(self, args: TrainerConfig, role: str, **kwargs: object) -> int | None:
@@ -105,7 +123,7 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
             self.adapter_slots.parametrization(**parametrization_fields),
             tenant_digest="spindle",
         )
-        sync_checkpoint_volume("commit")
+        commit_if_on_checkpoint_volume(root)
         return result
 
 

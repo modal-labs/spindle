@@ -36,7 +36,14 @@ def _checkpoint(path: Path, value: float = 1.0) -> dict[str, torch.Tensor]:
     return state
 
 
-def test_native_capture_preserves_weights_moments_and_step(tmp_path: Path) -> None:
+@pytest.mark.parametrize("volume_configured", [False, True])
+def test_native_capture_preserves_weights_moments_and_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, volume_configured: bool
+) -> None:
+    if volume_configured:
+        monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "spindle-checkpoints")
+        monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(tmp_path / "checkpoints"))
+        monkeypatch.setattr(native_checkpoint.modal.Volume, "from_name", None)
     source = tmp_path / ".capture.1234"
     expected = _checkpoint(source)
     target = tmp_path / "capture"
