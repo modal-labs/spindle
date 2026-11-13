@@ -96,27 +96,40 @@ the trainer remains available.
 
 ## Validation
 
-Stock Tinker SDK 0.26.0, Qwen/Qwen3.5-4B, rank-32 LoRA, Miles fork `a94f7ae`,
-four H100 trainer GPUs (DP 4, TP 1) and two single-H100 samplers, using the
-[reference recipe](../reference_runs/dapo_math_config.py) with the new image:
+Stock Tinker SDK 0.26.0, Qwen/Qwen3.5-4B, rank-32 LoRA, Spindle `016debf`, Miles
+fork `a94f7ae`, four H100 trainer GPUs (DP 4, TP 1):
 
 - The [20-update DAPO-Math reference run](../reference_runs/results/dapo-math-qwen35-4b-miles-v020/README.md)
-  on Spindle `619dc8b` accepted every update. Held-out accuracy went from
-  48/256 (18.8%) to 95/256 (37.1%); the Miles v0.1.1 reference went from
-  53/256 (20.7%) to 107/256 (41.8%). One run per image does not establish
-  learning parity. Median trainer backward was 9.6 seconds, against 8.9 on
-  v0.1.1.
-- Its final checkpoint, restored with optimizer state into a new training
-  client and saved again unchanged, matched the original in all 631 tensors
-  bitwise, including all 420 Adam moment tensors (all nonzero) and optimizer
-  step 20.
-- The sampler export loaded in SGLang with 258 bf16 tensors, the same names and
+  accepted every update. Held-out accuracy went from 51/256 (19.9%) to 103/256
+  (40.2%); the [Miles v0.1.1 reference](../reference_runs/results/dapo-math-qwen35-4b/README.md)
+  went from 53/256 (20.7%) to 107/256 (41.8%). One run per image does not
+  establish learning parity. Median trainer backward was 9.9 seconds, against
+  8.9 on v0.1.1.
+- A trained step-20 checkpoint restored with optimizer state into a cold
+  trainer, and saved again unchanged, matched the original bitwise in all 210
+  weights, all 420 Adam moments and the step.
+- A weights-only restore (`load_state`) kept every fp32 weight bitwise, reset
+  all moments to zero and reset the step to 0. On v0.1.1 the same restore rounds
+  the fp32 master weights to bf16.
+- Restoring and then training continued from step 20 to step 21.
+- Two models trained with interleaved requests on one trainer ended as close to
+  their serial controls as two serial runs of the same work end to each other.
+- Training is not bitwise reproducible on either image: two clients restoring
+  the same checkpoint and taking the same update differed by up to about 40% of
+  the update's size, largest in the first layers and zero in the last. Qwen3.5
+  recipes do not request deterministic kernels.
+- The sampler export loaded in SGLang with the same 258 bf16 tensor names and
   shapes as the v0.1.1 export, and identical `lora_A` copies within each fused
   group.
-- Two-update smoke runs on the later commits completed training, sampler
-  publication and checkpoint saves on the new image. The same recipe on the existing v0.1.1 image completed a smoke run on the final runtime code, with its legacy patches installed.
+- The same recipe on the existing v0.1.1 image completed a smoke run on the final
+  runtime code, with its legacy patches installed.
 
 CPU checks passed: 1,324 tests, 8 skipped, and all pre-commit checks.
+
+The run kept the frontend, trainer and samplers in `us-east`
+(`platform.modal.region`). An earlier run with the trainer region unpinned saw
+request uploads from the frontend to the trainer stall for 20 to 50 seconds on 7
+of 20 updates; that path does not depend on the Miles version.
 
 Multi-node trainers, raw and BSHD recipes, routing replay, other models and
 other GPU topologies are unverified on the new image. Checkpoint identity
