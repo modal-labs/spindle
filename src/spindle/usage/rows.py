@@ -6,7 +6,7 @@ import math
 import os
 import uuid
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -49,6 +49,14 @@ COUNTERS = (
     "cold_start_seconds",
 )
 _FIELDS = {item.name for item in fields(UsageRow)}
+
+
+@dataclass(frozen=True)
+class SessionUsage:
+    """The user of the API key that created a session, and its allowlisted labels."""
+
+    user_id: str | None = None
+    labels: Mapping[str, str] = field(default_factory=dict)
 
 
 def labels_from(

@@ -8,6 +8,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - Token usage per session on shared trainers and samplers, stored on a `<frontend>-usage` Modal Volume and readable with Tinker's `get_billing_usage`. Label runs with `user_metadata`; `SPINDLE_USAGE_LABEL_KEYS` in the frontend's API secret lists the keys kept (default `run_id,team_id`). See [Cost attribution](docs/cost-attribution.md).
 - `spindle usage` splits Modal app cost across runs or labels by tokens processed, reading costs from Modal's billing report. Trainer idle and cold-start time aren't charged to a run but still cost you, so they're shown as their own lines; `--hide-overhead` hides them. If Modal's billing report doesn't cover the whole window yet, only the hours it covers are split.
+- Per-user API keys: `SPINDLE_USER_API_KEYS` maps API keys to user names, and sessions created with one are billed to that user. Group by it with `spindle usage --group-by user`. A user key can train and sample in its own sessions and read its own usage, but not manage deployments or delete checkpoints.
 - GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
 
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.

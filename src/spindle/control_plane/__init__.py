@@ -1,4 +1,4 @@
-from .http import create_control_plane_app
+from .http import create_control_plane_app, parse_user_keys
 from .service import (
     ControlPlane,
     FutureResolution,
@@ -14,6 +14,7 @@ __all__ = [
     "FutureResolutionStatus",
     "ModelCreation",
     "create_control_plane_app",
+    "parse_user_keys",
     "parse_request_id",
     "request_id_for",
 ]

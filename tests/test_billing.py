@@ -47,7 +47,11 @@ def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
         ("session-b", "sampling_prefill", True): 50_000_000,
         ("session-b", "sampling_sample", None): 20_000_000,
     }
-    assert usage.sessions["session-a"].user_metadata == SESSIONS["session-a"]
+    assert usage.sessions["session-a"].user_metadata == SESSIONS["session-a"].labels
+    assert {(event.session_id, event.user_id) for event in usage.data} == {
+        ("session-a", "alice"),
+        ("session-b", "bob"),
+    }
     order = [(e.bucket_start, -e.event_info.token_count) for e in usage.data]
     assert order == sorted(order)
 

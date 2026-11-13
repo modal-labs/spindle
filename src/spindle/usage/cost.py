@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
-from .rows import UsageRow
+from .rows import SessionUsage, UsageRow
 
 SUMMARY_LINES = ("idle", "cold_start", "unattributed", "total")
 
@@ -14,7 +14,7 @@ def attribute_cost(
     rows: Iterable[UsageRow],
     app_costs: Mapping[str, float],
     *,
-    sessions: Mapping[str, Mapping[str, str]],
+    sessions: Mapping[str, SessionUsage],
     group_by: str = "run_id",
 ) -> dict[str, float]:
     """Split each app's cost across groups by the tokens its GPUs processed.
@@ -31,7 +31,10 @@ def attribute_cost(
     def group(session_id: str | None) -> str:
         if session_id is None:
             return "unknown"
-        name = (sessions.get(session_id) or {}).get(group_by, "unknown")
+        session = sessions.get(session_id, SessionUsage())
+        name = (
+            session.user_id if group_by == "user" else session.labels.get(group_by)
+        ) or "unknown"
         return f"{name} ({group_by})" if name in SUMMARY_LINES else name
 
     costs: dict[str, float] = defaultdict(float)

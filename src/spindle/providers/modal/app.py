@@ -13,7 +13,11 @@ import modal
 from huggingface_hub import snapshot_download
 from stitch.pools.modal_flash import ModalFlashPool
 
-from spindle.control_plane import ControlPlane, create_control_plane_app
+from spindle.control_plane import (
+    ControlPlane,
+    create_control_plane_app,
+    parse_user_keys,
+)
 from spindle.control_plane.usage import SessionUsageWriter
 from spindle.control_plane.deployments import DeploymentRoutes, RegistryUnavailable
 from spindle.control_plane.keys import model_key, placement_key, trainer_demand_key
@@ -805,6 +809,9 @@ def server():
         _plane(),
         DEPLOYMENTS,
         api_key=os.environ["TINKER_API_KEY"],
+        user_keys=parse_user_keys(
+            os.environ.get("SPINDLE_USER_API_KEYS", "{}"), os.environ["TINKER_API_KEY"]
+        ),
         checkpoint_volume=CHECKPOINT_VOLUME_NAME,
         apps_status=_apps_status,
         deploy_apps=_start_app_deploy,
@@ -820,13 +827,16 @@ def server():
     volumes={USAGE_ROOT: usage_volume(APP_NAME)},
 )
 def usage_rows(starting_on: str, ending_before: str) -> dict:
-    """The window's usage rows and each session's labels, for `spindle usage`."""
+    """The window's usage rows, each session's labels and user, for `spindle usage`."""
     sink = usage_sink(APP_NAME)
     start, end = usage_window(starting_on, ending_before)
     rows = sink.read(start.timestamp(), end.timestamp())
+    sessions = sink.sessions({row.session_id for row in rows if row.session_id})
     return {
         "rows": [asdict(row) for row in rows],
-        "sessions": sink.sessions({row.session_id for row in rows if row.session_id}),
+        # Labels keep the shape older CLIs read; users are a separate map they ignore.
+        "sessions": {session_id: dict(s.labels) for session_id, s in sessions.items()},
+        "users": {session_id: s.user_id for session_id, s in sessions.items()},
     }
 
 

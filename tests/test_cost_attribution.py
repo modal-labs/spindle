@@ -1,6 +1,6 @@
 import pytest
 
-from spindle.usage import attribute_cost
+from spindle.usage import SessionUsage, attribute_cost
 from tests.test_usage import HOUR, SAMPLER, SESSIONS, TRAINER, row, shared_pool_rows
 
 APP_COSTS = {TRAINER: 10.0, SAMPLER: 4.0}
@@ -34,7 +34,7 @@ def test_shared_pool_cost_splits_by_tokens_and_sums_to_the_bill(
 
 
 def test_same_work_costs_the_same_across_the_window() -> None:
-    sessions = {f"s{name}": {"run_id": name} for name in "ABC"}
+    sessions = {f"s{name}": SessionUsage(labels={"run_id": name}) for name in "ABC"}
     rows = [
         row(TRAINER, session_id="sA", train_tokens=1_000_000),
         row(TRAINER, session_id="sB", train_tokens=1_000_000),
@@ -70,7 +70,9 @@ def test_a_label_named_like_a_summary_line_stays_its_own_group() -> None:
     rows.append(row(TRAINER, busy_seconds=10))
 
     costs = attribute_cost(
-        rows, {TRAINER: 2.0}, sessions={"session-a": {"run_id": "idle"}}
+        rows,
+        {TRAINER: 2.0},
+        sessions={"session-a": SessionUsage(labels={"run_id": "idle"})},
     )
 
     assert costs == pytest.approx({"idle": 1.0, "idle (run_id)": 1.0})
@@ -88,7 +90,9 @@ def test_cold_start_is_reported_apart_from_the_runs_on_the_trainer() -> None:
     by_team = attribute_cost(
         rows, {TRAINER: 9.0}, sessions=SESSIONS, group_by="team_id"
     )
+    by_user = attribute_cost(rows, {TRAINER: 9.0}, sessions=SESSIONS, group_by="user")
 
     # $3 of start-up is no run's; the $6 of work splits evenly.
     assert costs == pytest.approx({"cold_start": 3.0, "A": 3.0, "B": 3.0})
     assert by_team == pytest.approx({"cold_start": 3.0, "t-1": 3.0, "t-2": 3.0})
+    assert by_user == pytest.approx({"cold_start": 3.0, "alice": 3.0, "bob": 3.0})

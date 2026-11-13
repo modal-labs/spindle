@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .rows import HOUR_S, UsageRow, hour_start
+from .rows import HOUR_S, SessionUsage, UsageRow, hour_start
 from .store import DirectorySink
 
 MAX_QUERY_WINDOW = timedelta(days=14)
@@ -65,11 +65,17 @@ def billing_usage(
     session_ids = dict.fromkeys(
         item["session_id"] for item in data if item["session_id"]
     )
-    labels = sink.sessions(session_ids)
+    sessions = sink.sessions(session_ids)
+    for item in data:
+        user_id = sessions.get(item["session_id"], SessionUsage()).user_id
+        item["user_id"] = item["user_name"] = user_id
     return {
         "data": data,
         "sessions": {
-            session_id: {"user_metadata": labels.get(session_id) or None}
+            session_id: {
+                "user_metadata": dict(sessions.get(session_id, SessionUsage()).labels)
+                or None
+            }
             for session_id in session_ids
         },
     }

@@ -252,6 +252,7 @@ class ControlPlane:
         tags: tuple[str, ...] = (),
         user_metadata: dict[str, str] | None = None,
         sdk_version: str | None = None,
+        user_id: str | None = None,
     ) -> SessionRecord:
         now = self.clock()
         session = SessionRecord(
@@ -260,10 +261,12 @@ class ControlPlane:
             tags=tags,
             user_metadata=user_metadata,
             sdk_version=sdk_version,
+            user_id=user_id,
         )
         await self.kv.put_if_absent(
             session_key(session.session_id),
-            session.model_dump(mode="json"),
+            # Without a user, the record stays readable by versions before user_id.
+            session.model_dump(mode="json", exclude_none=True),
         )
         await self.kv.put(
             session_last_seen_key(session.session_id),
@@ -273,7 +276,7 @@ class ControlPlane:
             ).model_dump(mode="json"),
         )
         if self.usage is not None:
-            self.usage.put_session(session.session_id, user_metadata)
+            self.usage.put_session(session)
         return session
 
     async def heartbeat(self, session_id: str) -> SessionLastSeenRecord:
@@ -1674,8 +1677,7 @@ class ControlPlane:
             "model_creation:",
             "placement:",
         )
-        sessions: list[str] = []
-        user_metadata: dict[str, dict[str, str] | None] = {}
+        records: dict[str, SessionRecord] = {}
         last_seen: dict[str, float] = {}
         closed_sessions: set[str] = set()
         for key, value in session_items:
@@ -1688,8 +1690,7 @@ class ControlPlane:
                 )
             elif key.startswith("session:"):
                 session = SessionRecord.model_validate(value)
-                sessions.append(session.session_id)
-                user_metadata[session.session_id] = session.user_metadata
+                records[session.session_id] = session
 
         models_by_session: dict[str, list[ModelRecord]] = defaultdict(list)
         creations_by_session: dict[str, list[str]] = defaultdict(list)
@@ -1705,7 +1706,7 @@ class ControlPlane:
                 models_by_session[model.session_id].append(model)
 
         closed: list[str] = []
-        for session_id in sessions:
+        for session_id in records:
             if session_id in closed_sessions:
                 continue
             if last_seen.get(session_id, 0.0) > cutoff:
@@ -1733,9 +1734,12 @@ class ControlPlane:
             models = models_by_session[session_id]
             if any(model.model_id in placed for model in models):
                 continue
+            session = records.get(session_id)
             # The session's record is the last copy of its labels.
-            if self.usage is not None and not await asyncio.wrap_future(
-                self.usage.put_session(session_id, user_metadata.get(session_id))
+            if (
+                self.usage is not None
+                and session is not None
+                and not await asyncio.wrap_future(self.usage.put_session(session))
             ):
                 continue
             if self.sampling_task_stores is not None:
@@ -1842,6 +1846,13 @@ class ControlPlane:
             return last_seen
         finally:
             self._session_touches.pop(session_id, None)
+
+    async def session_user(self, session_id: str) -> str | None:
+        """The user whose API key created the session, or None for the deployment's key."""
+        value = await self.kv.get(session_key(session_id))
+        if value is None:
+            raise RecordNotFound("session", session_id)
+        return SessionRecord.model_validate(value).user_id
 
     async def _open_session(self, session_id: str) -> SessionRecord:
         closed, value = await asyncio.gather(

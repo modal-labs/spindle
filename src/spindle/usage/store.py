@@ -18,7 +18,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields, replace
 from datetime import UTC, datetime
@@ -29,6 +29,7 @@ from .rows import (
     DAY_S,
     HOUR_S,
     ROW_NAMESPACE,
+    SessionUsage,
     UsageRow,
     add_counters,
     hour_name,
@@ -82,12 +83,13 @@ class DirectorySink:
                 self._write_file(paths[-1], to_jsonl(hour_rows))
             self._commit_or_remove(paths)
 
-    def put_session(self, session_id: str, labels: Mapping[str, str]) -> None:
-        if not labels:
+    def put_session(self, session_id: str, session: SessionUsage) -> None:
+        if session.user_id is None and not session.labels:
             return
         path = self.root / "sessions" / f"{session_id}.json"
         with self._lock:
-            if self._write_file(path, json.dumps({"labels": dict(labels)})):
+            record = {"user_id": session.user_id, "labels": dict(session.labels)}
+            if self._write_file(path, json.dumps(record)):
                 self._commit_or_remove([path])
 
     def put_model(self, training_model_id: str, session_id: str) -> None:
@@ -112,10 +114,13 @@ class DirectorySink:
             for row in rows
         ]
 
-    def sessions(self, session_ids: Iterable[str]) -> dict[str, dict[str, str]]:
+    def sessions(self, session_ids: Iterable[str]) -> dict[str, SessionUsage]:
         with self._lock:
             records = self._read_records("sessions", session_ids)
-        return {session_id: record["labels"] for session_id, record in records.items()}
+        return {
+            session_id: SessionUsage(record.get("user_id"), record["labels"])
+            for session_id, record in records.items()
+        }
 
     def compact(self, now: float | None = None) -> int:
         """Roll up closed hours and days, and prune old raw files; returns files written."""
