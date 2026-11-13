@@ -2,16 +2,19 @@
 
 Select `trainer_image = "miles-v0.2.0"` to use the new runtime with an existing
 Miles LoRA configuration. The default image and existing model recipes have not
-changed. Stock Tinker SDK checks on four H100 trainer GPUs cover training,
-cold restart with exact optimizer restore, and weights-only restore. The full
-20-update reference workload completed. An initial fresh-slot numerical discrepancy remains
-unexplained.
+changed. The new image supports single-node trainers in `megatron_to_hf_mode`
+bridge; Spindle rejects it with several nodes or raw mode.
 
 The new path uses Miles' typed configuration, trainer initialization request,
 per-slot optimizers, and native adapter-directory checkpoint API. It supports the
 upstream THD configuration path. The older raw-model and BSHD recipes retain
-their existing images; this change does not establish their compatibility with
-v0.2.0. No new models or model-specific recipes are included.
+their existing images. No new models or model-specific recipes are included.
+
+Spindle passes `--lora-type lora` to every Miles image, so v0.2.0 trains the same
+adapter as the existing images: one `lora_A` shared across each fused projection
+(q/k/v, and gate/up). Miles v0.2.0 would otherwise default to `canonical_lora`,
+which gives every projection its own `lora_A`. Sampler exports are standard PEFT
+adapters on both images, with the shared `lora_A` copied into each projection.
 
 ## Runtime identity
 
@@ -66,9 +69,14 @@ LoRA MTP heads itself.
 | --- | --- | --- |
 | `miles_torch_dist` from an existing image | Same Miles revision, model, topology, rank, alpha, and target flags | Existing restore path. |
 | `miles_torch_dist` | v0.2.0 | Rejected. Keep the original image to restore it. |
-| `miles_adapter_state` | Same v0.2.0 fork revision, model, topology, rank, alpha, dropout, exact targets, and target flags | Native restore path; exact trained-state restore checked on Qwen3.5-4B with four H100 GPUs. |
+| `miles_adapter_state` | Same v0.2.0 fork revision, model, topology, rank, alpha, exact targets, and target flags | Native restore path; exact trained-state restore checked on Qwen3.5-4B with four H100 GPUs. |
 | Different revision, model, topology, rank, alpha, or target flags | Any runtime | Rejected before slot loading. |
 | Weights-only checkpoint | Optimizer restore | Rejected. |
+
+Rejecting `miles_torch_dist` on v0.2.0 is Spindle's policy, not a format limit:
+Miles v0.2.0 ships a loader for the older torch_dist slot format. It needs a
+`META.json` that Spindle's saves never wrote, so restoring older checkpoints on
+v0.2.0 would need a tested migration step.
 
 The existing metadata schema remains version 1. `checkpoint_format` distinguishes
 the native `miles_adapter_state` layout from `miles_torch_dist`; no metadata
@@ -76,10 +84,8 @@ schema bump is needed. Miles owns the native tensor and optimizer serialization.
 A weights-only save omits moments through Miles' checkpoint-member interface.
 A weights-only load passes `load_optimizer=False` and resets Spindle's step count.
 
-The new image supports single-node trainers with `megatron_to_hf_mode` bridge
-only; deploying it with several nodes or raw mode is rejected. Captures stay on
-the trainer's local disk, as on the existing images, and persisting a
-checkpoint copies it to the checkpoint volume with one commit.
+Captures stay on the trainer's local disk, as on the existing images, and
+persisting a checkpoint copies it to the checkpoint volume with one commit.
 
 Miles writes each capture to an uncommitted directory. Spindle checks it before
 renaming it into place: a checkpoint must have every shard its DCP metadata
@@ -90,47 +96,29 @@ the trainer remains available.
 
 ## Validation
 
-Spindle `0edd81bf982088864fb0a6179352c366dcb8be8b`, Miles fork `e6c491a`,
-Qwen/Qwen3.5-4B, rank 32, four H100 trainer GPUs (DP 4, TP 1), stock Tinker
-SDK 0.26.0:
+Stock Tinker SDK 0.26.0, Qwen/Qwen3.5-4B, rank-32 LoRA, Miles fork `a94f7ae`,
+four H100 trainer GPUs (DP 4, TP 1) and two single-H100 samplers, using the
+[reference recipe](../reference_runs/dapo_math_config.py) with the new image:
 
-- A trained checkpoint restored in a new trainer container with all 775 tensors
-  bitwise equal, including nonzero Adam moments and optimizer step 2.
-- The next update was accepted and saved optimizer step 3.
-- The full reference run's trained checkpoint also restored in a new container
-  with all 775 tensors bitwise equal, including moments and optimizer step 20.
-- Weights-only restore preserved every weight exactly and reset moments and step
-  to zero.
-- Two interleaved updates on each of two restored slots matched the serial
-  controls bitwise across all 775 tensors per slot.
-- The original cold run differed from its serial control for one slot: 128
-  weights and 258 moment tensors in layers 0–19. The second slot matched.
-  Warm replay did not reproduce the difference. Restoring the same initial state
-  before any backward and comparing two cold versus warm serial updates also
-  matched bitwise after both steps. The original cause remains unresolved;
-  cross-slot contamination was not demonstrated.
+- The [20-update DAPO-Math reference run](../reference_runs/results/dapo-math-qwen35-4b-miles-v020/README.md)
+  on Spindle `619dc8b` accepted every update. Held-out accuracy went from
+  48/256 (18.8%) to 95/256 (37.1%); the Miles v0.1.1 reference went from
+  53/256 (20.7%) to 107/256 (41.8%). One run per image does not establish
+  learning parity. Median trainer backward was 9.6 seconds, against 8.9 on
+  v0.1.1.
+- Its final checkpoint, restored with optimizer state into a new training
+  client and saved again unchanged, matched the original in all 631 tensors
+  bitwise, including all 420 Adam moment tensors (all nonzero) and optimizer
+  step 20.
+- The sampler export loaded in SGLang with 258 bf16 tensors, the same names and
+  shapes as the v0.1.1 export, and identical `lora_A` copies within each fused
+  group.
+- Two-update smoke runs on the later commits completed training, sampler
+  publication and checkpoint saves on the new image. The same recipe on the existing v0.1.1 image completed a smoke run on the final runtime code, with its legacy patches installed.
 
-The [full DAPO-Math reference run](../reference_runs/results/dapo-math-qwen35-4b-miles-v020/README.md)
-completed 20 accepted updates, 21 sampler publications, five held-out evaluations,
-and three checkpoint saves. Held-out accuracy went from 61/256 (23.8%) to 92/256
-(35.9%). Median SDK sampling, backward, and publication times were 48.5, 39.9,
-and 19.9 seconds; median trainer-internal backward was 10.4 seconds. The fresh
-v0.1.1 reference finished at 107/256 (41.8%), with 16.6-second median SDK backward
-and 7.9-second publication. The new path was slower in this pair. Different
-warm-up and autoscaling settings, and only one run per runtime, limit attribution;
-learning and performance parity are not established.
+CPU checks passed: 1,324 tests, 8 skipped, and all pre-commit checks.
 
-An earlier two-update
-smoke run used Spindle `75b3e49` and Miles `949b877`; it completed training,
-sampler publication, generation, and a trained checkpoint save. Those results
-are not a full reference-run comparison or evidence for the current image pin.
-
-CPU checks after rebasing onto the fixed-hardware reference recipe passed:
-1,305 tests, 8 skipped, and all pre-commit checks. Tests cover
-legacy runtime behavior, native API translation, capture ownership, required
-files, missing remote shards, and a synthetic DCP round trip.
-
-Multi-node shard assembly, routing-replay training, other models, and other GPU
-topologies remain unverified on the new image. Exact checkpoint identity includes
-the fork commit, so even a test-only fork commit requires matching revisions at
-save and restore.
+Multi-node trainers, raw and BSHD recipes, routing replay, other models and
+other GPU topologies are unverified on the new image. Checkpoint identity
+includes the fork commit, so any fork bump requires matching revisions at save
+and restore.
