@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from tinker import types
 
@@ -5,7 +7,7 @@ from spindle.usage import DirectorySink, TooMuchUsage, billing, billing_usage
 from tests.test_usage import SESSIONS, TRAINER, row, shared_pool_rows
 
 
-def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
+def test_billing_usage_is_a_valid_tinker_response(tmp_path: Path) -> None:
     sink = DirectorySink(tmp_path)
     rows = shared_pool_rows()
     # Trainers know the training model, not the session; the reader resolves it.
@@ -53,7 +55,7 @@ def test_billing_usage_is_a_valid_tinker_response(tmp_path) -> None:
 
 
 def test_a_window_with_too_many_events_asks_for_a_shorter_one(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sink = DirectorySink(tmp_path)
     sink.write(shared_pool_rows())
@@ -73,7 +75,7 @@ def test_a_window_with_too_many_events_asks_for_a_shorter_one(
     ],
 )
 def test_billing_usage_rejects_windows_tinker_rejects(
-    tmp_path, start, end, message
+    tmp_path: Path, start: str, end: str, message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
         billing_usage(DirectorySink(tmp_path), start, end)

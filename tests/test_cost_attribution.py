@@ -19,7 +19,7 @@ APP_COSTS = {TRAINER: 10.0, SAMPLER: 4.0}
     ],
 )
 def test_shared_pool_cost_splits_by_tokens_and_sums_to_the_bill(
-    idle_s, expected
+    idle_s: float, expected: dict[str, float]
 ) -> None:
     rows = shared_pool_rows()
     if idle_s:
