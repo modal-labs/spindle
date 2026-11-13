@@ -28,12 +28,6 @@ CHECKPOINT_FORMAT = "miles_adapter_state"
 ACTOR_CLASS = "spindle.backends.miles_runtime.actor_v020.SpindleMilesTrainRayActor"
 
 
-def configure_args(args: Namespace) -> None:
-    args.lora_A_init_method = "kaiming"
-    args.use_dynamic_global_batch_size = True
-    args.delay_split_train_data_by_dp = True
-
-
 def configure_actor() -> None:
     original = TrainerSpec.create.__func__
     if getattr(original, "_spindle_actor_spec", False):

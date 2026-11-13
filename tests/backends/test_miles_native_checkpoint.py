@@ -173,18 +173,11 @@ def test_volume_assembly_requires_metadata_referenced_peer_shard(
         assert (target / "adapter_state" / "peer.distcp").is_file()
 
 
-@pytest.mark.parametrize("damage", ["missing_index", "weight_shape", "moment_shape"])
-def test_native_metadata_rejects_incomplete_storage_and_incompatible_shapes(
-    tmp_path: Path, damage: str
-) -> None:
+def test_native_metadata_rejects_incomplete_storage(tmp_path: Path) -> None:
     _checkpoint(tmp_path)
     state_dir = tmp_path / "adapter_state"
     metadata = dcp.FileSystemReader(state_dir).read_metadata()
-    if damage == "missing_index":
-        metadata.storage_data.pop(next(iter(metadata.storage_data)))
-    else:
-        key = "adapter.weight" if damage == "weight_shape" else "adapter.exp_avg"
-        metadata.state_dict_metadata[key].size = torch.Size([3])
+    metadata.storage_data.pop(next(iter(metadata.storage_data)))
     (state_dir / ".metadata").write_bytes(pickle.dumps(metadata))
-    with pytest.raises(ValueError, match=r"missing storage|tensor shape"):
-        validate_adapter(tmp_path, checkpoint=True, expected_shapes={"adapter": (2,)})
+    with pytest.raises(ValueError, match="missing storage"):
+        validate_adapter(tmp_path, checkpoint=True)

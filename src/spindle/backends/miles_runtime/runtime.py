@@ -267,9 +267,7 @@ class MilesRuntime:
             if self.config.model_type
             else []
         )
-        parse_options = (
-            {"preprocess_args": self._v020.configure_args} if self._v020 else {}
-        )
+        parse_options = {"preprocess_args": _configure_args} if self._v020 else {}
         with _temporary_argv([*architecture, *self.config.miles_arguments()]):
             if self.config.cli_options:
 
@@ -285,11 +283,8 @@ class MilesRuntime:
                 args = parse_args(entry="serve", **parse_options)
         self._args = self._v020.replay_args(args) if self._v020 else args
 
-        # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
         if self._v020 is None:
-            args.lora_A_init_method = "kaiming"
-            args.use_dynamic_global_batch_size = True
-            args.delay_split_train_data_by_dp = True
+            _configure_args(args)
         configure_logger(args, source=_main_process_identity())
         startup = timeline(BACKEND_COMPONENT)
         startup.mark("miles_args_parsed")
@@ -484,6 +479,13 @@ def _temporary_argv(arguments: list[str]):
         yield
     finally:
         sys.argv = original
+
+
+def _configure_args(args) -> None:
+    # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
+    args.lora_A_init_method = "kaiming"
+    args.use_dynamic_global_batch_size = True
+    args.delay_split_train_data_by_dp = True
 
 
 def _check_result(result) -> None:

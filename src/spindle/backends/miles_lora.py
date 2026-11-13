@@ -74,6 +74,13 @@ class MilesCommandBackend(Backend):
         self.slot_to_job: dict[int, str] = {}
         # A volume refresh must not race checkpoint writes on the persistence lane.
         self._checkpoint_io_lock = threading.RLock()
+        self._native = self.runtime.checkpoint_format == "miles_adapter_state"
+        # A restore's volume reload must not race native captures that live on the volume.
+        self._capture_lock = (
+            self._checkpoint_io_lock
+            if self._native and capture_dir.is_relative_to(checkpoint_dir)
+            else contextlib.nullcontext()
+        )
         self._checkpoint_captures: dict[str, dict[str, Any]] = {}
         self._sampler_captures: dict[str, dict[str, Any]] = {}
         self._timer = StepPhaseTimer()
@@ -308,7 +315,7 @@ class MilesCommandBackend(Backend):
                 "save_checkpoint", state.optimizer_step, model_id=model_id
             ),
             self._record("spindle/save_checkpoint"),
-            self._checkpoint_io_lock,
+            self._capture_lock,
         ):
             self.runtime.save_slot(
                 self.job_to_slot[model_id],
@@ -317,9 +324,7 @@ class MilesCommandBackend(Backend):
             )
         metadata = {
             "schema_version": 1,
-            "checkpoint_format": getattr(
-                self.runtime, "checkpoint_format", "miles_torch_dist"
-            ),
+            "checkpoint_format": self.runtime.checkpoint_format,
             "backend": "miles",
             "miles_revision": self.runtime.revision,
             "base_model": self.base_model,
@@ -382,10 +387,7 @@ class MilesCommandBackend(Backend):
                     ),
                     self._record("spindle/persist_checkpoint"),
                 ):
-                    if (
-                        getattr(self.runtime, "checkpoint_format", "miles_torch_dist")
-                        == "miles_adapter_state"
-                    ):
+                    if self._native:
                         _install_directory(capture["path"], target, overwrite=overwrite)
                     else:
                         _install_capture(
@@ -449,7 +451,7 @@ class MilesCommandBackend(Backend):
                 "save_sampler_weights", state.optimizer_step, model_id=model_id
             ),
             self._record("spindle/save_sampler_weights"),
-            self._checkpoint_io_lock,
+            self._capture_lock,
         ):
             self.runtime.export_slot_peft(
                 slot=self.job_to_slot[model_id],
@@ -491,12 +493,7 @@ class MilesCommandBackend(Backend):
                     "publish_weights", publish_step, model_id=capture["model_id"]
                 ),
                 self._record("spindle/publish_weights"),
-                (
-                    self._checkpoint_io_lock
-                    if getattr(self.runtime, "checkpoint_format", "miles_torch_dist")
-                    == "miles_adapter_state"
-                    else contextlib.nullcontext()
-                ),
+                self._capture_lock,
             ):
                 bulletin.publish(
                     VersionRef(
@@ -669,9 +666,7 @@ class MilesCommandBackend(Backend):
             raise ValueError("checkpoint was not created by the Miles backend")
         if metadata.get("miles_revision") != self.runtime.revision:
             raise ValueError("checkpoint Miles revision does not match the deployment")
-        if metadata.get("checkpoint_format") != getattr(
-            self.runtime, "checkpoint_format", "miles_torch_dist"
-        ):
+        if metadata.get("checkpoint_format") != self.runtime.checkpoint_format:
             raise ValueError("unsupported Miles checkpoint format")
         if metadata.get("base_model") != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")

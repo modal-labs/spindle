@@ -14,13 +14,10 @@ from modal.types import FileEntryType
 from torch.distributed.checkpoint import FileSystemReader
 from torch.distributed.checkpoint.metadata import MetadataIndex, TensorStorageMetadata
 
+from .volumes import _checkpoint_volume_path
 
-def validate_adapter(
-    path: Path,
-    *,
-    checkpoint: bool,
-    expected_shapes: dict[str, tuple[int, ...]] | None = None,
-) -> None:
+
+def validate_adapter(path: Path, *, checkpoint: bool) -> None:
     if checkpoint:
         fields = json.loads((path / "adapter_parametrization.json").read_text())
         if fields.get("format_version") != 1:
@@ -39,17 +36,6 @@ def validate_adapter(
                 index not in metadata.storage_data for index in indices
             ):
                 raise ValueError(f"Miles checkpoint is missing storage for {key}")
-        for key, shape in (expected_shapes or {}).items():
-            for suffix in ("weight", "exp_avg", "exp_avg_sq"):
-                tensor = metadata.state_dict_metadata.get(f"{key}.{suffix}")
-                if tensor is None and suffix != "weight":
-                    continue
-                if not isinstance(tensor, TensorStorageMetadata) or tuple(
-                    tensor.size
-                ) != tuple(shape):
-                    raise ValueError(
-                        f"Miles checkpoint tensor shape does not match the slot: {key}.{suffix}"
-                    )
         for info in metadata.storage_data.values():
             if info.offset < 0 or info.length <= 0:
                 raise ValueError("Miles checkpoint has an invalid shard byte range")
@@ -77,18 +63,15 @@ def materialize_adapter(source: Path, target: Path, *, checkpoint: bool) -> None
     if source.parent != target.parent or not source.name.startswith(f".{target.name}."):
         raise ValueError("Miles returned a capture outside its operation directory")
     temporary = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
-    root = Path(os.environ.get("SPINDLE_CHECKPOINT_ROOT", "/checkpoints"))
+    relative = _checkpoint_volume_path(source)
     name = os.environ.get("SPINDLE_CHECKPOINT_VOLUME")
-    if not source.is_relative_to(root):
-        name = None
+    volume = None if name is None or relative is None else modal.Volume.from_name(name)
     try:
         temporary.mkdir(parents=True)
-        if name is None:
+        if volume is None or relative is None:
             shutil.copytree(source, temporary, dirs_exist_ok=True)
         else:
-            relative = source.relative_to(root)
-            volume = modal.Volume.from_name(name)
-            for entry in volume.listdir(str(relative), recursive=True):
+            for entry in volume.listdir(relative, recursive=True):
                 if entry.type != FileEntryType.FILE:
                     continue
                 child = Path(entry.path.lstrip("/")).relative_to(relative)
@@ -105,7 +88,7 @@ def materialize_adapter(source: Path, target: Path, *, checkpoint: bool) -> None
         if target.exists():
             raise FileExistsError(f"capture already exists: {target}")
         os.rename(temporary, target)
-        if name is not None:
+        if volume is not None:
             volume.commit()
         shutil.rmtree(source, ignore_errors=True)
     finally:

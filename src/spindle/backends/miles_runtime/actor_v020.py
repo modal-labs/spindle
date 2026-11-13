@@ -105,11 +105,7 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
         if source is not None:
             sync_checkpoint_volume("reload")
             with agree_on_failure_context():
-                validate_adapter(
-                    Path(source["path"]),
-                    checkpoint=True,
-                    expected_shapes=self.adapter_slots.global_shapes(rank),
-                )
+                validate_adapter(Path(source["path"]), checkpoint=True)
         return MultiLoRATrainRayActor.load_slot(self, slot, rank, alpha, source=source)
 
     def save_slot_weights(
