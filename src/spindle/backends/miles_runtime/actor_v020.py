@@ -14,6 +14,9 @@ from dataclasses import replace
 from functools import wraps
 from pathlib import Path
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import model as qwen3_vl_model
+from miles.backends.megatron_utils import model as megatron_model
+from miles.backends.megatron_utils.lora import model as lora_model
 from miles.backends.megatron_utils.lora.actor import MultiLoRATrainRayActor
 from miles.backends.megatron_utils.lora.checkpoint import LayerWiseSlotMembers
 from miles.backends.training_utils.checkpoint.adapter.adapter_dir import (
@@ -22,14 +25,23 @@ from miles.backends.training_utils.checkpoint.adapter.adapter_dir import (
 from miles.backends.training_utils.checkpoint.adapter.adapter_state import (
     agree_on_failure_context,
 )
-from miles.backends.training_utils.loss.hub import tinker_losses
+from miles.backends.training_utils.loss.hub import (
+    logit_processors,
+    math_utils,
+    tinker_losses,
+)
+from miles.backends.training_utils.replay.data import fill_replay_data
+from miles.ray.rollout import train_data_conversion
+from miles.utils.replay_base import routing_replay_manager
+from miles_plugins.models import qwen3_vl as miles_qwen3_vl
 
 from spindle.backends.score_centering import REPLAY_LOSSES
 
-from .actor import (
-    SpindleMilesTrainRayActor as LegacyActor,
-    _mark_actor_initialized,
-    _use_distributed_timeout_for_gloo,
+from .actor_shared import (
+    ProfiledActor,
+    install_replay_patches,
+    mark_actor_initialized,
+    use_distributed_timeout_for_gloo,
 )
 from .native_checkpoint import validate_adapter
 from .volumes import commit_if_on_checkpoint_volume, sync_checkpoint_volume
@@ -41,26 +53,7 @@ class WeightsOnlyMembers(LayerWiseSlotMembers):
         return replace(state, exp_avgs=[], exp_avg_sqs=[], has_optimizer_state=False)
 
 
-class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
-    torch_profile_start = LegacyActor.torch_profile_start
-    torch_profile_stop = LegacyActor.torch_profile_stop
-
-    def forward_backward(self, *args: object, **kwargs: object) -> dict[str, object]:
-        return self._profiled("forward_backward", *args, **kwargs)
-
-    def forward_only(self, *args: object, **kwargs: object) -> dict[str, object]:
-        return self._profiled("forward_only", *args, **kwargs)
-
-    def optim_step(
-        self, *args: object, **kwargs: object
-    ) -> dict[int, dict[str, float]]:
-        return self._profiled("optim_step", *args, **kwargs)
-
-    def _profiled(self, operation: str, *args: object, **kwargs: object) -> object:
-        result = getattr(super(), operation)(*args, **kwargs)
-        LegacyActor._log_peak_memory(operation)
-        return result
-
+class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
     def save_slot(
         self,
         slot: int,
@@ -90,9 +83,9 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
         return result
 
     def init(self, args: TrainerConfig, role: str, **kwargs: object) -> int | None:
-        _use_distributed_timeout_for_gloo(args.backend.distributed_timeout_minutes)
+        use_distributed_timeout_for_gloo(args.backend.distributed_timeout_minutes)
         result = MultiLoRATrainRayActor.init(self, args, role, **kwargs)
-        _mark_actor_initialized()
+        mark_actor_initialized()
         return result
 
     def load_slot(
@@ -133,6 +126,18 @@ def _with_vocabulary(function: Callable[..., object]) -> Callable[..., object]:
     return call
 
 
+install_replay_patches(
+    megatron_model=megatron_model,
+    lora_model=lora_model,
+    logit_processors=logit_processors,
+    tinker_losses=tinker_losses,
+    math_utils=math_utils,
+    fill_replay_data=fill_replay_data,
+    routing_replay_manager=routing_replay_manager,
+    train_data_conversion=train_data_conversion,
+    qwen3_vl_model=qwen3_vl_model,
+    miles_qwen3_vl=miles_qwen3_vl,
+)
 tinker_losses._target_logprobs = _with_vocabulary(tinker_losses._target_logprobs)
 for _loss in REPLAY_LOSSES:
     tinker_losses.TINKER_LOSS_FUNCTIONS[_loss] = _with_vocabulary(

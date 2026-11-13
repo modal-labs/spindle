@@ -25,7 +25,6 @@ image = (
             "PYTHONPATH": "/root/Megatron-LM:$PYTHONPATH",
             "CUDA_DEVICE_MAX_CONNECTIONS": "1",
             "SPINDLE_MILES_API": "0.2",
-            "SPINDLE_HOST_SYNC_PATCHES": "0",
         }
     )
     .pip_install(*CORE_PACKAGES, STITCH_PACKAGE, *MEGATRON_RUNTIME_PACKAGES)

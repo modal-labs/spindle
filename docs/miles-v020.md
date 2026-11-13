@@ -51,11 +51,14 @@ The comparison uses the pinned fork commits, not branch heads:
 | GLM provider installer and model-specific dependency requirements | Existing GLM image remains unchanged. |
 | Bridge grouped-import cache patch and extra DSA kernels | Existing images retain them. The new image uses bundled dependencies; GLM/DSA behavior is unverified. |
 
-Spindle's replay and score-centering hooks remain in use. The wrapper accepts the
-new adapter-slot argument and supplies vocabulary size from the typed trainer
-backend. Upstream now disables LoRA MTP heads itself. Legacy expert checkpoint
-repair is bypassed: the new actor uses native checkpoint members. Optional host
-synchronization patches are disabled for the new dependency versions.
+The new actor installs only Spindle's replay, score-centering, distribution
+sharding and Qwen3-VL context-parallel position patches, through
+`actor_shared.install_replay_patches`. It does not import the legacy actor, so
+the host synchronization patches, BSHD context-parallel LoRA batching,
+cross-node `write_checkpoint_dir` publishing and expert checkpoint repair stay
+on the existing images. The wrapper accepts the new adapter-slot argument and
+supplies vocabulary size from the typed trainer backend. Upstream now disables
+LoRA MTP heads itself.
 
 ## Checkpoint compatibility
 
