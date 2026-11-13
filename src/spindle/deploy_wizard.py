@@ -204,7 +204,7 @@ def check_setup(console: Console, environment: str | None) -> None:
         for secret in REQUIRED_SECRETS:
             name = names[secret.platform_key]  # ty: ignore[invalid-argument-type]
             label = f"{name} · {', '.join(secret.keys)}"
-            problem = secret_problem(name, secret.keys, environment)  # ty: ignore[invalid-argument-type]
+            problem = secret_problem(name, secret.keys, environment)
             if problem is None:
                 table.add_row("[green]✓[/green]", label, secret.purpose)
             else:

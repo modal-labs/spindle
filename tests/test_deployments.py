@@ -19,7 +19,7 @@ from spindle.backends.miles_arguments import (
     defer_config_overrides,
 )
 from spindle.configs.qwen35_9b_lora_16k import Config as Parent
-from spindle.configuration import BaseConfig
+from spindle.configuration import BaseConfig, _modal_platform
 from spindle.control_plane import ControlPlane, create_control_plane_app
 from spindle.control_plane.deployments import (
     DeploymentConflict,
@@ -1274,3 +1274,15 @@ async def test_a_config_another_frontend_container_just_added_shows_at_once(read
     await writer.add(other)
     async with client_for(reader) as client:
         assert await read(client) & {other.name, other.model}
+
+
+@pytest.mark.parametrize("value", [None, "1"])
+def test_exclude_reserved_capacity_env_default(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("SPINDLE_EXCLUDE_RESERVED_CAPACITY", raising=False)
+    else:
+        monkeypatch.setenv("SPINDLE_EXCLUDE_RESERVED_CAPACITY", value)
+    expected = {"environment": None, "region": None}
+    if value:
+        expected["exclude_reserved_capacity"] = True
+    assert _modal_platform() == expected
