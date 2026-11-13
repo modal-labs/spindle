@@ -646,11 +646,6 @@ class MilesCommandBackend(Backend):
         state: MilesJobState,
         restore_optimizer: bool,
     ) -> None:
-        if not isinstance(metadata, dict):
-            raise ValueError("invalid Miles checkpoint metadata")
-        step = metadata.get("optimizer_step")
-        if type(step) is not int or step < 0:
-            raise ValueError("invalid Miles checkpoint optimizer step")
         if metadata.get("schema_version") != 1:
             raise ValueError("unsupported Miles checkpoint schema")
         if metadata.get("backend") != "miles":

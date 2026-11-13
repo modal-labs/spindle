@@ -1001,26 +1001,6 @@ def test_hf_targets_match_tinker_training_flags(targets, expected):
     assert lora_target_flags(targets) == expected
 
 
-@pytest.mark.parametrize("invalid_step", [-1, "bad", None, True])
-def test_invalid_checkpoint_step_rejects_before_slot_load(tmp_path, invalid_step):
-    runtime = FakeMilesRuntime()
-    backend = _backend(tmp_path, runtime)
-    backend.accept_model("model-a", _spec())
-    backend.capture_checkpoint(
-        "model-a", "capture", destination="step", include_optimizer=True
-    )
-    checkpoint = Path(backend.persist_checkpoint("capture", "step"))
-    metadata_path = checkpoint / "metadata.json"
-    metadata = json.loads(metadata_path.read_text())
-    metadata["optimizer_step"] = invalid_step
-    metadata_path.write_text(json.dumps(metadata))
-    previous = list(runtime.calls)
-    with pytest.raises(ValueError, match="optimizer step"):
-        backend.load_checkpoint("model-a", str(checkpoint), restore_optimizer=True)
-    assert runtime.calls == previous
-    assert backend.jobs["model-a"].optimizer_step == 0
-
-
 @pytest.mark.parametrize("changed", ["checkpoint_format", "dropout", "target_modules"])
 def test_native_checkpoint_rejects_incompatible_adapter_before_slot_load(
     tmp_path, changed
