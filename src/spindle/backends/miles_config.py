@@ -99,6 +99,8 @@ class MilesBackendConfig(BaseModel):
     max_lora_rank: PositiveInteger = 32
     default_lora_alpha: float = Field(default=32.0, gt=0)
     lora_dropout: float = Field(default=0.0, ge=0, lt=1)
+    # Miles v0.2.0 changed the default to canonical_lora; pass it so every image trains the same layout.
+    lora_type: Literal["lora", "canonical_lora"] = "lora"
     target_modules: Annotated[tuple[NonEmptyString, ...], Field(min_length=1)] = (
         "linear_qkv",
         "linear_proj",
@@ -200,6 +202,8 @@ class MilesBackendConfig(BaseModel):
             str(int(self.default_lora_alpha)),
             "--lora-dropout",
             str(self.lora_dropout),
+            "--lora-type",
+            self.lora_type,
             "--target-modules",
             ",".join(self.target_modules),
             "--no-gradient-accumulation-fusion",

@@ -220,6 +220,16 @@ def test_config_points_reference_load_at_the_hf_checkpoint() -> None:
     )
 
 
+@pytest.mark.parametrize("lora_type", [None, "lora", "canonical_lora"])
+def test_config_always_names_the_lora_layout(lora_type: str | None) -> None:
+    config = _config() if lora_type is None else _config(lora_type=lora_type)
+
+    arguments = config.miles_arguments()
+    assert arguments[arguments.index("--lora-type") + 1] == (lora_type or "lora")
+    with pytest.raises(ValueError, match="lora_type"):
+        _config(lora_type="fused")
+
+
 def test_config_exports_lora_through_the_raw_converter() -> None:
     config = _config(megatron_to_hf_mode="raw")
 
