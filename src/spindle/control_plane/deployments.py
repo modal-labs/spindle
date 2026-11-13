@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -25,6 +26,9 @@ REGISTRY_CLAIM_PREFIX = "registry_claim:"
 CLAIM_TIMEOUT_S = 60.0
 # How long a container serves its list between registry version checks.
 VERSION_CHECK_S = 1.0
+# A container with no list yet retries its first read: many containers starting
+# together can exceed the storage list rate limit for a few seconds.
+FIRST_READ_RETRY_S = (1.0, 2.0, 4.0, 8.0)
 MAX_APP_NAME_LENGTH = 63
 FRONTEND_FIELDS = ("session_idle_timeout_s", "pool_idle_timeout_s", "sweep_interval_s")
 # Every recipe deploys a trainer and a base-model sampler, and both routes accept any listed name.
@@ -150,15 +154,7 @@ class DeploymentRoutes:
             if time.monotonic() - self._checked_at < VERSION_CHECK_S:
                 return self._definitions
         try:
-            if check:
-                version = await self._registry_version()
-            else:
-                version = await asyncio.shield(
-                    self._shared("version", self._registry_version)
-                )
-            self._checked_at = time.monotonic()
-            if not self._loaded or version != self._version:
-                await self._reload(version)
+            await self._refresh(check)
         except Exception as exc:
             self._checked_at = time.monotonic()
             if check or not self._loaded:
@@ -168,6 +164,32 @@ class DeploymentRoutes:
                 "Registry read failed (%s); serving the last recipe list", exc
             )
         return self._definitions
+
+    async def _refresh(self, check: bool) -> None:
+        if not self._loaded:
+            # One retry loop per container, however many requests wait on it.
+            await asyncio.shield(self._shared("first_read", self._first_read))
+            return
+        if check:
+            version = await self._registry_version()
+        else:
+            version = await asyncio.shield(
+                self._shared("version", self._registry_version)
+            )
+        self._checked_at = time.monotonic()
+        if version != self._version:
+            await self._reload(version)
+
+    async def _first_read(self) -> None:
+        for delay in (*FIRST_READ_RETRY_S, None):
+            try:
+                await self._reload(await self._registry_version())
+                self._checked_at = time.monotonic()
+                return
+            except Exception:
+                if delay is None:
+                    raise
+                await asyncio.sleep(delay * random.uniform(0.5, 1.5))
 
     async def _reload(self, version: object = None) -> None:
         await asyncio.shield(self._shared("read", self._read_registry))
