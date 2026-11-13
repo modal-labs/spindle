@@ -114,8 +114,8 @@ class UsageMeter:
         )
 
 
-class TrainerUsage:
-    """A trainer's usage. None of these raise, so usage can't stop training."""
+class ContainerUsage:
+    """A trainer's or sampler pool's usage. None of these raise, so usage can't stop work."""
 
     def __init__(
         self,
@@ -147,6 +147,30 @@ class TrainerUsage:
 
     def _add(self, **values) -> None:
         self.meter.add(app_name=self.app_name, model_id=self.base_model, **values)
+
+
+def poll_busy(
+    usage: ContainerUsage,
+    busy: Callable[[], bool],
+    interval: float = 1.0,
+) -> threading.Event:
+    """Record each interval as busy or idle until the returned event is set."""
+    stop = threading.Event()
+
+    def loop() -> None:
+        last = time.monotonic()
+        while not stop.wait(interval):
+            try:
+                working = busy()
+            except Exception:  # noqa: BLE001 - an unknown interval is left out
+                working = None
+            now = time.monotonic()
+            if working is not None:
+                (usage.busy if working else usage.idle)(now - last)
+            last = now
+
+    threading.Thread(target=loop, name="usage-busy-poll", daemon=True).start()
+    return stop
 
 
 def meter_sample(

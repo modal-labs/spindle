@@ -7,7 +7,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 ### Added
 
 - Token usage per session on shared trainers and samplers, stored on a `<frontend>-usage` Modal Volume and readable with Tinker's `get_billing_usage`. Label runs with `user_metadata`; `SPINDLE_USAGE_LABEL_KEYS` in the frontend's API secret lists the keys kept (default `run_id,team_id`). See [Cost attribution](docs/cost-attribution.md).
-- `spindle usage` splits Modal app cost across runs or labels by tokens processed, reading costs from Modal's billing report. Trainer idle and cold-start time aren't charged to a run but still cost you, so they're shown as their own lines; `--hide-overhead` hides them. If Modal's billing report doesn't cover the whole window yet, only the hours it covers are split.
+- `spindle usage` splits Modal app cost across runs or labels by tokens processed, reading costs from Modal's billing report. Idle and cold-start time of trainers and sampler pools isn't charged to a run but still costs you, so it's shown as separate lines; `--hide-overhead` hides them. If Modal's billing report doesn't cover the whole window yet, only the hours it covers are split.
 - `reference_runs/`: a DAPO-Math GRPO workload on the stock Tinker SDK that records learning and timing metrics, with recorded results and a chart script for comparing deployments. Its deployment recipe fixes four H100 trainer GPUs and two single-H100 sampler replicas, and the client records that hardware contract.
 - GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
 

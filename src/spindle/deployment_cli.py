@@ -129,6 +129,14 @@ def deploy(configs, *, refresh_trainers=(), refresh_inference=(), run_steps=None
     if unknown:
         raise ValueError(f"unknown configs to refresh: {sorted(unknown)}")
     validate_frontend([deployment.recipe for deployment in configs])
+    for deployment in configs:
+        if deployment.inference_settings.get("enable_metrics") is False:
+            print(
+                f"Warning: {deployment.name} turns off SGLang metrics, so its "
+                "sampler pools don't record idle time and their whole cost is "
+                "split by tokens.",
+                file=sys.stderr,
+            )
     platform = configs[0].recipe.platform
     environment = platform["modal"]["environment"]
     served = deployed_configs(platform["frontend"], environment)

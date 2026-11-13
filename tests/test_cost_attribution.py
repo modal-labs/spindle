@@ -76,19 +76,24 @@ def test_a_label_named_like_a_summary_line_stays_its_own_group() -> None:
     assert costs == pytest.approx({"idle": 1.0, "idle (run_id)": 1.0})
 
 
-def test_cold_start_is_reported_apart_from_the_runs_on_the_trainer() -> None:
+@pytest.mark.parametrize(
+    ("app", "tokens"), [(TRAINER, "train_tokens"), (SAMPLER, "completion_tokens")]
+)
+def test_idle_and_cold_start_are_reported_apart_from_the_runs(
+    app: str, tokens: str
+) -> None:
     rows = [
-        row(TRAINER, cold_start_seconds=300),
-        row(TRAINER, busy_seconds=600),
-        row(TRAINER, session_id="session-a", train_tokens=1_000_000),
-        row(TRAINER, session_id="session-b", train_tokens=1_000_000),
+        row(app, cold_start_seconds=300),
+        row(app, idle_seconds=300),
+        row(app, busy_seconds=300),
+        row(app, session_id="session-a", **{tokens: 1_000_000}),
+        row(app, session_id="session-b", **{tokens: 1_000_000}),
     ]
 
-    costs = attribute_cost(rows, {TRAINER: 9.0}, sessions=SESSIONS)
-    by_team = attribute_cost(
-        rows, {TRAINER: 9.0}, sessions=SESSIONS, group_by="team_id"
-    )
+    costs = attribute_cost(rows, {app: 9.0}, sessions=SESSIONS)
+    by_team = attribute_cost(rows, {app: 9.0}, sessions=SESSIONS, group_by="team_id")
 
-    # $3 of start-up is no run's; the $6 of work splits evenly.
-    assert costs == pytest.approx({"cold_start": 3.0, "A": 3.0, "B": 3.0})
-    assert by_team == pytest.approx({"cold_start": 3.0, "t-1": 3.0, "t-2": 3.0})
+    # $3 of start-up and $3 of idle are no run's; the $3 of work splits evenly.
+    overhead = {"cold_start": 3.0, "idle": 3.0}
+    assert costs == pytest.approx({**overhead, "A": 1.5, "B": 1.5})
+    assert by_team == pytest.approx({**overhead, "t-1": 1.5, "t-2": 1.5})

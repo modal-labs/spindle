@@ -1,6 +1,6 @@
 from .billing import TooMuchUsage, billing_usage, usage_window
 from .cost import attribute_cost
-from .meter import TrainerUsage, UsageMeter, meter_sample
+from .meter import ContainerUsage, UsageMeter, meter_sample, poll_busy
 from .rows import (
     COUNTERS,
     DAY_S,
@@ -17,9 +17,9 @@ __all__ = [
     "DAY_S",
     "DEFAULT_LABEL_KEYS",
     "PRUNE_AFTER_S",
+    "ContainerUsage",
     "DirectorySink",
     "TooMuchUsage",
-    "TrainerUsage",
     "UsageMeter",
     "UsageRow",
     "attribute_cost",
@@ -27,6 +27,7 @@ __all__ = [
     "label_keys_from_env",
     "labels_from",
     "meter_sample",
+    "poll_busy",
     "row_from",
     "usage_window",
 ]
