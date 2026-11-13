@@ -99,7 +99,7 @@ the trainer remains available.
 Stock Tinker SDK 0.26.0, Qwen/Qwen3.5-4B, rank-32 LoRA, Spindle `016debf`, Miles
 fork `a94f7ae`, four H100 trainer GPUs (DP 4, TP 1):
 
-- The [20-update DAPO-Math reference run](../reference_runs/results/dapo-math-qwen35-4b-miles-v020/README.md)
+- The [20-update DAPO-Math reference run](../reference_runs/results/dapo-math-qwen35-4b-miles-v020/)
   accepted every update. Held-out accuracy went from 51/256 (19.9%) to 103/256
   (40.2%); the [Miles v0.1.1 reference](../reference_runs/results/dapo-math-qwen35-4b/README.md)
   went from 53/256 (20.7%) to 107/256 (41.8%). One run per image does not
