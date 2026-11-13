@@ -16,7 +16,6 @@ workflows:
     '.github/workflows/tests.yml':
         - 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262'
         - 'actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065'
-        - 'dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec'
     '.github/workflows/verify-actions-lock.yml':
         - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
 dependencies:
@@ -40,8 +39,3 @@ dependencies:
         commit: 'sha1-b5d41d4e1d5dceea10e7104786b73624c18a190f'
         owner_id: 44036562
         repo_id: 200437066
-    'dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec':
-        ref: 'stable'
-        commit: 'sha1-b725eda525362e7cf34af9a7243cac1e3f01a7ec'
-        owner_id: 1940490
-        repo_id: 260749683
