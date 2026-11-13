@@ -206,6 +206,37 @@ def test_context_parallel_guard_restores_args_and_installs_once(fails):
     assert args.context_parallel_size == 8
 
 
+@pytest.mark.parametrize("estimator", ["ppo", "reinforce_plus_plus"])
+def test_context_parallel_guard_rejects_full_length_advantage_estimators(estimator):
+    """Miles v0.1.1 would silently give ppo/reinforce_plus_plus full-length
+    advantages under CP, so the guard rejects them at startup."""
+    lora_arguments = SimpleNamespace(validate_multi_lora_args=lambda args: None)
+    _allow_context_parallel_multi_lora(lora_arguments)
+    args = SimpleNamespace(context_parallel_size=4, advantage_estimator=estimator)
+    with pytest.raises(ValueError, match=f"--advantage-estimator {estimator}") as err:
+        lora_arguments.validate_multi_lora_args(args)
+    assert "--context-parallel-size 1" in str(err.value)
+
+
+@pytest.mark.parametrize("estimator", ["ppo", "reinforce_plus_plus"])
+def test_context_parallel_guard_permits_both_estimators_without_cp(estimator):
+    lora_arguments = SimpleNamespace(validate_multi_lora_args=lambda args: None)
+    _allow_context_parallel_multi_lora(lora_arguments)
+    args = SimpleNamespace(context_parallel_size=1, advantage_estimator=estimator)
+    lora_arguments.validate_multi_lora_args(args)
+    assert args.context_parallel_size == 1
+
+
+def test_context_parallel_guard_allows_other_estimators():
+    lora_arguments = SimpleNamespace(validate_multi_lora_args=lambda args: None)
+    _allow_context_parallel_multi_lora(lora_arguments)
+    args = SimpleNamespace(
+        context_parallel_size=4, advantage_estimator="reinforce_baseline"
+    )
+    lora_arguments.validate_multi_lora_args(args)
+    assert args.context_parallel_size == 4
+
+
 @pytest.mark.parametrize(
     "allgather_cp, qkv_format, seen",
     [(True, "bshd", [False]), (True, "thd", [True]), (False, "bshd", [False])],

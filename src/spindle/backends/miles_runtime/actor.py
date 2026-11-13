@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from pathlib import Path
 
 import torch
 import torch.distributed as dist
@@ -41,6 +42,7 @@ except ImportError:
 
     from . import tinker_cp
 
+from spindle.patching import patch
 from spindle.startup_timing import timeline
 
 from . import allgather_cp_lora, expert_lora_compat, host_syncs
@@ -103,7 +105,7 @@ def _use_distributed_timeout_for_gloo(minutes: int) -> None:
             )
         return distributed_utils.GLOO_GROUP
 
-    train_actor.init_gloo_group = init_gloo_group
+    patch(train_actor.init_gloo_group, owner=train_actor)(init_gloo_group)
 
 
 def _mark_actor_initialized() -> None:
@@ -115,7 +117,7 @@ def _mark_actor_initialized() -> None:
 class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
     """Upstream multi-LoRA actor with Qwen MTP and weights-only save support."""
 
-    def init(self, args, role, **kwargs):
+    def init(self, args, role, **kwargs):  # ty: ignore[incompatible-method-override] ray actor init takes extra role kwargs
         _use_distributed_timeout_for_gloo(args.distributed_timeout_minutes)
         # Miles's LoRA builder inherits checkpoint MTP heads without honoring
         # enable_mtp_training. Qwen3.5 then injects an auxiliary backward loss
@@ -132,7 +134,7 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
             provider.mtp_hybrid_override_pattern = None
             return provider
 
-        AutoBridge.to_megatron_provider = provider_without_mtp
+        patch(original, owner=AutoBridge)(provider_without_mtp)
         try:
             result = super().init(args, role, **kwargs)
         finally:
@@ -243,6 +245,10 @@ class SpindleMilesTrainRayActor(MultiLoRATrainRayActor):
         weights = checkpoint._slot_weights_sharded_state_dict(self.model, slot)
         sharded = {checkpoint._WEIGHTS_KEY: weights}
         checkpoint._canonicalize_slot_keys(sharded, slot)
-        checkpoint_io.write_checkpoint_dir(
-            path, lambda temporary: dist_checkpointing.save(sharded, str(temporary))
-        )
+
+        def _save(temporary: Path) -> None:
+            # save returns an AsyncRequest for async checkpointing; spindle waits
+            # on the volume commit below, so the request is intentionally unused.
+            dist_checkpointing.save(sharded, str(temporary))
+
+        checkpoint_io.write_checkpoint_dir(path, _save)

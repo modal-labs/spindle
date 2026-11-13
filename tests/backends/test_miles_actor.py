@@ -109,7 +109,8 @@ def _load_actor(monkeypatch):
     _module(monkeypatch, "torch.distributed.constants").default_pg_timeout = timedelta(
         minutes=30
     )
-    _module(monkeypatch, "miles.ray.train_actor")
+    train_actor = _module(monkeypatch, "miles.ray.train_actor")
+    train_actor.init_gloo_group = lambda: None
     _module(monkeypatch, "miles.utils.distributed_utils").GLOO_GROUP = None
     megatron_bridge = _module(monkeypatch, "megatron.bridge")
     megatron_bridge.AutoBridge = type("AutoBridge", (), {})

@@ -11,6 +11,8 @@ from functools import wraps
 
 import torch
 
+from spindle.patching import patch
+
 from .targets import install_multi_target_hooks
 
 _replayed_run = None
@@ -75,7 +77,7 @@ def install_replay_hooks(
             original_mask, logits, sampling_mask, response_indices, tp_rank=tp_rank
         )
 
-    logit_processors.build_local_sampling_mask = local_mask
+    patch(original_mask, owner=logit_processors)(local_mask)
 
     original_batch = megatron_model.get_batch
 
@@ -90,7 +92,7 @@ def install_replay_hooks(
                 keys = [*keys, key]
         return original_batch(iterator, keys, *args, **kwargs)
 
-    megatron_model.get_batch = get_batch
+    patch(original_batch, owner=megatron_model)(get_batch)
     original_target = tinker_losses._target_logprobs
 
     @wraps(original_target)
@@ -136,7 +138,7 @@ def install_replay_hooks(
             rollout_sampling_mask=masks,
         )["log_probs"]
 
-    tinker_losses._target_logprobs = target_logprobs
+    patch(original_target, owner=tinker_losses)(target_logprobs)
     install_multi_target_hooks(tinker_losses, math_utils)
     original_iterator = lora_model.get_data_iterator
 
@@ -158,7 +160,7 @@ def install_replay_hooks(
             )
         return iterators, num_microbatches
 
-    lora_model.get_data_iterator = get_iterator
+    patch(original_iterator, owner=lora_model)(get_iterator)
     original_run = lora_model.run_forward_backward
 
     @wraps(original_run)
@@ -181,4 +183,4 @@ def install_replay_hooks(
             manager.enabled, manager.stage = enabled, stage
 
     _replayed_run = run
-    lora_model.run_forward_backward = run
+    patch(original_run, owner=lora_model)(run)

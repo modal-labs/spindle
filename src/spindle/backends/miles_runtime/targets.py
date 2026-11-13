@@ -10,6 +10,8 @@ from functools import wraps
 import torch
 import torch.distributed as dist
 
+from spindle.patching import patch
+
 
 class CandidateLogProbs(torch.autograd.Function):
     """Log probabilities of K label columns from vocabulary-parallel logits [T, V/TP].
@@ -42,7 +44,7 @@ class CandidateLogProbs(torch.autograd.Function):
         return picked - sum_exp.log()
 
     @staticmethod
-    def backward(ctx, grad):
+    def backward(ctx, grad):  # ty: ignore[incompatible-method-override] autograd backward takes one grad per forward output
         softmax, local, outside = ctx.saved_tensors
         grad_logits = softmax.mul_(-grad.sum(dim=-1, keepdim=True))
         grad_logits.scatter_add_(-1, local, grad.masked_fill(outside, 0.0))
@@ -108,7 +110,7 @@ def install_multi_target_hooks(tinker_losses, math_utils=None) -> None:
             for index, (target, width) in enumerate(zip(targets, widths, strict=True))
         ]
 
-    tinker_losses._target_logprobs = target_logprobs
+    patch(original_target, owner=tinker_losses)(target_logprobs)
     if hasattr(tinker_losses, "_local_response_masks"):
         _install_v012_hooks(tinker_losses)
     else:
@@ -130,7 +132,7 @@ def _install_candidate_log_probs(math_utils) -> None:
             return CandidateLogProbs.apply(logits, tokens, process_group)
         return original(logits, tokens, process_group, **kwargs)
 
-    math_utils.compute_log_probs = compute_log_probs
+    patch(original, owner=math_utils)(compute_log_probs)
 
 
 def _expand_masks(masks, log_probs):
@@ -147,7 +149,7 @@ def _install_v011_hooks(tinker_losses) -> None:
     def response_masks(batch, log_probs):
         return _expand_masks(original_masks(batch, log_probs), log_probs)
 
-    tinker_losses._response_masks = response_masks
+    patch(original_masks, owner=tinker_losses)(response_masks)
 
 
 def _install_v012_hooks(tinker_losses) -> None:
@@ -194,5 +196,5 @@ def _install_v012_hooks(tinker_losses) -> None:
             )
         ]
 
-    tinker_losses._local_response_masks = local_response_masks
-    tinker_losses._gather_per_datum_outputs = gather_per_datum_outputs
+    patch(original_masks, owner=tinker_losses)(local_response_masks)
+    patch(original_outputs, owner=tinker_losses)(gather_per_datum_outputs)

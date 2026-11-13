@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import torch
 
+from spindle.patching import patch
+
 
 class _SlotlessIterator:
     """Hide adapter slots from Miles' get_batch and keep them for the caller."""
@@ -51,4 +53,4 @@ def install(megatron_model) -> None:
         return batch
 
     get_batch.__spindle_allgather_cp_lora__ = True
-    megatron_model.get_batch = get_batch
+    patch(original, owner=megatron_model)(get_batch)

@@ -15,6 +15,8 @@ from miles.backends.training_utils.loss_hub import (
 )
 from miles.backends.training_utils.parallel import get_parallel_state
 
+from spindle.patching import patch
+
 
 def _pad_local_shard(
     tensor,
@@ -122,18 +124,13 @@ def install() -> None:
         return out
 
     get_log_probs_and_entropy.__spindle_gathers_cp__ = True
-    logit_processors.get_log_probs_and_entropy = get_log_probs_and_entropy
-
     # Callers on the multi-LoRA path that bound the name at import time must
     # be re-pointed. Miles' non-Tinker losses handle CP natively.
-    for module in (
-        loss,
-        tinker_losses,
-        megatron_actor,
-        fsdp_actor,
-    ):
-        if module.get_log_probs_and_entropy is original:
-            module.get_log_probs_and_entropy = get_log_probs_and_entropy
+    patch(
+        original,
+        owner=logit_processors,
+        dependents=(loss, tinker_losses, megatron_actor, fsdp_actor),
+    )(get_log_probs_and_entropy)
 
     # get_rollout_data slices rollout_log_probs/teacher_log_probs to the CP
     # shard for the native (non-tinker) losses. The tinker loss path pairs
@@ -144,12 +141,11 @@ def install() -> None:
         return
 
     def slice_log_prob_with_cp(
-        value, total_length, response_length, qkv_format, max_seq_len=None
+        log_prob, total_length, response_length, qkv_format="thd", max_token_len=None
     ):
-        return value
+        return log_prob
 
     slice_log_prob_with_cp.__spindle_unslices_cp__ = True
-    cp_utils.slice_log_prob_with_cp = slice_log_prob_with_cp
-    for module in (data, mm_data, math_utils):
-        if module.slice_log_prob_with_cp is original_slice:
-            module.slice_log_prob_with_cp = slice_log_prob_with_cp
+    patch(original_slice, owner=cp_utils, dependents=(data, mm_data, math_utils))(
+        slice_log_prob_with_cp
+    )

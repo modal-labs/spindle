@@ -54,7 +54,11 @@ def restore_factory_weights(
     targets = {key: factory.data for key, factory in factories.items()}
     shells = {checkpoint._WEIGHTS_KEY: factories}
     checkpoint._canonicalize_slot_keys(shells, slot)
-    loaded = dist_checkpointing.load(shells, str(Path(path)))[checkpoint._WEIGHTS_KEY]
+    result = dist_checkpointing.load(shells, str(Path(path)))
+    # With the default strict mode the pinned Megatron returns a plain mapping;
+    # the tuple arm of its return union only applies to RETURN_ALL.
+    assert isinstance(result, dict)
+    loaded = result[checkpoint._WEIGHTS_KEY]
     max_gap = copy_loaded_into_params(targets, loaded)
     if not load_optimizer:
         slot_optimizer.reload_masters()

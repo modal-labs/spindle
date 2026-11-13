@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from functools import wraps
 
+from spindle.patching import patch
+
 _INSTALLED = "_spindle_cp_position_ids"
 
 
@@ -30,4 +32,4 @@ def install_qwen3_vl_cp_position_ids(*, bridge_model, miles_qwen3_vl) -> None:
         return forward(self, *args, **kwargs)
 
     setattr(forward_with_positions, _INSTALLED, True)
-    model_cls.forward = forward_with_positions
+    patch(forward, owner=model_cls)(forward_with_positions)

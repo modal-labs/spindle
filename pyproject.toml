@@ -323,6 +323,7 @@ not-iterable = "ignore"
 not-subscriptable = "ignore"
 redundant-condition = "ignore"
 unsupported-operator = "ignore"
+unused-ignore-comment = "ignore"
 
 [dependency-groups]
 dev = [

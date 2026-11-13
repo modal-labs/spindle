@@ -35,7 +35,7 @@ def create_model_and_optimizer(config: EngineModelConfig):
         "split_gdn": config.split_gdn,
         "split_mamba": config.split_mamba,
     }
-    provider.register_pre_wrap_hook(MultiLoRA(**multi_lora_kwargs))
+    provider.register_pre_wrap_hook(MultiLoRA(**multi_lora_kwargs))  # ty: ignore[invalid-argument-type] untyped kwargs splat over the bridge constructor
 
     provider.finalize()
     model = distributed_model(provider, config, distributed_optimizer=False)

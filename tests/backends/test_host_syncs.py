@@ -207,14 +207,18 @@ def _fake_layers():
             self.alpha_values[idx] = 0
             self.rank_values[idx] = RANK
 
+        def forward(self, x):
+            raise NotImplementedError
+
     class MultiLoRAGroupedExpertLinear(MultiLoRALinear):
-        pass
+        def forward(self, x):
+            raise NotImplementedError
 
     return SimpleNamespace(
         **vars(_layers()),
         MultiLoRALinear=MultiLoRALinear,
         MultiLoRAGroupedExpertLinear=MultiLoRAGroupedExpertLinear,
-        _make_slot_routing_hook=None,
+        _make_slot_routing_hook=lambda moe_layer, expert_layers: None,
     )
 
 

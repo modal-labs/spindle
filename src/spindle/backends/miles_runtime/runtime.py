@@ -19,6 +19,7 @@ import torch
 
 from spindle.backends.miles_arguments import defer_config_overrides
 from spindle.backends.miles_config import MilesBackendConfig
+from spindle.patching import patch
 from spindle.errors import BackendFailed
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
@@ -487,7 +488,7 @@ def _configure_actor_spec(train_specs) -> None:
         return spec
 
     compute._spindle_actor_spec = True
-    train_specs._compute_spec_trainer = compute
+    patch(original, owner=train_specs)(compute)
 
 
 def _allow_allgather_cp_bshd_multi_lora(lora_arguments) -> None:
@@ -509,7 +510,7 @@ def _allow_allgather_cp_bshd_multi_lora(lora_arguments) -> None:
             args.allgather_cp = allgather_cp
 
     validate.__spindle_allows_allgather_bshd__ = True
-    lora_arguments.validate_multi_lora_args = validate
+    patch(original, owner=lora_arguments)(validate)
 
 
 def _allow_context_parallel_multi_lora(lora_arguments) -> None:
@@ -523,6 +524,17 @@ def _allow_context_parallel_multi_lora(lora_arguments) -> None:
 
     @wraps(original)
     def validate(args) -> None:
+        estimator = getattr(args, "advantage_estimator", None)
+        if args.context_parallel_size > 1 and estimator in (
+            "ppo",
+            "reinforce_plus_plus",
+        ):
+            raise ValueError(
+                "multi-LoRA with context parallelism does not support "
+                f"--advantage-estimator {estimator} on Miles v0.1.1: its math_utils "
+                "slices would silently produce full-length advantages. Set "
+                "--context-parallel-size 1 or change --advantage-estimator."
+            )
         context_parallel_size = args.context_parallel_size
         args.context_parallel_size = 1
         try:
@@ -531,7 +543,7 @@ def _allow_context_parallel_multi_lora(lora_arguments) -> None:
             args.context_parallel_size = context_parallel_size
 
     validate.__spindle_allows_cp__ = True
-    lora_arguments.validate_multi_lora_args = validate
+    patch(original, owner=lora_arguments)(validate)
 
 
 def _materialize_capture(path: str) -> None:
