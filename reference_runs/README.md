@@ -57,6 +57,32 @@ uv run python examples/shared-server/with_proxy_auth.py \
 The output directory must not exist. A run that stops early cannot be continued;
 start a new one.
 
+## Two-node Qwen3.8-27B
+
+[`dapo_math_27b.py`](dapo_math_27b.py) uses the same workload and training loop
+with Qwen3.8-27B and the existing `qwen38-27b-lora-256k` recipe. Deploy it with:
+
+```bash
+uv run spindle deploy src/spindle/configs/qwen38_27b_lora_256k.py --app reference --env dev
+uv run python reference_runs/dapo_math_27b.py --smoke --output reference_runs/runs/27b-smoke
+uv run python reference_runs/dapo_math_27b.py --output reference_runs/runs/27b
+```
+
+This recipe requests two trainer nodes with eight H200 GPUs each (TP2, CP8)
+and two sampler replicas with four GPUs each (TP4), selected from H200, B300
+and B200. Use a dedicated deployment and verify the actual hardware.
+The client records the requested
+hardware, not a measurement of the allocation. The existing proxy-auth wrapper
+works with this entry point too.
+
+Only the model, tokenizer revision, recipe name and hardware record differ from
+the 4B client. The full run still uses 20 updates, rank 32, learning rate 4e-5,
+and a 2,048-token response limit, with thinking disabled. These are validation
+settings, not tuned 27B hyperparameters. Short math prompts do not validate
+256K context support. This client saves checkpoints but does not test restore.
+Compare backend versions on this same workload and hardware; the recorded 4B
+results are not a performance or learning baseline for 27B.
+
 ## Records
 
 `metrics.jsonl` has one JSON object per line, appended as the run goes, so a run
