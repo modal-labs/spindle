@@ -183,7 +183,7 @@ Use `"hook"` with the DeepSeek-V4.1-Flash image.
 
 The two views can differ in these ways:
 
-- The hook selects up to 8,192 recent prefixes and refreshes about once a second. KV events also cap the list at 8,192, favoring recently stored, deeper paths because events do not report cache-hit times.
+- The hook selects up to 8,192 recent prefixes and refreshes about once a second. KV events cap the list at 8,192 and publish at most once every 250 ms while batches arrive. They export leaf-chain endpoints by store recency first, then the deepest boundary at or before root attachments and forks by recency, then other boundaries by store recency. A fork has multiple children or attaches inside a surviving chain. Events do not report cache-hit times.
 - On hybrid Mamba models, the hook counts only prefix boundaries with valid Mamba state. KV events cannot report that state.
 - On hybrid sliding-window pools, KV load reports the greater of full-pool and sliding-window token use; the hook reports full-pool use.
 - With SGLang disaggregation enabled, `/v1/loads` includes its prefill and decode queues in `waiting_requests`; the hook counts only the scheduler's main waiting queue.

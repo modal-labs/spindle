@@ -3,6 +3,7 @@
 import asyncio
 import random
 import struct
+import threading
 from collections import Counter, deque
 from dataclasses import dataclass
 
@@ -12,7 +13,8 @@ import xxhash
 import zmq
 import zmq.asyncio
 
-from spindle.inference.kv_events import KVEventSubscriber
+import spindle.inference.kv_events as kv_events
+from spindle.inference.kv_events import KVCache, KVEventSubscriber
 
 
 TOPIC = b"kv-events"
@@ -245,6 +247,48 @@ def test_short_final_page_then_child_crosses_next_prefix_boundary():
     assert len(model.prefixes()) == 2
 
 
+def test_endpoints_and_branch_points_follow_truncation_and_removal():
+    model = TreeModel()
+    cache = KVCache()
+
+    def check():
+        endpoints = Counter()
+        for chain in cache.chains:
+            if chain is None:
+                continue
+            if chain.keys[chain.count - 1] in cache.children:
+                continue
+            node = model.nodes[chain.keys[chain.count - 1]]
+            length = len(node.tokens) // 64 * 64
+            if length:
+                digest = xxhash.xxh3_128((node.adapter + "\0").encode())
+                for token in node.tokens[:length]:
+                    digest.update(struct.pack("<q", token))
+                endpoints[digest.hexdigest()] += 1
+        assert cache.endpoints == endpoints
+        assert set(cache.prefixes) <= model.prefixes()
+
+    root = model.store(None, "adapter-a", None, [[1] * 64, [2] * 64, [3] * 64])
+    cache.apply(root)
+    check()
+    child = model.store(root["block_hashes"][0], "adapter-a", None, [[4] * 64])
+    cache.apply(child)
+    check()
+    assert len(cache.branch_points) == 1
+    tail = model.remove(root["block_hashes"][2])
+    cache.apply(tail)
+    check()
+    remaining_root = cache.chains[0]
+    assert remaining_root is not None
+    assert remaining_root.endpoint in cache.endpoints
+    cache.apply(model.remove(child["block_hashes"][0]))
+    check()
+    assert not cache.branch_points
+    cache.apply(model.remove(root["block_hashes"][0]))
+    check()
+    assert not cache.endpoints
+
+
 class Publisher:
     def __init__(self, context, buffer_size):
         self.context = context
@@ -259,6 +303,8 @@ class Publisher:
         self.history = deque(maxlen=buffer_size)
         self.sequence = 0
         self.requests = []
+        self.pause_replay = 0.0
+        self.drop_replays = 0
 
     async def serve(self):
         while True:
@@ -266,6 +312,11 @@ class Publisher:
             assert delimiter == b"" and len(start) == 8
             requested = int.from_bytes(start, "big")
             self.requests.append(requested)
+            if self.drop_replays:
+                self.drop_replays -= 1
+                continue
+            if self.pause_replay:
+                await asyncio.sleep(self.pause_replay)
             for sequence, payload in tuple(self.history):
                 if sequence >= requested:
                     await self.router.send_multipart(
@@ -340,6 +391,124 @@ def test_gap_replay_with_duplicates_and_reordered_publications():
         assert set(subscriber.cache.prefixes) == model.prefixes()
 
     asyncio.run(run_scenario(8, scenario))
+
+
+def test_live_gap_replays_from_anchor_without_hiding_snapshot():
+    async def scenario(publisher, subscriber):
+        first = TreeModel().store(None, "adapter-a", None, [[1] * 64])
+        await publisher.emit([first])
+        await until(lambda: subscriber.sequence == 0)
+        original = subscriber.snapshot
+        requests = len(publisher.requests)
+        publisher.pause_replay = 0.15
+        second = dict(first, block_hashes=[2], parent_block_hash=1, token_ids=[2] * 64)
+        third = dict(first, block_hashes=[3], parent_block_hash=2, token_ids=[3] * 64)
+        await publisher.emit([second], live=False)
+        await publisher.emit([third])
+        await until(lambda: len(publisher.requests) > requests)
+        assert publisher.requests[-1] == 0
+        assert subscriber.ready and subscriber.snapshot == original
+        await until(lambda: subscriber.sequence == 2)
+        assert subscriber.ready and len(subscriber.snapshot[2]) == 3
+
+    asyncio.run(run_scenario(8, scenario))
+
+
+def test_last_live_batch_is_published_after_snapshot_interval():
+    async def scenario(publisher, subscriber):
+        model = TreeModel()
+        await publisher.emit([model.store(None, "adapter-a", None, [[1] * 64])])
+        await until(lambda: len(subscriber.snapshot[2]) == 1)
+        await publisher.emit([model.store(None, "adapter-a", None, [[2] * 64])])
+        await until(lambda: subscriber.sequence == 1)
+        await until(lambda: len(subscriber.snapshot[2]) == 2, 0.6)
+
+    asyncio.run(run_scenario(8, scenario))
+
+
+def test_replay_timeouts_do_not_starve_live_socket(monkeypatch):
+    monkeypatch.setattr(kv_events, "REPLAY_STALL_TIMEOUT_SECONDS", 0.05)
+
+    async def scenario():
+        context = zmq.asyncio.Context()
+        publisher = Publisher(context, 8)
+        publisher.drop_replays = 1000
+        subscriber = KVEventSubscriber(publisher.endpoint, publisher.replay_endpoint)
+        tasks = [
+            asyncio.create_task(publisher.serve()),
+            asyncio.create_task(subscriber.run()),
+        ]
+        try:
+            await until(lambda: len(publisher.requests) >= 2)
+            event = TreeModel().store(None, "adapter-a", None, [[1] * 64])
+            await publisher.emit([event])
+            await until(lambda: subscriber.sequence == 0, 0.8)
+            assert not subscriber.ready
+            publisher.drop_replays = 0
+            await until(lambda: subscriber.ready)
+            assert len(subscriber.snapshot[2]) == 1
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            publisher.close()
+            context.destroy(linger=0)
+
+    asyncio.run(scenario())
+
+
+def test_full_rebuild_converges_while_publications_continue():
+    async def scenario():
+        context = zmq.asyncio.Context()
+        publisher = Publisher(context, 4000)
+        publisher.pub.setsockopt(zmq.SNDHWM, 5000)
+        subscriber = KVEventSubscriber(publisher.endpoint, publisher.replay_endpoint)
+        original_apply = subscriber.cache.apply
+        resets = []
+        original_reset = subscriber.reset
+        rebuild_started = threading.Event()
+        release_rebuild = threading.Event()
+        applied = 0
+
+        def pause_apply(event):
+            nonlocal applied
+            applied += 1
+            if applied == 10:
+                rebuild_started.set()
+                assert release_rebuild.wait(10)
+            original_apply(event)
+
+        def reset():
+            resets.append(subscriber.sequence)
+            original_reset()
+
+        subscriber.cache.apply = pause_apply
+        subscriber.reset = reset
+        server = asyncio.create_task(publisher.serve())
+        try:
+            for index in range(200):
+                event = TreeModel().store(None, "adapter-a", None, [[index + 1] * 64])
+                event["block_hashes"] = [index + 1]
+                await publisher.emit([event], live=False)
+            subscriber.start_thread()
+            await until(rebuild_started.is_set)
+            for index in range(200, 3200):
+                event = TreeModel().store(None, "adapter-a", None, [[index + 1] * 64])
+                event["block_hashes"] = [index + 1]
+                await publisher.emit([event], live=index != 2000)
+            release_rebuild.set()
+            await until(lambda: subscriber.ready and subscriber.sequence == 3199, 10)
+            assert not resets
+            assert len(subscriber.snapshot[2]) == 3200
+        finally:
+            release_rebuild.set()
+            await asyncio.to_thread(subscriber.stop_thread)
+            server.cancel()
+            await asyncio.gather(server, return_exceptions=True)
+            publisher.close()
+            context.destroy(linger=0)
+
+    asyncio.run(scenario())
 
 
 def test_random_delivery_gaps_never_add_false_prefixes():

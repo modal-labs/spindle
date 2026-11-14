@@ -16,7 +16,6 @@ import sys
 import threading
 import time
 from array import array
-from itertools import islice
 
 import msgspec
 import xxhash
@@ -27,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 TOPIC = b"kv-events"
 MAX_PREFIXES = 8192
+SUB_RECEIVE_HIGH_WATER_MARK = 20_000  # Twice the publisher's replay buffer.
+SNAPSHOT_INTERVAL_SECONDS = 0.25
 REPLAY_STALL_TIMEOUT_SECONDS = 2.0
 KV_EVENTS_CONFIG = {
     "publisher": "zmq",
@@ -148,6 +149,7 @@ class _Chain:
         "positions",
         "digests",
         "prefixes",
+        "endpoint",
     )
 
     def __init__(self, parent, adapter, length, digest, keys, tokens, size):
@@ -175,6 +177,7 @@ class _Chain:
         self.positions = array("I")
         self.digests = []
         self.prefixes = []
+        self.endpoint = None
 
     def truncate(self, count):
         if count == 0:
@@ -225,10 +228,54 @@ class KVCache:
         self.free_chains: list[int] = []
         self.children: dict[int, set[int]] = {}
         self.prefix_counts: dict[str, int] = {}
+        self.endpoints: dict[str, int] = {}
+        self.branch_points: dict[str, int] = {}
+        self.branch_keys: dict[int, str] = {}
 
     @property
     def prefixes(self):
-        return list(islice(reversed(self.prefix_counts), MAX_PREFIXES))
+        selected = {}
+        for group in (self.endpoints, self.branch_points, self.prefix_counts):
+            for prefix in reversed(group):
+                selected[prefix] = None
+                if len(selected) == MAX_PREFIXES:
+                    return list(selected)
+        return list(selected)
+
+    @staticmethod
+    def _touch(group, prefix):
+        group[prefix] = group.pop(prefix, 0) + 1
+
+    @staticmethod
+    def _untouch(group, prefix):
+        count = group[prefix] - 1
+        if count:
+            group[prefix] = count
+        else:
+            del group[prefix]
+
+    def _deepest_prefix(self, chain, block):
+        boundary = bisect.bisect_right(chain.positions, (block + 1) * chain.size)
+        if boundary:
+            return chain.prefixes[boundary - 1]
+        parent = self._chain_ref(chain.parent) if chain.parent is not None else None
+        return self._deepest_prefix(*parent) if parent is not None else None
+
+    def _set_endpoint(self, chain):
+        if chain.endpoint is not None:
+            self._untouch(self.endpoints, chain.endpoint)
+        chain.endpoint = (
+            self._deepest_prefix(chain, chain.count - 1)
+            if chain.count and chain.keys[chain.count - 1] not in self.children
+            else None
+        )
+        if chain.endpoint is not None:
+            self._touch(self.endpoints, chain.endpoint)
+
+    def _drop_branch(self, key):
+        prefix = self.branch_keys.pop(key, None)
+        if prefix is not None:
+            self._untouch(self.branch_points, prefix)
 
     def clear(self):
         self.blocks.clear()
@@ -239,6 +286,9 @@ class KVCache:
         self.free_chains.clear()
         self.children.clear()
         self.prefix_counts.clear()
+        self.endpoints.clear()
+        self.branch_points.clear()
+        self.branch_keys.clear()
 
     def _chain_ref(self, key):
         ref = self.blocks.get(key)
@@ -246,18 +296,6 @@ class KVCache:
             return None
         chain = self.chains[ref >> 16]
         return chain, ref & 65535
-
-    def _refresh_ancestors(self, chain, block):
-        while chain is not None:
-            end = (block + 1) * chain.size
-            for position, prefix in zip(chain.positions, chain.prefixes, strict=True):
-                if position > end:
-                    break
-                self.prefix_counts[prefix] = self.prefix_counts.pop(prefix)
-            parent = self._chain_ref(chain.parent) if chain.parent is not None else None
-            if parent is None:
-                break
-            chain, block = parent
 
     def remove(self, key: int):
         found = self._chain_ref(key)
@@ -273,6 +311,7 @@ class KVCache:
                     child = self.chains[child_id]
                     if child is not None:
                         pending.append((child, 0))
+                self._drop_branch(child_key)
                 self.blocks.pop(child_key)
             for position, prefix in zip(chain.positions, chain.prefixes, strict=True):
                 if position > first * chain.size:
@@ -286,6 +325,15 @@ class KVCache:
             del chain.digests[checkpoint:]
             del chain.prefixes[checkpoint:]
             chain.truncate(first)
+            if first:
+                tail = chain.keys[first - 1]
+                if (
+                    tail in self.branch_keys
+                    and chain.parent is not None
+                    and len(self.children.get(tail, ())) == 1
+                ):
+                    self._drop_branch(tail)
+            self._set_endpoint(chain)
             if first == 0:
                 if chain.parent is not None:
                     siblings = self.children.get(chain.parent)
@@ -293,6 +341,18 @@ class KVCache:
                         siblings.discard(chain.id)
                         if not siblings:
                             del self.children[chain.parent]
+                            self._drop_branch(chain.parent)
+                            parent = self._chain_ref(chain.parent)
+                            if parent is not None:
+                                self._set_endpoint(parent[0])
+                        elif len(siblings) == 1:
+                            parent = self._chain_ref(chain.parent)
+                            if (
+                                parent is not None
+                                and parent[0].parent is not None
+                                and parent[1] == parent[0].count - 1
+                            ):
+                                self._drop_branch(chain.parent)
                 self.chains[chain.id] = None
                 self.free_chains.append(chain.id)
         if not self.blocks:
@@ -355,7 +415,6 @@ class KVCache:
             return
         if sys.byteorder != "little":
             packed.byteswap()
-        stored_under = ancestor
         for start in range(0, len(keys), 65536):
             stop = min(start + 65536, len(keys))
             group_keys = keys[start:stop]
@@ -378,7 +437,22 @@ class KVCache:
             else:
                 self.chains[chain_id] = chain
             if parent is not None:
-                self.children.setdefault(parent, set()).add(chain_id)
+                siblings = self.children.setdefault(parent, set())
+                branch = ancestor is not None and (
+                    bool(siblings)
+                    or ancestor[1] < ancestor[0].count - 1
+                    or ancestor[0].parent is None
+                )
+                if branch and parent not in self.branch_keys:
+                    prefix = self._deepest_prefix(*ancestor)
+                    if prefix is not None:
+                        self.branch_keys[parent] = prefix
+                        self._touch(self.branch_points, prefix)
+                elif branch and (prefix := self.branch_keys.get(parent)):
+                    self.branch_points[prefix] = self.branch_points.pop(prefix)
+                siblings.add(chain_id)
+                if ancestor is not None and ancestor[1] == ancestor[0].count - 1:
+                    self._set_endpoint(ancestor[0])
             data = memoryview(group_tokens).cast("B")
             offset = 0
             next_boundary = 64 - length % 64
@@ -397,10 +471,9 @@ class KVCache:
                 self.blocks.insert(key, chain_id << 16 | index)
             if offset < len(group_tokens):
                 digest.update(data[offset * 8 :])
+            self._set_endpoint(chain)
             parent = group_keys[-1]
             ancestor = (chain, len(group_keys) - 1)
-        if stored_under is not None:
-            self._refresh_ancestors(*stored_under)
 
 
 class KVEventSubscriber:
@@ -419,10 +492,23 @@ class KVEventSubscriber:
         self._thread_started = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._run_task: asyncio.Task | None = None
+        self._last_snapshot_at = 0.0
+        self._snapshot_dirty = False
+        self._rebuild_started_at = None
 
-    def _publish_snapshot(self):
+    def _publish_snapshot(self, force=False):
+        now = time.monotonic()
+        if (
+            self.ready
+            and not force
+            and now - self._last_snapshot_at < SNAPSHOT_INTERVAL_SECONDS
+        ):
+            self._snapshot_dirty = True
+            return
         prefixes = tuple(self.cache.prefixes) if self.ready else ()
         self.snapshot = (self.ready, self.checked_at, prefixes)
+        self._last_snapshot_at = now
+        self._snapshot_dirty = False
 
     def start_thread(self):
         self._thread = threading.Thread(target=self._run_thread, daemon=True)
@@ -478,21 +564,23 @@ class KVEventSubscriber:
         self.sequence = -1
         self.anchor = None
         self.ready = False
-        self._publish_snapshot()
+        self._rebuild_started_at = None
+        self._publish_snapshot(force=True)
 
-    def apply(self, sequence: int, payload: bytes):
+    def apply(self, sequence: int, payload: bytes, publish=True):
         if sequence <= self.sequence:
             return
         if sequence != self.sequence + 1:
-            self.reset()
             return False
         batch = msgspec.msgpack.decode(payload)
         for event in batch[1]:
             self.cache.apply(event)
         self.sequence = sequence
         self.anchor = payload
-        self.checked_at = time.monotonic()
-        self._publish_snapshot()
+        if publish:
+            # Only contiguous live batches or a replay endpoint refresh the view age.
+            self.checked_at = time.monotonic()
+            self._publish_snapshot()
         return True
 
     def apply_publication(self, sequence: int, payload: bytes) -> bool:
@@ -530,21 +618,40 @@ class KVEventSubscriber:
                         raise ValueError("Invalid KV replay topic")
                     batches.append((sequence, payload))
 
+            fetch_started_at = time.monotonic()
             batches = await fetch(max(self.sequence, 0))
             if self.sequence >= 0 and batches[:1] != [(self.sequence, self.anchor)]:
-                # The publisher restarted or its replay buffer rolled past us.
-                self.reset()
+                reason = "missing or changed anchor"
                 batches = await fetch(0)
+                self.reset()
+            elif self.sequence < 0:
+                reason = "startup"
+            else:
+                reason = None
+            if reason is not None:
+                self._rebuild_started_at = fetch_started_at
+                logger.info(
+                    "KV event full rebuild started: %s, %d batches",
+                    reason,
+                    len(batches),
+                )
             for index, (sequence, payload) in enumerate(batches):
                 if sequence > self.sequence + 1:
                     self.cache.clear()
                     self.sequence = sequence - 1
-                self.apply(sequence, payload)
+                self.apply(sequence, payload, publish=False)
                 if index & 31 == 31:
                     await asyncio.sleep(0)
             self.ready = True
+            # A replay endpoint verifies continuity through its final batch.
             self.checked_at = time.monotonic()
-            self._publish_snapshot()
+            self._publish_snapshot(force=True)
+            if self._rebuild_started_at is not None:
+                logger.info(
+                    "KV event full rebuild ready: %.3fs",
+                    time.monotonic() - self._rebuild_started_at,
+                )
+                self._rebuild_started_at = None
         finally:
             socket.close(0)
 
@@ -555,29 +662,41 @@ class KVEventSubscriber:
             socket = context.socket(zmq.SUB)
             socket.setsockopt(zmq.LINGER, 0)
             socket.setsockopt(zmq.SUBSCRIBE, TOPIC)
+            socket.setsockopt(zmq.RCVHWM, SUB_RECEIVE_HIGH_WATER_MARK)
             socket.connect(self.endpoint)
             replay = True
             next_replay = 0.0
             while True:
                 try:
-                    if replay or time.monotonic() >= next_replay:
+                    if time.monotonic() >= next_replay:
                         try:
                             await self.replay(context)
                         except TimeoutError:
-                            # A busy scheduler answers late; the next replay
-                            # checks the anchor, so the cache stays.
-                            await asyncio.sleep(0.5)
-                            continue
-                        replay = False
-                        next_replay = time.monotonic() + 1.5
-                    async with asyncio.timeout(0.5):
+                            next_replay = time.monotonic() + 0.5
+                        else:
+                            replay = False
+                            next_replay = time.monotonic() + 1.5
+                    wait = (
+                        max(
+                            0.0,
+                            SNAPSHOT_INTERVAL_SECONDS
+                            - (time.monotonic() - self._last_snapshot_at),
+                        )
+                        if self._snapshot_dirty
+                        else 0.5
+                    )
+                    async with asyncio.timeout(wait):
                         topic, seq, payload = await socket.recv_multipart()
                         if topic != TOPIC or len(seq) != 8:
                             raise ValueError("Invalid KV publication frames")
                         sequence = int.from_bytes(seq, "big")
                         if not self.apply_publication(sequence, payload):
+                            if not replay:
+                                next_replay = 0.0
                             replay = True
                 except TimeoutError:
+                    if self._snapshot_dirty:
+                        self._publish_snapshot(force=True)
                     continue
                 except (
                     ValueError,

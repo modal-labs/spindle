@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import struct
 import time
 from collections import deque
@@ -96,11 +97,77 @@ def test_shared_root_stays_in_capped_prefixes_after_large_child_store():
     assert digest("adapter-v1", [0] * 64) in cache.prefixes
 
 
+def test_capped_export_keeps_endpoints_across_unequal_conversations():
+    cache = KVCache()
+    endpoints = []
+    key = 1
+    for conversation in range(100):
+        blocks = 10 + conversation * 2
+        tokens = [conversation + 1] * (blocks * 64)
+        cache.apply(stored(list(range(key, key + blocks)), tokens))
+        endpoints.append(digest("adapter-v1", tokens))
+        key += blocks
+    assert len(cache.prefix_counts) > 8192
+    assert set(endpoints) <= set(cache.prefixes)
+
+
+def test_capped_export_favors_recent_endpoints_and_branch_points():
+    cache = KVCache()
+    for conversation in range(8200):
+        cache.apply(stored([conversation + 1], [conversation + 1] * 64))
+    assert digest("adapter-v1", [1] * 64) not in cache.prefixes
+    assert digest("adapter-v1", [8200] * 64) in cache.prefixes
+
+    cache.clear()
+    cache.apply(stored(list(range(1, 101)), [1] * (100 * 64)))
+    for child in range(101, 165):
+        cache.apply(stored([child], [child] * 64, parent=1))
+    branch = digest("adapter-v1", [1] * 64)
+    for conversation in range(140):
+        start = 1000 + conversation * 65
+        cache.apply(stored(list(range(start, start + 65)), [start] * (65 * 64)))
+    assert branch in cache.prefixes
+    for child in range(101, 165):
+        cache.remove(child)
+    assert not cache.branch_points
+    cache.remove(1)
+    assert branch not in cache.prefix_counts
+    assert branch not in cache.endpoints
+
+
+def test_linear_extensions_do_not_consume_branch_budget():
+    cache = KVCache()
+    for key in range(1, 9001):
+        cache.apply(stored([key], [key] * 64, parent=key - 1 or None))
+    assert len(cache.endpoints) == 1
+    assert len(cache.branch_points) == 1
+    assert cache.branch_keys == {1: digest("adapter-v1", [1] * 64)}
+    short_endpoints = []
+    for key in range(10000, 10100):
+        cache.apply(stored([key], [key] * 64))
+        short_endpoints.append(digest("adapter-v1", [key] * 64))
+    assert set(short_endpoints) <= set(cache.prefixes)
+    cache.apply(stored([20000], [20000] * 64, parent=500))
+    assert len(cache.branch_points) == 2
+    cache.remove(20000)
+    assert len(cache.branch_points) == 1
+
+
+def test_truncation_removes_branch_point_when_fork_becomes_tail():
+    cache = KVCache()
+    cache.apply(stored([0], [0] * 64))
+    cache.apply(stored([1, 2, 3], [1] * 64 + [2] * 64 + [3] * 64, parent=0))
+    cache.apply(stored([4], [4] * 64, parent=2))
+    assert len(cache.branch_points) == 2
+    cache.remove(3)
+    assert len(cache.branch_points) == 1
+
+
 @pytest.mark.parametrize(
     "with_topic", [False, True], ids=["sglang-0.5.21", "sglang-0.5.23"]
 )
 def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
-    tmp_path, with_topic
+    tmp_path, with_topic, caplog
 ):
     async def scenario():
         context = zmq.asyncio.Context()
@@ -164,7 +231,10 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
             router.close(0)
             context.destroy(linger=0)
 
-    asyncio.run(asyncio.wait_for(scenario(), 5))
+    with caplog.at_level(logging.INFO, logger="spindle.inference.kv_events"):
+        asyncio.run(asyncio.wait_for(scenario(), 5))
+    assert "KV event full rebuild started: startup, 2 batches" in caplog.text
+    assert "KV event full rebuild ready:" in caplog.text
 
 
 @pytest.mark.parametrize(
