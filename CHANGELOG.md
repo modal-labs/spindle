@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- A DAPO-Math reference client for the existing two-node Qwen3.8-27B recipe, sharing the 4B client’s workload and metric collection.
+
 - Token usage per session on shared trainers and samplers, stored on a `<frontend>-usage` Modal Volume and readable with Tinker's `get_billing_usage`. Label runs with `user_metadata`; `SPINDLE_USAGE_LABEL_KEYS` in the frontend's API secret lists the keys kept (default `run_id,team_id`). See [Cost attribution](docs/cost-attribution.md).
 - `spindle usage` splits Modal app cost across runs or labels by tokens processed, reading costs from Modal's billing report. Idle and cold-start time of trainers and sampler pools isn't charged to a run but still costs you, so it's shown as separate lines; `--hide-overhead` hides them. If Modal's billing report doesn't cover the whole window yet, only the hours it covers are split.
 - `reference_runs/`: a DAPO-Math GRPO workload on the stock Tinker SDK that records learning and timing metrics, with recorded results and a chart script for comparing deployments. Its deployment recipe fixes four H100 trainer GPUs and two single-H100 sampler replicas, and the client records that hardware contract.

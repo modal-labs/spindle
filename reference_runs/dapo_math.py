@@ -7,6 +7,7 @@ import json
 import random
 import re
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from statistics import mean
@@ -44,8 +45,6 @@ HARDWARE = {
     "sampler": {"gpu": "H100!", "gpus_per_replica": 1, "replicas": 2},
 }
 RECIPE = "dapo-math-qwen35-4b-h100"
-
-SMOKE = Config(updates=2, groups=4, eval_problems=8, evaluation_interval=1)
 
 Problem = tuple[list[int], str]
 Group = tuple[list[int], list[types.SampledSequence], list[float]]
@@ -114,12 +113,24 @@ def datum(
     )
 
 
-def main() -> None:
+def main(
+    config: Config | None = None,
+    recipe: str = RECIPE,
+    hardware: Mapping[str, object] = HARDWARE,
+) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--smoke", action="store_true", help=f"use {SMOKE}")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="run 2 updates with 4 groups and 8 eval problems",
+    )
     args = parser.parse_args()
-    config = SMOKE if args.smoke else Config()
+    config = config or Config()
+    if args.smoke:
+        config = dataclasses.replace(
+            config, updates=2, groups=4, eval_problems=8, evaluation_interval=1
+        )
     args.output.mkdir(parents=True)
 
     def record(event: str, **fields: object) -> None:
@@ -152,15 +163,15 @@ def main() -> None:
     ]
     held_out = problems[: config.eval_problems]
     service = tinker.ServiceClient()
-    training = service.create_lora_training_client(RECIPE, config.lora_rank)
+    training = service.create_lora_training_client(recipe, config.lora_rank)
     adam = types.AdamParams(learning_rate=config.learning_rate)
     record(
         "run",
         config=dataclasses.asdict(config),
         adam=adam.model_dump(),
         tinker_sdk=importlib.metadata.version("tinker"),
-        recipe=RECIPE,
-        hardware=HARDWARE,
+        recipe=recipe,
+        hardware=hardware,
     )
     clock, previous = time.monotonic, None
     for step in range(config.updates + 1):
