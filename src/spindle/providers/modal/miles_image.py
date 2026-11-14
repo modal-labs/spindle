@@ -4,14 +4,14 @@ import subprocess
 from importlib.metadata import distribution
 from pathlib import Path
 
-import modal
-
 from .image_dependencies import (
-    CORE_PACKAGES,
     MEGATRON_RUNTIME_CHECK,
     MEGATRON_RUNTIME_PACKAGES,
-    STITCH_PACKAGE,
     ignore_config_source,
+)
+from .miles_image_common import (
+    MILES_EXTRA_PACKAGES,
+    miles_base_image,
 )
 
 # The release tag pins Miles together with the Megatron-LM and Megatron-Bridge
@@ -91,6 +91,17 @@ BRIDGE_IMPORT_CACHE_PATCH = (
     "             converted_weights = self._convert_loaded_hf_weight(task, hf_weights)\n"
 )
 
+BRIDGE_IMPORT_CACHE_INSTALL = (
+    "python - <<'PY'\n"
+    "from importlib.metadata import distribution\n"
+    "import subprocess\n"
+    "root = distribution('megatron-bridge').locate_file('')\n"
+    "subprocess.run(['patch', '-p1', '-d', str(root)], input="
+    + repr(BRIDGE_IMPORT_CACHE_PATCH)
+    + ", text=True, check=True)\nPY\n"
+)
+
+
 # The release has the DSA backend hooks but omits the TileLang implementation.
 # Upstream #5049 adds the kernels and their packed/context-parallel tests.
 # Fetching the commit by hash pins its exact contents, unlike a generated .diff.
@@ -106,35 +117,24 @@ DSA_KERNEL_INSTALL = (
 
 
 image = (
-    modal.Image.from_registry(BASE_IMAGE)
-    .entrypoint([])
-    .env(
+    miles_base_image(
+        BASE_IMAGE,
         {
             "LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH",
             "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-        }
+        },
     )
-    .pip_install(*CORE_PACKAGES, STITCH_PACKAGE)
     .pip_install(
         *MEGATRON_RUNTIME_PACKAGES,
         "xxhash==3.7.1",
         "transformers==5.12.1",
-        "pyyaml>=6.0.2",
-        "opentelemetry-exporter-otlp==1.43.0",
-        "opentelemetry-exporter-otlp-proto-grpc==1.43.0",
-        "opentelemetry-exporter-otlp-proto-http==1.43.0",
+        *MILES_EXTRA_PACKAGES,
     )
     .run_function(_check_release, kwargs={"miles_commit": MILES_RELEASE_COMMIT})
     .run_commands(
         f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {MILES_COMMIT}"
         f" && git -C {MILES_PATH} checkout -B {MILES_BRANCH} FETCH_HEAD",
-        "python - <<'PY'\n"
-        "from importlib.metadata import distribution\n"
-        "import subprocess\n"
-        "root = distribution('megatron-bridge').locate_file('')\n"
-        "subprocess.run(['patch', '-p1', '-d', str(root)], input="
-        + repr(BRIDGE_IMPORT_CACHE_PATCH)
-        + ", text=True, check=True)\nPY\n",
+        BRIDGE_IMPORT_CACHE_INSTALL,
     )
     .run_commands(
         "pip install --no-deps 'peft>=0.18.1'",
