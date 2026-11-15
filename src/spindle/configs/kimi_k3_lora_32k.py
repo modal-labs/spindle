@@ -76,7 +76,11 @@ class Config(BaseConfig):
     inference_min_replicas = 1
     inference_max_replicas = 2
     inference_startup_timeout_s = 7200
-    inference_env = {"SGLANG_NUMA_BIND_V2": "0"}
+    inference_env = {
+        "SGLANG_NUMA_BIND_V2": "0",
+        # The fused all-reduce bypasses the LoRA o_proj and shared-expert wrappers.
+        "SGLANG_K3_AR_FUSION": "0",
+    }
     sglang_cfg = {
         "tp_size": 8,
         "ep_size": 1,
