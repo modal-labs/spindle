@@ -4,19 +4,25 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+## 0.1.7 - 2026-11-15
+
+See what each run or team costs on a shared deployment: Spindle records the tokens every session uses, serves them through Tinker's `get_billing_usage`, and `spindle usage` turns them into dollars per run or label. See [Cost attribution](docs/cost-attribution.md).
+
 ### Added
 
 - Token usage per session on shared trainers and samplers, stored on a `<frontend>-usage` Modal Volume and readable with Tinker's `get_billing_usage`. Label runs with `user_metadata`; `SPINDLE_USAGE_LABEL_KEYS` in the frontend's API secret lists the keys kept (default `run_id,team_id`). See [Cost attribution](docs/cost-attribution.md).
 - `spindle usage` splits Modal app cost across runs or labels by tokens processed, reading costs from Modal's billing report. Idle and cold-start time of trainers and sampler pools isn't charged to a run but still costs you, so it's shown as separate lines; `--hide-overhead` hides them. If Modal's billing report doesn't cover the whole window yet, only the hours it covers are split.
 - `reference_runs/`: a DAPO-Math GRPO workload on the stock Tinker SDK that records learning and timing metrics, with recorded results and a chart script for comparing deployments. Its deployment recipe fixes four H100 trainer GPUs and two single-H100 sampler replicas, and the client records that hardware contract.
 - GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
-
 - `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.
+- `platform.modal.exclude_reserved_capacity`: when `True`, multi-node and RDMA trainers stay off GPUs reserved for the workspace, so the reservation stays free for other jobs. The shared-server example turns it on (#255).
 
 ### Changed
 
-- Samplers run SGLang v0.5.23 with PyTorch 2.14.1 and Transformers 5.19. A server's samplers switch over when it is redeployed with a new Spindle version. DeepSeek-V4.1-Flash samplers switch at their next deploy, and they recompile their kernels once on first start.
+- Samplers run SGLang v0.5.23 with PyTorch 2.14.1 and Transformers 5.19. A server's samplers switch over when it is redeployed with a new Spindle version. DeepSeek-V4.1-Flash samplers stay on SGLang v0.5.21, because their LoRA samplers crash on v0.5.23 after loading a trained adapter (#240, #270).
 - `inference_target_concurrency` now defaults to `None`, which adds a sampler replica only when every replica holds `sglang_cfg.max_running_requests` requests. New `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long.
+- The Qwen3.5-9B 16K and Qwen3.5-4B 32K recipes sample on B200, falling back to H200 (9B) or H100 (4B) when no B200 is free. Batches finish faster; a B200 replica costs more per hour. The 4B sampler also runs 128 requests at once. Qwen3.5-2B and the 9B 64K and 128K recipes stay on Hopper (#254).
+- The `spindle deploy` model picker starts with no model selected, so you no longer deploy Qwen3.6-35B-A3B unless you pick it (#281).
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
 
@@ -30,6 +36,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - Sampling requests rejected with HTTP 429 or 503 can retry with the same request ID as soon as capacity is available, instead of replaying the rejection for 30 seconds.
 - `get_server_capabilities` now sets `trainable` and `sampleable` on each model, which Tinker SDK 0.26 and later read. Before, both were `null`.
 - Sampling recovers when SGLang loads an adapter but its acknowledgement is lost. A later load error is accepted only when SGLang's registry confirms the same adapter name and checkpoint path.
+- Sampling from a `qwen35_35b_a3b_fft_64k` or `qwen36_35b_a3b_fft_64k` full fine-tune no longer runs out of GPU memory while the sampler loads the trained weights (#260).
 
 ## 0.1.6 - 2026-11-06
 
