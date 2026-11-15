@@ -8,8 +8,8 @@ from .image_dependencies import ignore_config_source
 from .miles_v020_image import fork_image
 from .rollout_image import CORE_SAMPLER_PACKAGES, runtime_image_for
 
-MILES_BRANCH = "micah/kimi-k3-w4a16"
-MILES_COMMIT = "96d3f1c6e2a6462da6499bf1046f7ab589e7b779"
+MILES_BRANCH = "spindle-miles-v0.2.0"
+MILES_COMMIT = "74c92c5def32c252edc18fd588ff8aa9776d0792"
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_BRANCH = "spindle-sglang-v0.5.23-kimi-k3"
 SGLANG_REVISION = "9acab080bb0717dfa9f74307fd2191e9827d8c5f"
