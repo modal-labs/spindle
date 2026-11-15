@@ -10,7 +10,7 @@ from .image_dependencies import (
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
 SGLANG_BRANCH = "spindle-sglang-v0.5.23"
-SGLANG_REVISION = "90785332b8e3e1202ae280d85ecec197473bd5a8"
+SGLANG_REVISION = "fa0abef663d164217a24be3ed35ec20927bebb95"
 # v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
 CORE_SAMPLER_PACKAGES = (
     *(p for p in CORE_PACKAGES if not p.startswith("opentelemetry-")),
@@ -29,6 +29,7 @@ runtime_image = (
         "rm -rf /tmp/spindle-sglang-overlay"
         f" && git clone --filter=blob:none --single-branch --branch {SGLANG_BRANCH}"
         f" {SGLANG_REPOSITORY} /tmp/spindle-sglang-overlay"
+        f" && git -C /tmp/spindle-sglang-overlay fetch --depth=1 origin {SGLANG_REVISION}"
         f" && git -C /tmp/spindle-sglang-overlay checkout {SGLANG_REVISION}",
         "cp -a /tmp/spindle-sglang-overlay/python/. /sgl-workspace/sglang/python/"
         " && rm -rf /sgl-workspace/sglang/rust"
