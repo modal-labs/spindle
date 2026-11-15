@@ -4,6 +4,8 @@ from collections.abc import Awaitable, Callable
 
 import modal
 
+from spindle.control_plane.deployments import RegistryUnavailable
+
 from ..contracts import (
     SamplingTask,
     SamplingTaskState,
@@ -49,7 +51,13 @@ class ModalSamplingTaskPlatform:
             result = await modal.FunctionCall.from_id(task_id).get.aio(timeout=timeout)
         except TimeoutError:
             return SamplingTaskState(SamplingTaskStatus.PENDING)
-        except (modal.exception.NotFoundError, modal.exception.OutputExpiredError):
+        except (
+            modal.exception.NotFoundError,
+            modal.exception.OutputExpiredError,
+            # A cold sampling container can fail to read the recipe registry
+            # under a burst; the client resubmits a lost request.
+            RegistryUnavailable,
+        ):
             return None
         except (
             modal.exception.ConnectionError,
