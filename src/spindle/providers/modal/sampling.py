@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 
 import modal
@@ -12,6 +13,8 @@ from ..contracts import (
     SamplingTaskStatus,
     SessionKeyValueStores,
 )
+
+logger = logging.getLogger(__name__)
 
 SpawnSamplingTask = Callable[[SamplingTask], Awaitable[str]]
 
@@ -51,13 +54,11 @@ class ModalSamplingTaskPlatform:
             result = await modal.FunctionCall.from_id(task_id).get.aio(timeout=timeout)
         except TimeoutError:
             return SamplingTaskState(SamplingTaskStatus.PENDING)
-        except (
-            modal.exception.NotFoundError,
-            modal.exception.OutputExpiredError,
-            # A cold sampling container can fail to read the recipe registry
-            # under a burst; the client resubmits a lost request.
-            RegistryUnavailable,
-        ):
+        except (modal.exception.NotFoundError, modal.exception.OutputExpiredError):
+            return None
+        except RegistryUnavailable as exc:
+            # The client resubmits a lost sample.
+            logger.warning("sample %s lost: %s", task_id, exc)
             return None
         except (
             modal.exception.ConnectionError,
