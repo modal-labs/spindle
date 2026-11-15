@@ -1276,12 +1276,13 @@ async def test_a_config_another_frontend_container_just_added_shows_at_once(read
         assert await read(client) & {other.name, other.model}
 
 
-def test_speculative_draft_model_is_downloaded_asset_and_sglang_path():
+@pytest.mark.parametrize("algorithm", ["DFLASH", "NEXTN"])
+def test_speculative_draft_model_is_downloaded_asset_and_sglang_path(algorithm):
     row = resolved(
         recipe(
             inference_draft_model="org/model-dflash",
             inference_draft_model_revision="draft-revision",
-            sglang_cfg={"speculative_algorithm": "DFLASH"},
+            sglang_cfg={"speculative_algorithm": algorithm},
         )
     )
     assert row.draft_asset_path == "/assets/org/model-dflash"
@@ -1294,3 +1295,17 @@ def test_speculative_draft_model_is_downloaded_asset_and_sglang_path():
 def test_speculative_draft_model_cannot_replace_base_model():
     with pytest.raises(ValueError, match="different from the base model"):
         resolved(recipe(inference_draft_model="Qwen/Qwen3.5-9B-Base"))
+
+
+@pytest.mark.parametrize("weights", ["", "org/custom-target"])
+def test_native_mtp_reuses_the_resolved_target_checkpoint(weights):
+    row = resolved(
+        recipe(
+            weights_revision="target-revision",
+            model_weights=weights,
+            sglang_cfg={"speculative_algorithm": "NEXTN"},
+        )
+    )
+    assert row.draft_asset_path is None
+    assert row.inference_settings["speculative_draft_model_path"] == row.asset_path
+    assert row.inference_settings["speculative_draft_model_revision"] is None

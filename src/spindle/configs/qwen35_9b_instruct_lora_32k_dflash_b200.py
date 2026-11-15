@@ -21,6 +21,7 @@ class Config(Parent):
         "miles_cfg.max_lora_slots": 1,
         "miles_cfg.max_tokens_per_gpu": 18432,
         "sglang_cfg.max_running_requests": 64,
+        "sglang_cfg.max_mamba_cache_size": 384,
         "sglang_cfg.max_queued_requests": 128,
         "sglang_cfg.max_loaded_loras": 32,
         "sglang_cfg.max_loras_per_batch": 2,
@@ -34,6 +35,8 @@ class Config(Parent):
         "sglang_cfg.speculative_algorithm": "DFLASH",
         "sglang_cfg.speculative_dflash_block_size": 8,
         "sglang_cfg.speculative_draft_attention_backend": "fa4",
+        "sglang_cfg.speculative_draft_model_quantization": "unquant",
+        "sglang_cfg.speculative_draft_kv_cache_dtype": "bfloat16",
     }
 
 

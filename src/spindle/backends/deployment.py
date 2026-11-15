@@ -155,6 +155,14 @@ def resolve_backend_settings(spec, asset_path):
     if spec.inference_draft_model and spec.inference_draft_model == base_model:
         raise ValueError("inference_draft_model must be different from the base model")
     trainer = backend_config(spec, asset_path)
+    draft_model_path = (
+        f"/assets/{spec.inference_draft_model}" if spec.inference_draft_model else None
+    )
+    if (
+        draft_model_path is None
+        and spec.sglang_cfg.get("speculative_algorithm") == "NEXTN"
+    ):
+        draft_model_path = asset_path
     inference = {
         "context_length": spec.max_context_length,
         "tp_size": spec.inference_gpus_per_node,
@@ -162,12 +170,7 @@ def resolve_backend_settings(spec, asset_path):
         "max_running_requests": 32,
         "enable_metrics": True,
         "weight_loader_disable_mmap": True,
-        **serving_options(
-            spec,
-            f"/assets/{spec.inference_draft_model}"
-            if spec.inference_draft_model
-            else None,
-        ),
+        **serving_options(spec, draft_model_path),
     }
     if spec.parameterization == "lora":
         miles = MilesBackendConfig(**trainer["miles"])

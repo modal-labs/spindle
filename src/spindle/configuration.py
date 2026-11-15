@@ -83,6 +83,7 @@ class BaseConfig:
     inference_env = {}
     # Optional Hugging Face checkpoint used by SGLang speculative decoding.
     # It is downloaded alongside the base model and passed as a local path.
+    # NEXTN without a separate draft reuses the target checkpoint.
     inference_draft_model = ""
     inference_draft_model_revision = ""
 
