@@ -188,6 +188,7 @@ def test_rejected_native_capture_fails_only_its_request(tmp_path, operation):
         call()
     assert runtime._failure is None
     assert not capture.exists()
+    assert not incomplete.exists()
 
 
 @pytest.mark.parametrize("failed_rank", [0, 1])

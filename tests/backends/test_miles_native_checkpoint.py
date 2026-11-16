@@ -64,7 +64,7 @@ def test_native_capture_rejects_incomplete_checkpoint(
     with pytest.raises((ValueError, FileNotFoundError)):
         materialize_adapter(source, target, checkpoint=True)
     assert not target.exists()
-    assert source.exists()
+    assert not source.exists()
     assert not list(tmp_path.glob("*.tmp"))
 
 

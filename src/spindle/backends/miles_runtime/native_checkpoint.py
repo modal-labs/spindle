@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 from torch.distributed.checkpoint import FileSystemReader
@@ -55,7 +56,11 @@ def materialize_adapter(source: Path, target: Path, *, checkpoint: bool) -> None
     source, target = Path(source), Path(target)
     if source.parent != target.parent or not source.name.startswith(f".{target.name}."):
         raise ValueError("Miles returned a capture outside its operation directory")
-    validate_adapter(source, checkpoint=checkpoint)
-    if target.exists():
-        raise FileExistsError(f"capture already exists: {target}")
-    os.rename(source, target)
+    try:
+        validate_adapter(source, checkpoint=checkpoint)
+        if target.exists():
+            raise FileExistsError(f"capture already exists: {target}")
+        os.rename(source, target)
+    except Exception:
+        shutil.rmtree(source, ignore_errors=True)
+        raise
