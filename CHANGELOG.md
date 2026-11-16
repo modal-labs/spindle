@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
-- Miles LoRA trainers on the default images no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. This backports the fix the `miles-v0.2.0` image already has.
+- Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
 
 ## 0.1.7 - 2026-11-15
 
