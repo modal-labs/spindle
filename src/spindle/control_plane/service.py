@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
 
+from spindle.checkpoint_metadata import CheckpointMetadata
 from spindle.encoding import fingerprint
 from spindle.engine.api import EngineApi, FutureStatus
 from spindle.errors import (
@@ -465,34 +466,15 @@ class ControlPlane:
         name, model_id = parts
         return checkpoint_tinker_path(model_id, name)
 
-    async def checkpoint_metadata(self, path: str) -> dict[str, object]:
+    async def checkpoint_metadata(self, path: str) -> CheckpointMetadata:
         if self.read_checkpoint_metadata is None:
             raise RecordUnavailable("checkpoint", path, "metadata unavailable")
         path = self.resolve_checkpoint_path(path)
         try:
-            metadata = dict(await self.read_checkpoint_metadata(path))
+            raw = await self.read_checkpoint_metadata(path)
         except FileNotFoundError:
             raise RecordNotFound("checkpoint metadata", path) from None
-        schema_version = metadata.get("schema_version")
-        if isinstance(schema_version, bool) or schema_version != 1:
-            raise ValueError("unsupported checkpoint metadata")
-        saved_base_model = metadata.get("base_model")
-        definition_id = metadata.get("engine_definition_id")
-        parameterization = metadata.get("parameterization")
-        lora_config = metadata.get("lora_config")
-        if not isinstance(saved_base_model, str) or not saved_base_model:
-            raise ValueError("checkpoint metadata has no base_model")
-        if not isinstance(definition_id, str) or not definition_id:
-            raise ValueError("checkpoint metadata has no engine_definition_id")
-        if not isinstance(parameterization, Mapping) or parameterization.get(
-            "type"
-        ) not in {"lora", "full"}:
-            raise ValueError("checkpoint metadata has invalid parameterization")
-        if parameterization["type"] == "lora" and not isinstance(lora_config, Mapping):
-            raise ValueError("checkpoint metadata has no lora_config")
-        if parameterization["type"] == "full" and lora_config is not None:
-            raise ValueError("full checkpoint metadata has lora_config")
-        return metadata
+        return CheckpointMetadata.parse(raw)
 
     async def create_model_from_checkpoint(
         self,
@@ -507,22 +489,24 @@ class ControlPlane:
     ) -> ModelCreation:
         metadata = await self.checkpoint_metadata(path)
         path = self.resolve_checkpoint_path(path)
-        saved_base_model = metadata["base_model"]
-        definition_id = metadata["engine_definition_id"]
-        parameterization = metadata["parameterization"]
-        lora_config = metadata["lora_config"]
-        if base_model is not None and base_model != saved_base_model:
+        definition_id = metadata.engine_definition_id
+        lora_config = metadata.lora_config
+        if base_model is not None and base_model != metadata.base_model:
             raise ValueError("base_model does not match checkpoint")
         if definition_ids is not None and definition_id not in definition_ids:
             raise ValueError(f"checkpoint definition {definition_id} is not deployed")
         return await self.create_model(
             session_id=session_id,
             model_seq_id=model_seq_id,
-            definition_id=definition_id,  # ty: ignore[invalid-argument-type]
+            definition_id=definition_id,
             spec={
-                "base_model": saved_base_model,
-                "lora_config": dict(lora_config) if lora_config is not None else None,
-                "parameterization": dict(parameterization),
+                "base_model": metadata.base_model,
+                "lora_config": (
+                    lora_config.model_dump(exclude_unset=True)
+                    if lora_config is not None
+                    else None
+                ),
+                "parameterization": metadata.parameterization.model_dump(),
                 "user_metadata": user_metadata,
                 "checkpoint": {
                     "uri": path,

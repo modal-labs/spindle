@@ -17,6 +17,12 @@ import torch
 from stitch.types import VersionRef
 from tinker import AdamParams, ForwardBackwardOutput, OptimStepResponse
 
+from spindle.checkpoint_metadata import (
+    CheckpointLoraConfig,
+    CheckpointMetadata,
+    MilesTopology,
+    Parameterization,
+)
 from spindle.engine.spmd import DistributedExecutor
 from spindle.errors import BackendFailed
 from spindle.inference.bulletin import SnapshotBulletin
@@ -314,38 +320,28 @@ class MilesCommandBackend(Backend):
                 str(capture_path / "miles"),
                 include_optimizer=include_optimizer,
             )
-        metadata = {
-            "schema_version": 1,
-            "checkpoint_format": "miles_torch_dist",
-            "backend": "miles",
-            "miles_revision": self.runtime.revision,
-            "base_model": self.base_model,
-            "engine_definition_id": os.environ.get("SPINDLE_DEFINITION_ID"),
-            "parameterization": {"type": "lora"},
-            "lora_config": {
-                "rank": state.rank,
-                "alpha": state.alpha,
-                "seed": state.seed,
-                "train_attn": state.train_attn,
-                "train_mlp": state.train_mlp,
-                "train_unembed": state.train_unembed,
-            },
-            "optimizer_step": state.optimizer_step,
-            "has_optimizer": include_optimizer,
-            "topology": {
-                "world_size": self.config.world_size,
-                "data_parallel_size": self.config.data_parallel_size,
-                "tensor_model_parallel_size": (self.config.tensor_model_parallel_size),
-                "context_parallel_size": self.config.context_parallel_size,
-                "expert_model_parallel_size": (self.config.expert_model_parallel_size),
-                "expert_tensor_parallel_size": (
-                    self.config.expert_tensor_parallel_size
-                ),
-                "pipeline_model_parallel_size": 1,
-            },
-        }
+        metadata = CheckpointMetadata(
+            schema_version=1,
+            checkpoint_format="miles_torch_dist",
+            backend="miles",
+            miles_revision=self.runtime.revision,
+            base_model=self.base_model,
+            engine_definition_id=os.environ["SPINDLE_DEFINITION_ID"],
+            parameterization=Parameterization(type="lora"),
+            lora_config=CheckpointLoraConfig(
+                rank=state.rank,
+                alpha=state.alpha,
+                seed=state.seed,
+                train_attn=state.train_attn,
+                train_mlp=state.train_mlp,
+                train_unembed=state.train_unembed,
+            ),
+            optimizer_step=state.optimizer_step,
+            has_optimizer=include_optimizer,
+            topology=self._checkpoint_topology(),
+        )
         (capture_path / "metadata.json").write_text(
-            json.dumps(metadata, sort_keys=True),
+            json.dumps(metadata.to_json(), sort_keys=True),
             encoding="utf-8",
         )
         self._checkpoint_captures[snapshot_id] = {
@@ -401,11 +397,12 @@ class MilesCommandBackend(Backend):
             _reload_volume(os.environ.get("SPINDLE_CHECKPOINT_VOLUME"))
             checkpoint = Path(uri)
             try:
-                metadata = json.loads(
+                raw = json.loads(
                     (checkpoint / "metadata.json").read_text(encoding="utf-8")
                 )
             except (FileNotFoundError, json.JSONDecodeError) as exc:
                 raise ValueError(f"invalid Miles checkpoint: {uri}") from exc
+            metadata = CheckpointMetadata.parse(raw)
             state = self.jobs[model_id]
             self._validate_checkpoint(metadata, state, restore_optimizer)
             self.runtime.load_slot(
@@ -417,7 +414,7 @@ class MilesCommandBackend(Backend):
             )
             state.accumulating = False
             state.optimizer_step = (
-                int(metadata.get("optimizer_step", 0)) if restore_optimizer else 0
+                (metadata.optimizer_step or 0) if restore_optimizer else 0
             )
 
     def capture_sampler_snapshot(
@@ -633,50 +630,43 @@ class MilesCommandBackend(Backend):
         self.slot_to_job.pop(slot, None)
         self.free_slots.add(slot)
 
+    def _checkpoint_topology(self) -> MilesTopology:
+        return MilesTopology(
+            world_size=self.config.world_size,
+            data_parallel_size=self.config.data_parallel_size,
+            tensor_model_parallel_size=self.config.tensor_model_parallel_size,
+            context_parallel_size=self.config.context_parallel_size,
+            expert_model_parallel_size=self.config.expert_model_parallel_size,
+            expert_tensor_parallel_size=self.config.expert_tensor_parallel_size,
+            pipeline_model_parallel_size=1,
+        )
+
     def _validate_checkpoint(
         self,
-        metadata: dict[str, Any],
+        metadata: CheckpointMetadata,
         state: MilesJobState,
         restore_optimizer: bool,
     ) -> None:
-        if metadata.get("schema_version") != 1:
-            raise ValueError("unsupported Miles checkpoint schema")
-        if metadata.get("backend") != "miles":
+        if metadata.backend != "miles":
             raise ValueError("checkpoint was not created by the Miles backend")
-        if metadata.get("miles_revision") != self.runtime.revision:
+        if metadata.miles_revision != self.runtime.revision:
             raise ValueError("checkpoint Miles revision does not match the deployment")
-        if metadata.get("checkpoint_format") != "miles_torch_dist":
+        if metadata.checkpoint_format != "miles_torch_dist":
             raise ValueError("unsupported Miles checkpoint format")
-        if metadata.get("base_model") != self.base_model:
+        if metadata.base_model != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")
-        lora = metadata.get("lora_config") or {}
-        if (
-            int(lora.get("rank", 0)) != state.rank
-            or float(lora.get("alpha", 0)) != state.alpha
-        ):
+        lora = metadata.lora_config
+        if lora is None or lora.rank != state.rank or lora.alpha != state.alpha:
             raise ValueError("checkpoint LoRA configuration does not match the model")
-        expected_targets = {
-            "train_attn": state.train_attn,
-            "train_mlp": state.train_mlp,
-            "train_unembed": state.train_unembed,
-        }
-        if any(lora.get(name) != value for name, value in expected_targets.items()):
+        if (lora.train_attn, lora.train_mlp, lora.train_unembed) != (
+            state.train_attn,
+            state.train_mlp,
+            state.train_unembed,
+        ):
             raise ValueError("checkpoint LoRA targets do not match the model")
-        expected_topology = {
-            "world_size": self.config.world_size,
-            "data_parallel_size": self.config.data_parallel_size,
-            "tensor_model_parallel_size": self.config.tensor_model_parallel_size,
-            "context_parallel_size": self.config.context_parallel_size,
-            "expert_model_parallel_size": self.config.expert_model_parallel_size,
-            "expert_tensor_parallel_size": self.config.expert_tensor_parallel_size,
-            "pipeline_model_parallel_size": 1,
-        }
-        stored_topology = dict(metadata.get("topology") or {})
-        stored_topology.setdefault("data_parallel_size", 1)
-        stored_topology.setdefault("context_parallel_size", 1)
-        if stored_topology != expected_topology:
+        if metadata.topology != self._checkpoint_topology():
             raise ValueError("checkpoint topology does not match deployment")
-        if restore_optimizer and not metadata.get("has_optimizer"):
+        if restore_optimizer and not metadata.has_optimizer:
             raise ValueError("checkpoint does not include optimizer state")
 
 

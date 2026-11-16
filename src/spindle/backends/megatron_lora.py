@@ -11,6 +11,11 @@ from megatron.bridge.peft.multi_lora_layers import load_adapter
 from megatron.core import parallel_state
 from tinker import AdamParams, ForwardBackwardOutput, OptimStepResponse
 
+from spindle.checkpoint_metadata import (
+    CheckpointLoraConfig,
+    CheckpointMetadata,
+    Parameterization,
+)
 from spindle.engine.spmd import DistributedExecutor, initialize_distributed_runtime
 from spindle.telemetry.backend import measured
 
@@ -176,19 +181,19 @@ class LoraMegatronBackend(Backend):
             "model_id": model_id,
             "destination": destination,
             "payload": payload,
-            "metadata": {
-                "schema_version": 1,
-                "base_model": self.base_model,
-                "engine_definition_id": os.environ["SPINDLE_DEFINITION_ID"],
-                "parameterization": {"type": "lora"},
-                "lora_config": {
-                    "rank": state.rank,
-                    "seed": state.seed,
-                    "train_attn": state.train_attn,
-                    "train_mlp": state.train_mlp,
-                    "train_unembed": state.train_unembed,
-                },
-            },
+            "metadata": CheckpointMetadata(
+                schema_version=1,
+                base_model=self.base_model,
+                engine_definition_id=os.environ["SPINDLE_DEFINITION_ID"],
+                parameterization=Parameterization(type="lora"),
+                lora_config=CheckpointLoraConfig(
+                    rank=state.rank,
+                    seed=state.seed,
+                    train_attn=state.train_attn,
+                    train_mlp=state.train_mlp,
+                    train_unembed=state.train_unembed,
+                ),
+            ).to_json(),
         }
 
     def persist_checkpoint(

@@ -19,6 +19,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - `inference_target_concurrency` now defaults to `None`, which adds a sampler replica only when every replica holds `sglang_cfg.max_running_requests` requests. New `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long.
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
+- Loading a checkpoint whose `metadata.json` is invalid now fails with one error that names each bad field, such as `invalid checkpoint metadata: engine_definition_id: Field required`.
 
 ### Fixed
 

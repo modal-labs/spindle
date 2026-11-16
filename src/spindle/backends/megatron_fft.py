@@ -12,6 +12,7 @@ from megatron.bridge import AutoBridge
 from megatron.core import parallel_state
 from tinker import AdamParams, ForwardBackwardOutput, OptimStepResponse
 
+from spindle.checkpoint_metadata import CheckpointMetadata, Parameterization
 from spindle.engine.spmd import DistributedExecutor, initialize_distributed_runtime
 from spindle.inference.fft_bulletin import FFTSnapshotBulletin
 
@@ -299,13 +300,13 @@ class FFTMegatronBackend(Backend):
             "path": str(self.checkpoint_dir / destination / model_id),
             "checkpoint": checkpoint,
             "hf_weights": hf_weights,
-            "metadata": {
-                "schema_version": 1,
-                "base_model": self.base_model,
-                "engine_definition_id": os.environ["SPINDLE_DEFINITION_ID"],
-                "parameterization": {"type": "full"},
-                "lora_config": None,
-            },
+            "metadata": CheckpointMetadata(
+                schema_version=1,
+                base_model=self.base_model,
+                engine_definition_id=os.environ["SPINDLE_DEFINITION_ID"],
+                parameterization=Parameterization(type="full"),
+                lora_config=None,
+            ).to_json(),
         }
         self._checkpoint_captures[snapshot_id] = capture
 

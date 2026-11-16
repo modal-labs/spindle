@@ -156,6 +156,11 @@ def _datum(tokens, final_token) -> Datum:
     )
 
 
+@pytest.fixture(autouse=True)
+def _definition_id(monkeypatch) -> None:
+    monkeypatch.setenv("SPINDLE_DEFINITION_ID", "qwen3_4b_miles_lora_2k")
+
+
 def _backend(tmp_path, runtime=None) -> MilesCommandBackend:
     return MilesCommandBackend(
         _config(),
@@ -495,7 +500,6 @@ def test_backend_pads_dp_ragged_batches(tmp_path) -> None:
 def test_checkpoint_capture_persist_and_restore(tmp_path, monkeypatch) -> None:
     runtime = FakeMilesRuntime()
     backend = _backend(tmp_path, runtime)
-    monkeypatch.setenv("SPINDLE_DEFINITION_ID", "qwen3_4b_miles_lora_2k")
     backend.accept_model("model-a", _spec())
     backend.jobs["model-a"].optimizer_step = 3
 
@@ -567,7 +571,6 @@ def test_checkpoint_restore_rejects_different_lora_targets(
     monkeypatch,
 ) -> None:
     backend = _backend(tmp_path)
-    monkeypatch.setenv("SPINDLE_DEFINITION_ID", "qwen3_4b_miles_lora_2k")
     backend.accept_model("model-a", _spec())
     backend.capture_checkpoint(
         "model-a",
@@ -584,7 +587,10 @@ def test_checkpoint_restore_rejects_different_lora_targets(
         backend.load_checkpoint("model-a", str(uri))
 
 
-def test_checkpoint_topology_defaults_legacy_data_parallel_size(tmp_path) -> None:
+@pytest.mark.parametrize(
+    "legacy_missing", ["data_parallel_size", "context_parallel_size"]
+)
+def test_checkpoint_topology_defaults_legacy_fields(tmp_path, legacy_missing) -> None:
     backend = _backend(tmp_path)
     backend.accept_model("model-a", _spec())
     backend.capture_checkpoint(
@@ -592,22 +598,10 @@ def test_checkpoint_topology_defaults_legacy_data_parallel_size(tmp_path) -> Non
     )
     uri = Path(backend.persist_checkpoint("capture-a", "step-1"))
     metadata = json.loads((uri / "metadata.json").read_text())
-    del metadata["topology"]["data_parallel_size"]
+    del metadata["topology"][legacy_missing]
+    (uri / "metadata.json").write_text(json.dumps(metadata))
 
-    backend._validate_checkpoint(metadata, backend.jobs["model-a"], False)
-
-
-def test_checkpoint_topology_defaults_legacy_context_parallel_size(tmp_path) -> None:
-    backend = _backend(tmp_path)
-    backend.accept_model("model-a", _spec())
-    backend.capture_checkpoint(
-        "model-a", "capture-a", destination="step-1", include_optimizer=False
-    )
-    uri = Path(backend.persist_checkpoint("capture-a", "step-1"))
-    metadata = json.loads((uri / "metadata.json").read_text())
-    del metadata["topology"]["context_parallel_size"]
-
-    backend._validate_checkpoint(metadata, backend.jobs["model-a"], False)
+    backend.load_checkpoint("model-a", str(uri))
 
 
 def test_checkpoint_topology_rejects_legacy_data_parallel_size_for_dp2(
@@ -618,8 +612,7 @@ def test_checkpoint_topology_rejects_legacy_data_parallel_size_for_dp2(
     source.capture_checkpoint(
         "model-a", "capture-a", destination="step-1", include_optimizer=False
     )
-    uri = Path(source.persist_checkpoint("capture-a", "step-1"))
-    metadata = json.loads((uri / "metadata.json").read_text())
+    uri = source.persist_checkpoint("capture-a", "step-1")
 
     dp2 = MilesCommandBackend(
         _config(actor_num_gpus_per_node=4, tensor_model_parallel_size=2),
@@ -630,7 +623,7 @@ def test_checkpoint_topology_rejects_legacy_data_parallel_size_for_dp2(
     )
     dp2.accept_model("model-a", _spec())
     with pytest.raises(ValueError, match="topology"):
-        dp2._validate_checkpoint(metadata, dp2.jobs["model-a"], False)
+        dp2.load_checkpoint("model-a", uri)
 
 
 def test_sampler_capture_publishes_existing_spindle_format(
