@@ -3,6 +3,8 @@ from spindle.configs.deepseek_v31_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "deepseek-v31-lora-32k-b300"
+    trainer_image = "miles-v0.1.1"
+    inference_image = "sglang-v0.5.23"
     trainer_gpu = "B300"
     trainer_max_clients_per_instance = 6
     inference_target_concurrency = 96

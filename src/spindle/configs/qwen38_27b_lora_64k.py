@@ -3,6 +3,8 @@ from spindle.configs.qwen38_27b_lora_16k import Config as Parent
 
 class Config(Parent):
     name = "qwen38-27b-lora-64k"
+    trainer_image = "miles-v0.1.1"
+    inference_image = "sglang-v0.5.23"
     max_context_length = 65536
     overrides = {
         "miles_cfg.max_tokens_per_gpu": 32768,

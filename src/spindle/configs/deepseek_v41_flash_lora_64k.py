@@ -9,6 +9,8 @@ class Config(Parent):
     """
 
     name = "deepseek-v41-flash-lora-64k"
+    trainer_image = "miles-v0.1.2"
+    inference_image = "spindle.providers.modal.deepseek_v41_image:inference_image"
     max_context_length = 65536
     trainer_gpu = ["B300", "B200"]
     overrides = {

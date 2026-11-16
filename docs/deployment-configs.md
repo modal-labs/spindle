@@ -141,7 +141,9 @@ Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, 
 
 ### Images
 
-`trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1 (the default), v0.1.2 (`miles-v0.1.2`), and v0.2.0 (`miles-v0.2.0`).
+`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1`, `miles-v0.1.2`, `miles-v0.2.0` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.23` for samplers.
+
+Every bundled config sets both images itself rather than inheriting them, so upgrading SGLang or Miles for one config doesn't change any other. If you leave a field empty in your own config, it uses the backend default (`miles-v0.1.1`, `megatron-2d1fa8d` or `sglang-v0.5.23`), and that default can change in a later Spindle release. Set both fields to keep a config on the images it was tested with.
 
 `miles-v0.2.0` supports single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying it with more than one trainer node or with `raw` is rejected. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
 

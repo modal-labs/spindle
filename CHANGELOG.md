@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Changed
+
+- Every bundled config sets its own `trainer_image` and `inference_image`, so SGLang and Miles can be upgraded one config at a time. The images each config runs are unchanged. The default sampler image now has a name, `sglang-v0.5.23`, and so do the default trainer images, `miles-v0.1.1` and `megatron-2d1fa8d`. Configs that leave these fields empty still use the defaults. See [Images](docs/deployment-configs.md#images).
+
 ## 0.1.8
 
 ### Added

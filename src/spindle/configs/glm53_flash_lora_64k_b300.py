@@ -12,6 +12,8 @@ from spindle.configs.glm53_flash_lora_48k_b300 import Config as SingleNodeConfig
 
 class Config(SingleNodeConfig):
     name = "glm53-flash-lora-64k-b300"
+    trainer_image = "spindle.providers.modal.glm53_trainer_image:image"
+    inference_image = "spindle.providers.modal.glm53_image:inference_image"
     # 65,536-token trajectories plus sampler completion bookkeeping.
     max_context_length = 65552
     trainer_max_clients_per_instance = 1

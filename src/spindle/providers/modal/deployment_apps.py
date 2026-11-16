@@ -58,24 +58,36 @@ from .serve import run_engine_with_backend
 from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
 
-TRAINER_IMAGES = {"miles-v0.1.2": miles_v012_image, "miles-v0.2.0": miles_v020_image}
+TRAINER_IMAGES = {
+    "miles-v0.1.1": miles_image,
+    "miles-v0.1.2": miles_v012_image,
+    "miles-v0.2.0": miles_v020_image,
+    "megatron-2d1fa8d": megatron_image,
+}
+SAMPLER_IMAGES = {"sglang-v0.5.23": rollout_image}
+# Used only by configs that leave trainer_image or inference_image empty.
+DEFAULT_IMAGES = {
+    "miles": "miles-v0.1.1",
+    "megatron": "megatron-2d1fa8d",
+    "sglang": "sglang-v0.5.23",
+}
 
 
 def image_for(backend, name=""):
     if not modal.is_local():
         return modal.Image.debian_slim()
-    if name:
-        if ":" in name:
-            module, attribute = name.rsplit(":", 1)
-            return getattr(importlib.import_module(module), attribute)
-        if name not in TRAINER_IMAGES:
-            raise ValueError(
-                f"unknown trainer image {name!r}; choose from {sorted(TRAINER_IMAGES)}"
-            )
-        return TRAINER_IMAGES[name]
-    return {"miles": miles_image, "megatron": megatron_image, "sglang": rollout_image}[
-        backend
-    ]
+    if ":" in name:
+        module, attribute = name.rsplit(":", 1)
+        return getattr(importlib.import_module(module), attribute)
+    kind, images = (
+        ("sampler", SAMPLER_IMAGES)
+        if backend == "sglang"
+        else ("trainer", TRAINER_IMAGES)
+    )
+    name = name or DEFAULT_IMAGES[backend]
+    if name not in images:
+        raise ValueError(f"unknown {kind} image {name!r}; choose from {sorted(images)}")
+    return images[name]
 
 
 def build_sampler_image(frontend, environment, images=("",)):
