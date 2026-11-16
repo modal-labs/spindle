@@ -14,6 +14,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - Speculative samplers use a corrected SGLang runtime that honors the earliest matching string, regex or EOS stop within an accepted token block.
 - Draft checkpoint revisions use separate cache directories, and downloads sharing target weights run one at a time.
+- Trainer backends use a local Unix socket so another process cannot take their port while model weights load and make startup fail.
 
 ## 0.1.7 - 2026-11-15
 

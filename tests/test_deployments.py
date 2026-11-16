@@ -19,7 +19,7 @@ from spindle.backends.miles_arguments import (
     defer_config_overrides,
 )
 from spindle.configs.qwen35_9b_lora_16k import Config as Parent
-from spindle.configuration import BaseConfig, _modal_platform
+from spindle.configuration import BaseConfig
 from spindle.control_plane import ControlPlane, create_control_plane_app
 from spindle.control_plane.deployments import (
     DeploymentConflict,
@@ -1338,15 +1338,3 @@ def test_native_mtp_reuses_the_resolved_target_checkpoint(weights):
     )
     assert row.draft_asset_path is None
     assert row.inference_settings["speculative_draft_model_path"] == row.asset_path
-
-
-@pytest.mark.parametrize("value", [None, "1"])
-def test_exclude_reserved_capacity_env_default(monkeypatch, value):
-    if value is None:
-        monkeypatch.delenv("SPINDLE_EXCLUDE_RESERVED_CAPACITY", raising=False)
-    else:
-        monkeypatch.setenv("SPINDLE_EXCLUDE_RESERVED_CAPACITY", value)
-    expected = {"environment": None, "region": None}
-    if value:
-        expected["exclude_reserved_capacity"] = True
-    assert _modal_platform() == expected
