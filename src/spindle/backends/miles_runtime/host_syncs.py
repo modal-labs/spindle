@@ -10,6 +10,8 @@ from importlib.metadata import PackageNotFoundError, distribution
 import torch
 import torch.nn.functional as F
 
+from . import gap_patches
+
 ENV_FLAG = "SPINDLE_HOST_SYNC_PATCHES"
 BRIDGE_COMMIT = "8cd3466d14d2337c8492827b3712482c2b3e4866"
 GEGLU_SOURCE_SHA256 = "7a23f78fb6827f0e2fe3157c679fa735727373c81f3555f950650930c0824727"
@@ -252,6 +254,9 @@ def _expert_forward():
 
         stacked_A = torch.stack([a.linear_in.weight for a in self.adapters])
         stacked_B = torch.stack([a.linear_out.weight for a in self.adapters])
+        if gap_patches.lora_grad_enabled():
+            stacked_A = gap_patches.contiguous_grad(stacked_A)
+            stacked_B = gap_patches.contiguous_grad(stacked_B)
         num_groups = stacked_A.shape[0] * stacked_A.shape[1]
         grouped_A = stacked_A.reshape(num_groups, *stacked_A.shape[2:])
         grouped_B = stacked_B.reshape(num_groups, *stacked_B.shape[2:])
