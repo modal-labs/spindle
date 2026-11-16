@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- Forward-only eval and control-plane latency benchmarks, a dense/MoE CI matrix, nightly async RL replay comparisons, and capture-to-sampler-ready timing. Benchmark jobs can target a separate results collector.
+- Forward-only eval and control-plane latency benchmarks, a dense/MoE CI matrix, a nightly async RL replay workflow template, and capture-to-sampler-ready timing. Benchmark jobs can target a separate results collector.
 
 - Benchmark suites, a local results browser with JSON uploads and revision comparisons, and an OTLP receiver. Opt-in benchmark telemetry captures native sampler metrics, trainer results, backend phases, and GPU memory statistics.
 

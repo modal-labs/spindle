@@ -108,7 +108,7 @@ explicit deployment credential secret can be selected with `--modal-secret`.
 Deployment credentials stay in Modal containers.
 The archive's recorded Git commit must match the requested revision.
 
-The **GPU benchmarks** manual GitHub Actions workflow accepts a recipe, revision,
+The **GPU benchmarks** GitHub Actions workflow template accepts a recipe, revision,
 and Modal environment. It uses the repository's `gpu-ci` environment credentials,
 publishes to the collector, saves a downloadable artifact, and cleans up apps
 owned by that workflow attempt. Deploy the collector before dispatching it. The
@@ -263,6 +263,11 @@ remain visible; small or noisy runs should not become merge gates.
 
 ## CI workloads
 
+Install `benchmarks/workflows/gpu-benchmarks.yml` as
+`.github/workflows/benchmarks.yml` using an account allowed to update Actions
+workflows. The checked-in template is reviewable without activating a schedule.
+Configure its Modal environment and deploy its collector before enabling it.
+
 Select `training-ci` in the GPU benchmark workflow to run small dense
 (Qwen3.5-9B), small MoE (Qwen3.6-35B-A3B), and large MoE (GLM-5.3), with
 eval and SFT workloads at 1,024 and 8,192 tokens and 1, 2, and 4 clients. These
@@ -283,8 +288,8 @@ The workflow publishes into a separately deployed collector named
 `frontier-training-dev`. Deploy that collector before enabling the schedule.
 Use `--collector-app NAME` on the controller to select another compatible
 collector; use the same value for result downloads and owned-app cleanup.
-The schedule is defined in source and does not run until this workflow reaches
-the repository's default branch.
+The schedule runs only after the workflow is installed under `.github/workflows`
+on the repository's default branch.
 
 Opt-in telemetry emits capture-start and sampler-ready boundaries for each
 publication. The results store joins these by model and version and reports

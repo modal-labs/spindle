@@ -1,0 +1,98 @@
+name: GPU benchmarks
+on:
+  schedule:
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Benchmark recipe
+        type: choice
+        options: [training-ci, inference, eval, trainer, control-plane, weight-sync, weight-sync-native-smoke, async-rl-dapo, async-rl-dapo-baseline, async-rl-dapo-router, async-rl-dapo-score-centering, async-rl-dapo-replay, async-rl-swe-gym]
+        default: trainer
+      revision:
+        description: Git revision to deploy (empty uses this workflow revision)
+        type: string
+        default: ''
+      modal_environment:
+        description: Modal environment containing the collector and deployment secrets
+        type: string
+        required: true
+        default: benchmarks
+permissions:
+  contents: read
+concurrency:
+  group: gpu-benchmarks-${{ inputs.modal_environment || 'benchmarks' }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      configs: ${{ steps.plan.outputs.configs }}
+    steps:
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          CONFIG: ${{ inputs.config }}
+        run: |
+          if [ "$EVENT" = schedule ]; then
+            echo 'configs=["async-rl-dapo-baseline","async-rl-dapo-router","async-rl-dapo-score-centering","async-rl-dapo-replay","async-rl-swe-gym"]' >> "$GITHUB_OUTPUT"
+          elif [ "$CONFIG" = training-ci ]; then
+            echo 'configs=["ci-small-dense-eval","ci-small-dense-trainer","ci-small-moe-eval","ci-small-moe-trainer","ci-large-moe-eval","ci-large-moe-trainer","control-plane","weight-sync"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "configs=[\"$CONFIG\"]" >> "$GITHUB_OUTPUT"
+          fi
+  benchmark:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        config: ${{ fromJSON(needs.plan.outputs.configs) }}
+    runs-on: ubuntu-latest
+    environment: gpu-ci
+    timeout-minutes: 360
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      MODAL_ENVIRONMENT: ${{ inputs.modal_environment || 'benchmarks' }}
+      BENCHMARK_CONFIG: benchmarks/configs/${{ matrix.config }}.json
+      BENCHMARK_REVISION: ${{ inputs.revision || github.sha }}
+      BENCHMARK_OWNER: gha-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.config }}
+      SWE_GYM_WORKER: ${{ github.workspace }}/.benchmark-swe-gym/06_gpu_and_ml/swe_gym/swe_gym.py
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Check out the pinned SWE-Gym worker
+        if: matrix.config == 'async-rl-swe-gym'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: modal-labs/modal-examples
+          ref: a590d8b608e526771378dc1bbf0dcb8b03ca0309
+          path: .benchmark-swe-gym
+      - run: python -m pip install uv==0.9.26
+      - run: uv sync --locked --python 3.12
+      - name: Validate the workload
+        run: uv run python -m spindle.benchmarks validate "$BENCHMARK_CONFIG"
+      - name: Run and publish benchmark
+        id: benchmark
+        run: |
+          uv run modal run -e "$MODAL_ENVIRONMENT" -m spindle.benchmarks.controller \
+            --environment "$MODAL_ENVIRONMENT" --collector-app frontier-training-dev --config "$BENCHMARK_CONFIG" \
+            --revision "$BENCHMARK_REVISION" --owner "$BENCHMARK_OWNER" \
+            --directory benchmark-results
+      - name: Stop apps owned by this workflow attempt
+        if: always() && steps.benchmark.outcome != 'skipped'
+        run: |
+          uv run modal run -e "$MODAL_ENVIRONMENT" -m spindle.benchmarks.controller \
+            --environment "$MODAL_ENVIRONMENT" --collector-app frontier-training-dev --cleanup-owner "$BENCHMARK_OWNER"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmarks-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.config }}
+          path: benchmark-results/
+          if-no-files-found: warn
+          retention-days: 30
