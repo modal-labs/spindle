@@ -81,7 +81,7 @@ host_syncs.install()
 allgather_cp_lora.install(megatron_model)
 mamba_packing.install(megatron_model)
 expert_grouped_gemm.install()
-fused_squared_relu.install()
+fused_squared_relu.install(AutoBridge)
 response_logits.install(logit_processors)
 moe_permute.install()
 

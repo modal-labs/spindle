@@ -12,6 +12,9 @@ class Config(Parent):
         "miles_cfg.max_tokens_per_gpu": 65536,
         # Chunked scoring is not validated with context parallelism.
         "miles_cfg.cli_options.log_probs_chunk_size": -1,
+        # Measured on the 64K layout only.
+        "trainer_env.EXPERT_GROUPED_GEMM": "0",
+        "trainer_env.FUSED_WEIGHTED_SQUARED_RELU": "0",
     }
 
 
