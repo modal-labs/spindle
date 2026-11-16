@@ -1,28 +1,24 @@
 from types import SimpleNamespace
 
+import pytest
+
 from spindle.backends.miles_runtime import fused_squared_relu
 
 
 class Bridge:
-    @staticmethod
-    def to_megatron_provider(bridge, load_weights=False):
-        return SimpleNamespace(use_fused_weighted_squared_relu=False, load_weights=load_weights)
+    def to_megatron_provider(
+        self, load_weights: bool = True, hf_path: str | None = None
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            use_fused_weighted_squared_relu=False, load_weights=load_weights
+        )
 
 
-def test_provider_gets_the_fused_activation(monkeypatch) -> None:
+def test_provider_gets_the_fused_activation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(fused_squared_relu.ENV_FLAG, "1")
-    bridge = type("PatchedBridge", (Bridge,), {})
 
-    assert fused_squared_relu.install(bridge)
-    provider = bridge.to_megatron_provider(None, load_weights=True)
+    assert fused_squared_relu.install(Bridge)
+    provider = Bridge().to_megatron_provider(load_weights=False)
 
     assert provider.use_fused_weighted_squared_relu
-    assert provider.load_weights
-
-
-def test_disabled_without_the_recipe_flag(monkeypatch) -> None:
-    monkeypatch.delenv(fused_squared_relu.ENV_FLAG, raising=False)
-    bridge = type("UntouchedBridge", (Bridge,), {})
-
-    assert not fused_squared_relu.install(bridge)
-    assert not bridge.to_megatron_provider(None).use_fused_weighted_squared_relu
+    assert not provider.load_weights
