@@ -775,16 +775,16 @@ def create_control_plane_app(
             encoding=request.headers.get("content-encoding", "identity"),
         )
         content_type = request.headers.get("content-type", "application/json")
-        body, identity = await asyncio.to_thread(
-            _training_envelope,
-            body,
-            content_type,
-            request.headers.get("content-encoding", "identity"),
+        encoding = request.headers.get("content-encoding", "identity")
+        decoded, identity = await asyncio.to_thread(
+            _training_envelope, body, content_type, encoding
         )
-        mark("cp.forward_backward.decompressed", bytes=len(body))
+        mark("cp.forward_backward.decompressed", bytes=len(decoded))
+        del decoded
         model_id = identity["model_id"]
         engine = await control_plane.engine_for(model_id)
-        request_id = await engine.forward_backward(body, content_type)
+        # Decompressed replay batches reach hundreds of MB.
+        request_id = await engine.forward_backward(body, content_type, encoding)
         mark("cp.forward_backward.forwarded", request_id=request_id, model_id=model_id)
         return {"request_id": request_id, "model_id": model_id}
 
