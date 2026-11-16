@@ -1,4 +1,4 @@
-"""Prototype kernel-time patches, each opt-in through SPINDLE_GAP_PATCHES (comma list).
+"""Prototype kernel-time patches, each opt-in through GAP_PATCHES (comma list).
 
 - relu2: fuse the MoE squared-ReLU with the router-probability multiply
   (Megatron's use_fused_weighted_squared_relu).
@@ -21,7 +21,7 @@ import os
 
 import torch
 
-ENV = "SPINDLE_GAP_PATCHES"
+ENV = "GAP_PATCHES"
 
 
 def enabled() -> set[str]:
