@@ -21,6 +21,9 @@ class Config(Parent):
         "sglang_cfg.max_loaded_loras": 32,
         "sglang_cfg.max_mamba_cache_size": 640,
         "sglang_cfg.mem_fraction_static": 0.9,
+        # Prefill runs eagerly on this model, so batch admissions once 32 requests decode.
+        "sglang_cfg.prefill_decode_interval": 16,
+        "sglang_cfg.prefill_decode_interval_min_bs": 32,
     }
 
 
