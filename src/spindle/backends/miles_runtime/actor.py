@@ -42,6 +42,7 @@ from . import (
     fused_squared_relu,
     host_syncs,
     mamba_packing,
+    moe_permute,
     response_logits,
 )
 from .actor_shared import (
@@ -82,6 +83,7 @@ mamba_packing.install(megatron_model)
 expert_grouped_gemm.install()
 fused_squared_relu.install()
 response_logits.install(logit_processors)
+moe_permute.install()
 
 
 def _publish_checkpoints_across_nodes() -> None:
