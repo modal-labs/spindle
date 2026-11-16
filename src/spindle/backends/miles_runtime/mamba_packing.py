@@ -1,18 +1,22 @@
 """Megatron's Mamba mixer restarts its convolution and state at each packed
 sequence only when PackedSeqParams carries seq_idx, which it derives from
-total_tokens. Miles leaves total_tokens unset, so every row after the first in
-a micro-batch continues from the previous row's state.
+total_tokens. Miles before v0.2.0 leaves total_tokens unset, so every row after
+the first in a micro-batch continues from the previous row's state.
 """
 
 from __future__ import annotations
 
+from argparse import Namespace
+from types import ModuleType
+from typing import Any
 
-def install(megatron_model) -> None:
+
+def install(megatron_model: ModuleType) -> None:
     original = megatron_model.get_packed_seq_params
     if getattr(original, "__spindle_mamba_packing__", False):
         return
 
-    def get_packed_seq_params(batch, args):
+    def get_packed_seq_params(batch: dict[str, Any], args: Namespace) -> object:
         params = original(batch, args)
         if params is not None and params.seq_idx is None:
             # Each context-parallel rank holds an equal slice of the micro-batch,

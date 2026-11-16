@@ -28,7 +28,7 @@ Spindle requires Python 3.12. With [uv](https://docs.astral.sh/uv/), create a pr
 ```bash
 uv init --python 3.12 my-spindle-project
 cd my-spindle-project
-uv add 'modal-spindle @ git+https://github.com/modal-projects/spindle.git@v0.1.6'
+uv add 'modal-spindle @ git+https://github.com/modal-projects/spindle.git@v0.1.7'
 uv run spindle skills install
 ```
 
@@ -113,7 +113,7 @@ In a terminal, this starts an interactive deploy. It first checks that each secr
 
 It then asks:
 
-1. Which models to post-train. Qwen3.6-35B-A3B is selected by default.
+1. Which models to post-train. None are selected at first; press space to select one.
 2. LoRA or full fine-tuning, for models that support both. LoRA is selected by default.
 3. The longest sequence you'll train on (prompt + completion). Each model gets its smallest bundled config that fits.
 
@@ -374,7 +374,7 @@ Check your current version with `uv run spindle --version`. Installs older than 
 Read the [CHANGELOG.md](CHANGELOG.md) sections between your version and the new one; minor releases can change config defaults. Then point the dependency at the new tag and redeploy:
 
 ```bash
-uv add 'modal-spindle @ git+https://github.com/modal-projects/spindle.git@v0.2.0'
+uv add 'modal-spindle @ git+https://github.com/modal-projects/spindle.git@v0.1.7'
 spindle deploy config.py
 ```
 
@@ -423,6 +423,9 @@ a training step and read it in Perfetto.
 
 See [Observability](docs/observability.md) for OTLP export to Datadog or a custom
 destination, experiment labels, and the complete span/metric inventory.
+
+See [Cost attribution](docs/cost-attribution.md) for how to label runs and split
+the cost of shared trainers and samplers across them.
 
 ## Validation
 
