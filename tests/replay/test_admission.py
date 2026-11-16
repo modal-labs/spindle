@@ -1,10 +1,10 @@
-from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 from tinker import types
 
 from spindle.backends import ForwardBatch, ForwardItem
+from spindle.backends.miles_config import MilesBackendConfig
 from spindle.backends.megatron_runtime.common.forward_backward import (
     build_sequence_batches,
 )
@@ -69,10 +69,12 @@ def test_router_requests_not_coalesced_with_ordinary_requests():
 def test_router_requires_enabled_trainer(tmp_path, explicit_disable):
     backend = _backend(tmp_path)
     if explicit_disable:
-        backend.config = replace(
-            backend.config,
-            cli_options={"use_rollout_routing_replay": False},
-            extra_args=("--use-rollout-routing-replay",),
+        backend.config = MilesBackendConfig.model_validate(
+            {
+                **backend.config.model_dump(),
+                "cli_options": {"use_rollout_routing_replay": False},
+                "extra_args": ("--use-rollout-routing-replay",),
+            }
         )
     backend.accept_model("m", _spec())
     with pytest.raises(ValueError, match="use-rollout-routing-replay"):
@@ -94,7 +96,9 @@ def test_router_accepts_enabled_native_option(tmp_path, setting):
         if setting == "cli_options"
         else {"extra_args": ("--use-rollout-routing-replay",)}
     )
-    backend.config = replace(backend.config, **options)
+    backend.config = MilesBackendConfig.model_validate(
+        {**backend.config.model_dump(), **options}
+    )
     backend.accept_model("m", _spec())
     backend.forward_backward(
         ForwardBatch(
