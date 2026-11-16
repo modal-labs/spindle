@@ -4,21 +4,13 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
-### Added
-
-- Pretrained DFlash inference recipes for Qwen3-8B, Qwen3.5-9B, Qwen3.8-27B and GLM-5.3 Flash, plus Qwen3.5-4B native MTP using its cached target checkpoint.
-
-### Fixed
-
-- Speculative samplers use a corrected SGLang runtime that honors the earliest matching string, regex or EOS stop within an accepted token block.
-- Draft checkpoint revisions use separate cache directories, and downloads sharing target weights run one at a time.
-
 ## 0.1.7 - 2026-11-15
 
 See what each run or team costs on a shared deployment: Spindle records the tokens every session uses, serves them through Tinker's `get_billing_usage`, and `spindle usage` turns them into dollars per run or label. See [Cost attribution](docs/cost-attribution.md).
 
 ### Added
 
+- Pretrained DFlash inference recipes for Qwen3-8B, Qwen3.5-9B, Qwen3.8-27B and GLM-5.3 Flash, plus Qwen3.5-4B native MTP using its cached target checkpoint.
 - An opt-in `miles-v0.2.0` trainer image with native adapter checkpoints, for single-node trainers in bridge mode. It trains the same shared-`lora_A` adapter layout as the existing images, which remain the default. Checkpoints don't restore across Miles versions. See [Images](docs/deployment-configs.md#images).
 - Token usage per session on shared trainers and samplers, stored on a `<frontend>-usage` Modal Volume and readable with Tinker's `get_billing_usage`. Label runs with `user_metadata`; `SPINDLE_USAGE_LABEL_KEYS` in the frontend's API secret lists the keys kept (default `run_id,team_id`). See [Cost attribution](docs/cost-attribution.md).
 - `spindle usage` splits Modal app cost across runs or labels by tokens processed, reading costs from Modal's billing report. Idle and cold-start time of trainers and sampler pools isn't charged to a run but still costs you, so it's shown as separate lines; `--hide-overhead` hides them. If Modal's billing report doesn't cover the whole window yet, only the hours it covers are split.
@@ -38,6 +30,8 @@ See what each run or team costs on a shared deployment: Spindle records the toke
 
 ### Fixed
 
+- Speculative samplers use a corrected SGLang runtime that honors the earliest matching string, regex or EOS stop within an accepted token block.
+- Draft checkpoint revisions use separate cache directories, and downloads sharing target weights run one at a time.
 - A request a Modal-hosted frontend rejected with a 400, such as a misaligned `get_billing_usage` window, no longer makes the Tinker SDK retry it for 5 minutes. Modal's proxy compressed the error and dropped its `Content-Length`, which the SDK treats as a retryable proxy rejection; error responses are now sent uncompressed.
 - Local sampling task runners can return an asyncio future as well as a coroutine.
 - Retrieving a null or list result returns JSON when the client requests protobuf.
