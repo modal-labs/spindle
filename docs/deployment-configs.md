@@ -69,16 +69,16 @@ Bundled LoRA recipes enable speculative decoding with these checkpoints:
 
 | Recipe | Method | Draft checkpoint |
 | --- | --- | --- |
-| `qwen35-4b-lora-32k-mtp-b200` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
-| `qwen3-8b-lora-32k-dflash-b300` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
-| `qwen35-9b-instruct-lora-32k-dflash-b200` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
-| `qwen38-27b-lora-32k-dflash-b200` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
-| `glm53-flash-lora-32k-dflash-b200` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |
+| `qwen35-4b-lora-32k-mtp` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
+| `qwen3-8b-lora-32k-with-spec` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
+| `qwen35-9b-instruct-lora-32k-with-spec` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
+| `qwen38-27b-lora-32k-with-spec` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
+| `glm53-flash-lora-32k-with-spec` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |
 
 Deploy a recipe by passing its Python path to `spindle deploy`, for example:
 
 ```sh
-spindle deploy src/spindle/configs/qwen35_4b_lora_32k_mtp_b200.py
+spindle deploy src/spindle/configs/qwen35_4b_lora_32k_mtp.py
 ```
 
 For a separate drafter, set `inference_draft_model` and

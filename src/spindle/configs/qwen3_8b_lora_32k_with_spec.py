@@ -2,7 +2,7 @@ from spindle.configs.qwen3_8b_lora_32k import Config as Parent
 
 
 class Config(Parent):
-    name = "qwen3-8b-lora-32k-dflash-b300"
+    name = "qwen3-8b-lora-32k-with-spec"
     inference_gpu = "B300"
     inference_gpus_per_node = 1
     inference_target_concurrency = 128

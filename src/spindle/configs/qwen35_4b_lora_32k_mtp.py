@@ -2,7 +2,7 @@ from spindle.configs.qwen35_4b_lora_32k import Config as Parent
 
 
 class Config(Parent):
-    name = "qwen35-4b-lora-32k-mtp-b200"
+    name = "qwen35-4b-lora-32k-mtp"
     trainer_gpu = "B200"
     inference_gpu = "B200"
     inference_target_concurrency = 64

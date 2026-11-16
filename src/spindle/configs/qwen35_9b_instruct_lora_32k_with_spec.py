@@ -2,7 +2,7 @@ from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
 
 
 class Config(Parent):
-    name = "qwen35-9b-instruct-lora-32k-dflash-b200"
+    name = "qwen35-9b-instruct-lora-32k-with-spec"
     max_context_length = 32768
     trainer_gpu = "B200"
     trainer_gpus_per_node = 1
