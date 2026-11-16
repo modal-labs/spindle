@@ -9,9 +9,11 @@ class Config(Parent):
         "sglang_cfg.speculative_num_steps": 3,
         "sglang_cfg.speculative_eagle_topk": 1,
         "sglang_cfg.speculative_num_draft_tokens": 4,
-        # MTP keeps a Mamba state per draft token. With 448 cached states the
-        # sampler runs 89 requests at a time and still has room for the KV cache.
-        "sglang_cfg.max_mamba_cache_size": 448,
+        # MTP keeps a Mamba state per draft token. Storing the SSM state in
+        # float16 halves that memory, so 640 cached states fit and the sampler
+        # runs 128 requests at a time. The trainer keeps its state in float32.
+        "sglang_cfg.mamba_ssm_dtype": "float16",
+        "sglang_cfg.max_mamba_cache_size": 640,
         "sglang_cfg.mem_fraction_static": 0.9,
     }
 
