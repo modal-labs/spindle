@@ -65,6 +65,9 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 ## Speculative inference
 
+The bundled speculative recipes below can increase inference tokens per second (TPS); benchmark them at your intended request concurrency.
+Monitor RL stability by comparing rewards, KL divergence, and sampling-versus-training log-probability mismatch against a run without speculative decoding.
+
 Bundled LoRA recipes enable speculative decoding with these checkpoints:
 
 | Recipe | Method | Draft checkpoint |
