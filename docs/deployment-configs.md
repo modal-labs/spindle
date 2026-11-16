@@ -67,12 +67,12 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 
 
-Currently we have LoRA training recipes with validated draft models as the following configs: 
+The default Qwen3-8B 32K recipe enables DFlash. The following LoRA recipes use draft models:
 
 | Recipe | Method | Draft checkpoint |
 | --- | --- | --- |
 | `qwen35-4b-lora-32k-mtp` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
-| `qwen3-8b-lora-32k-with-spec` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
+| `qwen3-8b-lora-32k` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
 | `qwen35-9b-instruct-lora-32k-with-spec` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
 | `qwen38-27b-lora-32k-with-spec` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
 | `glm53-flash-lora-32k-with-spec` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |

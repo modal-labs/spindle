@@ -1,7 +1,7 @@
-from spindle.configs.qwen3_8b_lora_32k import Config as Parent
+from spindle.configs._qwen3_lora import Qwen3Lora32k
 
 
-class Config(Parent):
+class Config(Qwen3Lora32k):
     name = "qwen3-4b-lora-32k"
     model = "Qwen/Qwen3-4B"
     # The 4B model fits one GPU, so the four trainer GPUs each hold a replica.

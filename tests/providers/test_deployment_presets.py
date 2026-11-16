@@ -30,6 +30,29 @@ def test_all_packaged_recipes_validate_offline(path):
         } == set(resolved.inference_settings["lora_target_modules"])
 
 
+@pytest.mark.parametrize(
+    "preset,draft,gpu",
+    [
+        ("qwen3-8b-lora-32k", "z-lab/Qwen3-8B-DFlash-b16", "B300"),
+        ("qwen3-4b-lora-32k", "", "H100"),
+        ("qwen25-7b-instruct-lora-32k", "", "H100"),
+        ("qwen25-3b-lora-32k", "", "H100"),
+    ],
+)
+def test_qwen3_draft_default_is_specific_to_8b(preset, draft, gpu):
+    spec = load(config_path(preset))
+    deployment = DeploymentConfig.create(spec)
+    assert spec.inference_draft_model == draft
+    assert spec.inference_gpu == gpu
+    serving = deployment.inference_settings
+    if draft:
+        assert serving["speculative_algorithm"] == "DFLASH"
+        assert serving["speculative_draft_model_path"] == deployment.draft_asset_path
+    else:
+        assert "speculative_algorithm" not in serving
+        assert "speculative_draft_model_path" not in serving
+
+
 @pytest.mark.parametrize("preset", ["qwen35-35b-a3b-fft-64k", "qwen36-35b-a3b-fft-64k"])
 def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
     config = backend_config(load(config_path(preset)))["megatron"]
