@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Added
+
+- `glm53-flash-lora-256k`: GLM-5.3 Flash LoRA with 256K-token context on one 8×B300 node, with expert-routing replay. Long GLM-5.3 Flash training sequences also use less GPU memory.
+
 ### Fixed
 
 - Long-sequence training requests with expert-routing replay no longer fail with intermittent 503 errors.
