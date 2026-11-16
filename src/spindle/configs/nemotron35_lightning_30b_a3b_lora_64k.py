@@ -21,6 +21,8 @@ class Config(Parent):
         "miles_cfg.cli_options.log_probs_chunk_size": 4096,
         # One grouped GEMM per expert projection instead of one GEMM per expert.
         "trainer_env.EXPERT_GROUPED_GEMM": "1",
+        # One kernel for the expert activation times its router probability.
+        "trainer_env.FUSED_WEIGHTED_SQUARED_RELU": "1",
         "sglang_cfg.max_loras_per_batch": 4,
         "sglang_cfg.max_loaded_loras": 32,
     }

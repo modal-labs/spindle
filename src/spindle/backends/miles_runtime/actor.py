@@ -39,6 +39,7 @@ from . import (
     allgather_cp_lora,
     expert_grouped_gemm,
     expert_lora_compat,
+    fused_squared_relu,
     host_syncs,
     mamba_packing,
 )
@@ -78,6 +79,7 @@ host_syncs.install()
 allgather_cp_lora.install(megatron_model)
 mamba_packing.install(megatron_model)
 expert_grouped_gemm.install()
+fused_squared_relu.install()
 
 
 def _publish_checkpoints_across_nodes() -> None:
