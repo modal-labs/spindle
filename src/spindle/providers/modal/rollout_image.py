@@ -7,15 +7,19 @@ from .image_dependencies import (
     ignore_config_source,
 )
 
-SGLANG_IMAGE = "lmsysorg/sglang:v0.5.21"
+SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
-SGLANG_BRANCH = "spindle-sglang-v0.5.21"
-SGLANG_REVISION = "a3e0e1725406b9330bd062520d4f99d0aa73ee4f"
+SGLANG_BRANCH = "spindle-sglang-v0.5.23"
+SGLANG_REVISION = "90785332b8e3e1202ae280d85ecec197473bd5a8"
+# v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
+CORE_SAMPLER_PACKAGES = (
+    *(p for p in CORE_PACKAGES if not p.startswith("opentelemetry-")),
+    "opentelemetry-sdk==1.45.2",
+    "opentelemetry-exporter-otlp-proto-http==1.45.2",
+)
 
 
-def runtime_image_for(
-    *, image: str, branch: str, revision: str, core_packages=CORE_PACKAGES
-):
+def runtime_image_for(*, image: str, branch: str, revision: str, core_packages):
     """Build a matched SGLang image/source pair, including the fork's Rust binding."""
     return (
         modal.Image.from_registry(image)
@@ -53,8 +57,6 @@ def runtime_image_for(
                 "HF_MODULES_CACHE": "/tmp/huggingface/modules",
                 "SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN": "1",
                 "SGLANG_DISABLE_CUDNN_CHECK": "1",
-                # SGLang applies split-K only to the BF16 rank-32 CSGMV shapes it
-                # measured, and never in deterministic mode.
                 "SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1",
             }
         )
@@ -62,6 +64,9 @@ def runtime_image_for(
 
 
 runtime_image = runtime_image_for(
-    image=SGLANG_IMAGE, branch=SGLANG_BRANCH, revision=SGLANG_REVISION
+    image=SGLANG_IMAGE,
+    branch=SGLANG_BRANCH,
+    revision=SGLANG_REVISION,
+    core_packages=CORE_SAMPLER_PACKAGES,
 )
 image = runtime_image.add_local_python_source("spindle", ignore=ignore_config_source)

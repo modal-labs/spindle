@@ -1,4 +1,3 @@
-import contextlib
 import importlib
 import importlib.util
 import sys
@@ -104,6 +103,12 @@ def _distributed_actor(monkeypatch, identities: list[str], via_task_id: bool = T
 
 def _load_actor(monkeypatch):
     importlib.import_module("spindle.backends.miles_runtime")
+    # These need real torch; import them before torch is stubbed below.
+    importlib.import_module("spindle.backends.miles_runtime.replay_data")
+    importlib.import_module("spindle.backends.score_centering")
+    monkeypatch.delitem(
+        sys.modules, "spindle.backends.miles_runtime.actor_shared", raising=False
+    )
     _module(monkeypatch, "modal")
     torch = _module(monkeypatch, "torch")
     _module(monkeypatch, "torch.distributed")
@@ -126,7 +131,9 @@ def _load_actor(monkeypatch):
     megatron_model = _module(monkeypatch, "miles.backends.megatron_utils.model")
     megatron_model.get_batch = lambda *args, **kwargs: {}
     checkpoint = _module(monkeypatch, "miles.backends.megatron_utils.lora.checkpoint")
-    _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
+    _module(
+        monkeypatch, "miles.backends.megatron_utils.lora.model"
+    ).run_forward_backward = lambda *args, **kwargs: None
     _module(
         monkeypatch, "miles.backends.training_utils.replay_data"
     ).fill_replay_data = lambda **kwargs: None
@@ -245,13 +252,21 @@ class _FakeVolume:
         self.events.append(("copy", tuple(src_paths), dst_path, recursive))
 
 
+def test_training_passes_keep_earlier_gradients(monkeypatch) -> None:
+    _load_actor(monkeypatch)
+    run = sys.modules["miles.backends.megatron_utils.lora.model"].run_forward_backward
+    assert run.__spindle_gradient_accumulation__
+
+
 @pytest.mark.parametrize("minutes, expected", [(120, 120), (10, 30)])
 def test_gloo_group_waits_as_long_as_the_distributed_timeout(
     monkeypatch, minutes, expected
 ) -> None:
     actor = _load_actor(monkeypatch)
     groups = []
-    actor.dist.new_group = lambda **kwargs: groups.append(kwargs) or "gloo"
+    sys.modules["torch.distributed"].new_group = lambda **kwargs: (
+        groups.append(kwargs) or "gloo"
+    )
     actor._use_distributed_timeout_for_gloo(minutes)
     assert sys.modules["miles.ray.train_actor"].init_gloo_group() == "gloo"
     assert groups == [{"backend": "gloo", "timeout": timedelta(minutes=expected)}]
@@ -266,8 +281,8 @@ def test_checkpoint_is_published_from_committed_state(monkeypatch, tmp_path) -> 
     actor.volumes.modal.Volume = types.SimpleNamespace(
         from_name=lambda name: _FakeVolume(events)
     )
-    actor.dist.is_available = lambda: False
-    actor.dist.is_initialized = lambda: False
+    sys.modules["torch.distributed"].is_available = lambda: False
+    sys.modules["torch.distributed"].is_initialized = lambda: False
 
     def original(path, write_shards, *args, **kwargs):
         raise AssertionError("miles' rank-0 rename cannot see other nodes' shards")
@@ -310,8 +325,8 @@ def test_publishing_leaves_rank_zero_its_own_files(monkeypatch, tmp_path) -> Non
     actor.volumes.modal.Volume = types.SimpleNamespace(
         from_name=lambda name: _FakeVolume(events, extra=("rank00000",))
     )
-    actor.dist.is_available = lambda: False
-    actor.dist.is_initialized = lambda: False
+    sys.modules["torch.distributed"].is_available = lambda: False
+    sys.modules["torch.distributed"].is_initialized = lambda: False
     actor.checkpoint_io.write_checkpoint_dir = lambda *args, **kwargs: None
     actor._publish_checkpoints_across_nodes()
     monkeypatch.setattr(actor.volumes, "sync_checkpoint_volume", lambda action: None)
@@ -352,8 +367,8 @@ def test_a_checkpoint_missing_a_peer_shard_is_not_published(
     actor.volumes.modal.Volume = types.SimpleNamespace(
         from_name=lambda name: _FakeVolume([])
     )
-    actor.dist.is_available = lambda: False
-    actor.dist.is_initialized = lambda: False
+    sys.modules["torch.distributed"].is_available = lambda: False
+    sys.modules["torch.distributed"].is_initialized = lambda: False
     actor.checkpoint_io.write_checkpoint_dir = lambda *args, **kwargs: None
     actor._publish_checkpoints_across_nodes()
     monkeypatch.setattr(actor.volumes, "sync_checkpoint_volume", lambda action: None)
@@ -366,7 +381,7 @@ def test_a_checkpoint_missing_a_peer_shard_is_not_published(
         _FakeVolume, "listdir", lambda self, path: []
     )  # the peer's commit never landed
 
-    with pytest.raises(RuntimeError, match="__8_0.distcp"):
+    with pytest.raises(RuntimeError, match=r"__8_0\.distcp"):
         actor.checkpoint_io.write_checkpoint_dir(
             tmp_path / "000000" / "miles",
             lambda directory: (directory / "__0_0.distcp").write_text("shard"),
@@ -471,64 +486,3 @@ def test_sync_checkpoint_volume_fails_on_every_rank(monkeypatch) -> None:
     errors = [future.exception() for future in futures]
     assert all(isinstance(error, RuntimeError) for error in errors)
     assert all("volume commit failed" in str(error) for error in errors)
-
-
-def _trainer(monkeypatch, actor):
-    base = actor.MultiLoRATrainRayActor
-    base.forward_backward = lambda self, batch_id, data: "trained"
-    base.forward_only = lambda self, batch_id, data: "scored"
-    actor.torch.profiler = types.SimpleNamespace(record_function=contextlib.nullcontext)
-    monkeypatch.setattr(
-        actor.SpindleMilesTrainRayActor,
-        "_log_peak_memory",
-        staticmethod(lambda operation: None),
-    )
-    trainer = actor.SpindleMilesTrainRayActor()
-    trainer.model = "model"
-    return trainer
-
-
-def test_only_forward_backward_scales_kept_gradients(monkeypatch) -> None:
-    actor = _load_actor(monkeypatch)
-    trainer = _trainer(monkeypatch, actor)
-    scaled = []
-    monkeypatch.setattr(
-        actor.grad_accumulation, "keep_grads_through_reduce", scaled.append
-    )
-
-    assert trainer.forward_only(0, "batch") == "scored"
-    assert scaled == []
-    assert trainer.forward_backward(0, "batch") == "trained"
-    assert trainer.forward_backward(1, "batch") == "trained"
-    assert scaled == ["model", "model"]
-
-
-def test_startup_checks_the_reduce_miles_runs(monkeypatch) -> None:
-    actor = _load_actor(monkeypatch)
-    trainer = _trainer(monkeypatch, actor)
-    del trainer.model
-    actor.dist.is_initialized = lambda: False
-    actor.AutoBridge.to_megatron_provider = None
-
-    def init(self, args, role):
-        self.args, self.model = args, "loaded model"
-        return 7
-
-    actor.MultiLoRATrainRayActor.init = init
-    actor.megatron_model.setup_train_iteration_config = (
-        lambda args, model, optimizer, disable_optimizer: types.SimpleNamespace(
-            finalize_model_grads_func=("the reduce for", model)
-        )
-    )
-    checked = []
-    monkeypatch.setattr(
-        actor.grad_accumulation,
-        "check_reduce_keeps_grads",
-        lambda model, finalize: checked.append((model, finalize)),
-    )
-    args = types.SimpleNamespace(
-        distributed_timeout_minutes=30, enable_mtp_training=False
-    )
-
-    assert trainer.init(args, "actor") == 7
-    assert checked == [("loaded model", ("the reduce for", "loaded model"))]

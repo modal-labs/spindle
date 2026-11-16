@@ -1,6 +1,7 @@
 """Flat Python recipes. Modal and the backend validate their own options."""
 
 from copy import deepcopy
+import os
 
 
 def _apply_overrides(values, overrides):
@@ -12,10 +13,17 @@ def _apply_overrides(values, overrides):
         target[parts[-1]] = deepcopy(value)
 
 
+def _modal_platform():
+    modal = {"environment": None, "region": None}
+    if os.environ.get("SPINDLE_EXCLUDE_RESERVED_CAPACITY") == "1":
+        modal["exclude_reserved_capacity"] = True
+    return modal
+
+
 class BaseConfig:
     platform = {
         "frontend": "spindle",
-        "modal": {"environment": None, "region": None},
+        "modal": _modal_platform(),
         "secrets": {
             "api": "spindle-api",
             "sampler_proxy": "spindle-proxy",
@@ -65,7 +73,8 @@ class BaseConfig:
     inference_disk_mib = 0
     inference_min_replicas = 0
     inference_max_replicas = 8
-    inference_target_concurrency = 16
+    # None scales out when a replica's max_running_requests slots are full.
+    inference_target_concurrency = None
     # None measures the rate from the pool's own prefills.
     inference_routing_prefill_tokens_per_second = None
     # None allows a gap of 40% of max_running_requests, at least 4.
@@ -75,6 +84,8 @@ class BaseConfig:
     # None picks cache_wait for LoRA pools with one SGLang data-parallel rank,
     # and affinity otherwise.
     inference_lora_routing = None
+    # None uses Modal's default, which adds replicas as soon as load passes the target.
+    inference_scaleup_window_s = None
     inference_scaledown_window_s = 300
     inference_startup_timeout_s = 1200
     inference_env = {}
