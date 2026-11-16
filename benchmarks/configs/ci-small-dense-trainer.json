@@ -1,0 +1,28 @@
+{
+  "name": "ci-small-dense-trainer",
+  "experiment": "ci-small-dense",
+  "suite": "trainer",
+  "model": "Qwen/Qwen3.5-9B",
+  "deployment": "src/spindle/configs/qwen35_9b_instruct_lora_16k.py",
+  "clients": [
+    1,
+    2,
+    4
+  ],
+  "context_lengths": [
+    1024,
+    8192
+  ],
+  "steps": 10,
+  "warmup_steps": 2,
+  "batch_size": 1,
+  "timeout_s": 14400,
+  "deployment_overrides": {
+    "trainer_gpu": "H100",
+    "inference_gpu": "H100",
+    "trainer_max_clients_per_instance": 4,
+    "inference_min_replicas": 0,
+    "inference_max_replicas": 1,
+    "weights_revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "qwen35b-dapo-replay",
+  "suite": "async-rl",
+  "recipe": "dapo",
+  "model": "Qwen/Qwen3.6-35B-A3B",
+  "deployment": "src/spindle/configs/qwen36_35b_a3b_lora_32k.py",
+  "clients": [
+    2
+  ],
+  "context_lengths": [
+    8192
+  ],
+  "output_tokens": 1024,
+  "steps": 5,
+  "rank": 32,
+  "recipe_config": {
+    "groups_per_update": 1,
+    "samples_per_group": 4,
+    "max_candidate_groups": 4,
+    "warmup_samples": 1,
+    "tokenizer_revision": "345d467b117d1fd5eda9b879a5988de9ae5f47a7",
+    "router_replay": true,
+    "score_centering": true,
+    "top_k": 64,
+    "top_p": 0.95
+  },
+  "deployment_overrides": {
+    "trainer_max_clients_per_instance": 2,
+    "inference_min_replicas": 0,
+    "inference_max_replicas": 1,
+    "weights_revision": "345d467b117d1fd5eda9b879a5988de9ae5f47a7",
+    "trainer_gpu": "H200",
+    "inference_gpu": "H200",
+    "miles_cfg.cli_options.use_rollout_routing_replay": true,
+    "sglang_cfg.enable_return_routed_experts": true
+  },
+  "experiment": "nightly-dapo-replay",
+  "timeout_s": 14400
+}

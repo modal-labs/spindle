@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -10,7 +9,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
+
+from spindle.telemetry.benchmark import enabled, start_collection
 
 
 def start_sglang(
@@ -149,7 +150,11 @@ def start_sglang(
                 str(max_queued_requests),
             ]
         )
-    return subprocess.Popen(command, start_new_session=True)
+    if enabled():
+        command.append("--enable-metrics")
+    process = subprocess.Popen(command, start_new_session=True)
+    start_collection(urls=(f"http://127.0.0.1:{port}/metrics",), process=process)
+    return process
 
 
 def start_fft_sidecar(
@@ -210,37 +215,6 @@ def start_lora_sidecar(
         bulletin_volume,
     ]
     return subprocess.Popen(command, start_new_session=True)
-
-
-def request_activity(metrics: str) -> tuple[float, float]:
-    """SGLang's running or queued and finished request counts, summed over its ranks."""
-    totals = {"num_running_reqs": 0.0, "num_queue_reqs": 0.0, "num_requests_total": 0.0}
-    seen = set()
-    for line in metrics.splitlines():
-        name = re.split(r"[{\s]", line, maxsplit=1)[0].removeprefix("sglang:")
-        if line.startswith("sglang:") and name in totals:
-            totals[name] += float(line.rsplit(maxsplit=1)[-1])
-            seen.add(name)
-    if "num_running_reqs" not in seen:
-        raise ValueError("SGLang metrics have no sglang:num_running_reqs")
-    active = totals["num_running_reqs"] + totals["num_queue_reqs"]
-    return active, totals["num_requests_total"]
-
-
-def sglang_busy(port: int) -> Callable[[], bool]:
-    """Whether SGLang had work since the last call, counting requests that finished in between."""
-    last_finished = None
-
-    def busy() -> bool:
-        nonlocal last_finished
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/metrics", timeout=2
-        ) as response:
-            active, finished = request_activity(response.read().decode())
-        before, last_finished = last_finished, finished
-        return active > 0 or (before is not None and finished > before)
-
-    return busy
 
 
 def wait_http(url: str, process: subprocess.Popen, timeout: float) -> None:

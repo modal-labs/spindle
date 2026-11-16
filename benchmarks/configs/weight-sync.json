@@ -1,0 +1,11 @@
+{
+  "name": "qwen9b-weight-sync",
+  "suite": "weight-sync",
+  "model": "Qwen/Qwen3.5-9B",
+  "deployment": "src/spindle/configs/qwen35_9b_instruct_lora_16k.py",
+  "clients": [1, 2],
+  "context_lengths": [1024],
+  "steps": 5,
+  "warmup_steps": 1,
+  "deployment_overrides": {"trainer_max_clients_per_instance": 2, "inference_min_replicas": 0, "inference_max_replicas": 1}
+}

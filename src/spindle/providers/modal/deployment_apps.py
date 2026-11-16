@@ -20,7 +20,6 @@ from modal.config import config
 
 from spindle.deployments import DeploymentConfig
 from spindle.inference.serving import (
-    sglang_busy,
     start_fft_sidecar,
     start_lora_sidecar,
     supervise_children,
@@ -28,7 +27,6 @@ from spindle.inference.serving import (
     wait_http,
 )
 from spindle.startup_timing import SAMPLER_COMPONENT, TRAINER_COMPONENT, timeline
-from spindle.usage import ContainerUsage, poll_busy
 
 from .app_tags import app_tags
 from .deployment import trainer_deployment_env
@@ -54,7 +52,6 @@ from .miles_image import image as miles_image
 from .ray_cluster import start_trainer_cluster
 from .rollout_image import image as rollout_image
 from .serve import run_engine_with_backend
-from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
 
 TRAINER_IMAGES = {"miles-v0.1.2": miles_v012_image}
@@ -97,7 +94,6 @@ def volumes_for(platform):
         "/bulletin": modal.Volume.from_name(
             storage["bulletin"], create_if_missing=True, version=2
         ),
-        USAGE_ROOT: usage_volume(platform["frontend"]),
     }
 
 
@@ -155,7 +151,8 @@ def log_scheduled_gpus(role: str) -> None:
 
 def deployment_env(values):
     """Keep user environment overrides separate from Spindle's deployment wiring."""
-    if any(key.startswith("SPINDLE_") for key in values):
+    benchmark_keys = {"SPINDLE_BENCHMARK_METRICS", "SPINDLE_BENCHMARK_PROMETHEUS_URLS"}
+    if any(key.startswith("SPINDLE_") and key not in benchmark_keys for key in values):
         raise ValueError("SPINDLE_ environment variables are managed by Spindle")
     return dict(values)
 
@@ -277,12 +274,6 @@ def run_trainer(deployment, instance_id, platform=None):
         sampler_persistence_concurrency=recipe.sampler_persistence_concurrency,
         max_forward_backward_models=recipe.trainer_max_clients_per_batch,
         on_startup_error=failed,
-        usage=lambda: ContainerUsage(
-            start_usage_meter(platform["frontend"]),
-            app_name=deployment.trainer_app_name,
-            base_model=recipe.model,
-            started_at=startup.origin,
-        ),
     )
 
 
@@ -357,7 +348,6 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         def start(self):
             self.sidecar = None
             self.sglang = None
-            self.busy_poll = None
             log_scheduled_gpus("sampler")
             startup = timeline(SAMPLER_COMPONENT, pool=pool.app_name)
             startup.mark("server_enter")
@@ -405,29 +395,9 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                 terminate(self.sidecar)
                 terminate(self.sglang)
                 raise
-            if (meter := sample_meter(platform["frontend"])) is not None:
-                busy = sglang_busy(8001)
-                try:
-                    wait_http("http://127.0.0.1:8001/metrics", self.sglang, timeout=30)
-                    busy()
-                except Exception:
-                    # Without busy time, the pool's cost is split by tokens alone.
-                    logging.getLogger(__name__).exception(
-                        "Can't read SGLang metrics; not recording pool idle time"
-                    )
-                else:
-                    usage = ContainerUsage(
-                        meter,
-                        app_name=pool.app_name,
-                        base_model=recipe.model,
-                        started_at=startup.origin,
-                    )
-                    self.busy_poll = poll_busy(usage, busy)
 
         @modal.exit()
         def stop(self):
-            if self.busy_poll is not None:
-                self.busy_poll.set()
             terminate(self.sidecar)
             terminate(self.sglang)
 

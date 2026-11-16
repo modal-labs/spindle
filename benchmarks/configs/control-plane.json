@@ -1,0 +1,20 @@
+{
+  "name": "control-plane-capabilities",
+  "suite": "control-plane",
+  "model": "Qwen/Qwen3.5-9B",
+  "deployment": "src/spindle/configs/qwen35_9b_instruct_lora_16k.py",
+  "clients": [
+    1,
+    8,
+    32,
+    128
+  ],
+  "context_lengths": [
+    1024
+  ],
+  "requests_per_client": 100,
+  "warmup_steps": 5,
+  "deployment_overrides": {
+    "inference_min_replicas": 0
+  }
+}

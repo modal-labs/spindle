@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import time
+
+import uvicorn
 from pathlib import Path
 
 from stitch.engines.sglang import SGLangEngine
-from stitch.service import serve
+from stitch.service import create_app
+from stitch.sync import Reconciler
+
+from spindle.telemetry.benchmark import record as record_benchmark_metrics
 from stitch.types import VersionRef
 
 from .fft_bulletin import (
@@ -12,6 +18,24 @@ from .fft_bulletin import (
     FFTSnapshotStore,
     PinnedFFTSnapshotStore,
 )
+
+
+class MeasuredReconciler(Reconciler):
+    async def _reconcile_once(self):
+        previous = self.applied
+        result = await super()._reconcile_once()
+        if self.applied is not None and self.applied != previous:
+            record_benchmark_metrics(
+                {
+                    "weight_sync.ready_unix_s": time.time(),
+                    "weight_sync.reconcile": self.metrics,
+                },
+                {
+                    "spindle.model_id": str(self.applied.run_id),
+                    "publish_version": self.applied.version,
+                },
+            )
+        return result
 
 
 def main() -> None:
@@ -61,12 +85,12 @@ def main() -> None:
             port=args.port,
         )
         return
-    serve(
-        store,
-        engine,
-        run_id=args.run_id,
+    reconciler = MeasuredReconciler(store=store, engine=engine, run_id=args.run_id)
+    uvicorn.run(
+        create_app(reconciler.gate, reconciler, engine),
         host=args.host,
         port=args.port,
+        log_level="info",
     )
 
 

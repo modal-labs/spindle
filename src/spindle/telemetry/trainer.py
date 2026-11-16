@@ -25,6 +25,10 @@ from opentelemetry.trace import (
 )
 
 from spindle.telemetry.otlp import _attributes, provider
+from spindle.telemetry.benchmark import record as record_benchmark_metrics
+from spindle.telemetry.benchmark import enabled as benchmark_enabled
+from spindle.proto.responses import EncodedResult
+from spindle.proto import tinker_public_pb2
 
 from . import backend
 from .metadata import common_tags, experiment_tags
@@ -364,6 +368,28 @@ class TrainerTelemetry:
 
     @best_effort
     def finish(self, operation, state):
+        metrics = None
+        if benchmark_enabled():
+            if isinstance(state.result, EncodedResult):
+                metrics = dict(
+                    tinker_public_pb2.ForwardBackwardOutput.FromString(
+                        state.result.body
+                    ).metrics
+                )
+            elif isinstance(state.result, dict):
+                metrics = state.result.get("metrics")
+        if isinstance(metrics, dict):
+            record_benchmark_metrics(
+                metrics,
+                {
+                    **self.attrs,
+                    **self.model_tags.get(operation.model_id, {}),
+                    "spindle.model_id": operation.model_id,
+                    "operation": operation.kind.value,
+                    "seq_id": operation.seq_id,
+                },
+                "spindle.backend.result",
+            )
         entry = self.commands.pop(operation.request_id, None)
         if entry:
             span = entry.span

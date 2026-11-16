@@ -16,7 +16,8 @@ import time
 import numpy as np
 import tinker
 from tinker import types
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
+
 
 ROOT = Path(__file__).resolve().parent
 
@@ -35,7 +36,17 @@ def answer(text):
         return None
 
 
-def datum(prompt, tokens, logprobs, advantage, denominator):
+def datum(
+    prompt,
+    tokens,
+    logprobs,
+    advantage,
+    denominator,
+    replay=None,
+    *,
+    num_layers=None,
+    experts_per_token=None,
+):
     if (
         not tokens
         or len(tokens) != len(logprobs)
@@ -43,12 +54,24 @@ def datum(prompt, tokens, logprobs, advantage, denominator):
     ):
         raise ValueError("Missing or invalid behavior tokens/logprobs")
     prefix = len(prompt) - 1
+    if replay is not None:
+        # Replay helpers are optional for stock Tinker comparisons.
+        from spindle.replay import SamplingReplay
+
+    replay_inputs = (
+        SamplingReplay.model_validate(replay).training_inputs(
+            len(tokens), num_layers=num_layers, experts_per_token=experts_per_token
+        )
+        if replay is not None
+        else {}
+    )
     return types.Datum(
         model_input=types.ModelInput.from_ints((prompt + tokens)[:-1]),
         loss_fn_inputs={
             "target_tokens": (prompt + tokens)[1:],
             "logprobs": [0.0] * prefix + logprobs,
             "advantages": [0.0] * prefix + [advantage / denominator] * len(tokens),
+            **replay_inputs,
         },
     )
 
@@ -62,8 +85,6 @@ def create_trainer(service, model, rank):
 
 def read_config(path):
     cfg = json.loads(path.read_text())
-    if cfg["model"] not in {"Qwen/Qwen3.5-9B", "Qwen/Qwen3.8-27B"}:
-        raise ValueError("This benchmark supports Qwen3.5-9B and Qwen3.8-27B")
     if cfg["updates"] < 1 or cfg["max_tokens"] >= cfg["context_tokens"]:
         raise ValueError("Invalid update count or context budget")
     return cfg
@@ -79,6 +100,16 @@ class Client:
         self.tokenizer = AutoTokenizer.from_pretrained(
             cfg["model"], revision=cfg["tokenizer_revision"]
         )
+        self.router_shape = {}
+        if cfg.get("router_replay"):
+            model_config = AutoConfig.from_pretrained(
+                cfg["model"], revision=cfg["tokenizer_revision"]
+            )
+            model_config = getattr(model_config, "text_config", model_config)
+            self.router_shape = {
+                "num_layers": model_config.num_hidden_layers,
+                "experts_per_token": model_config.num_experts_per_tok,
+            }
         self.rows = [
             json.loads(line) for line in (ROOT / "dapo.jsonl").read_text().splitlines()
         ]
@@ -167,18 +198,32 @@ class Client:
             policy_version=version,
             prompt_tokens=len(prompt),
         )
-        result = sampler.sample(
-            types.ModelInput.from_ints(prompt),
-            cfg["samples_per_group"],
-            types.SamplingParams(
-                max_tokens=cfg["max_tokens"],
-                temperature=cfg["temperature"],
-                top_p=cfg["top_p"],
-                top_k=cfg["top_k"],
-                stop=self.stops,
-                seed=cfg["seed"] + index,
-            ),
-        ).result(timeout=1800)
+        sampling_params = types.SamplingParams(
+            max_tokens=cfg["max_tokens"],
+            temperature=cfg["temperature"],
+            top_p=cfg["top_p"],
+            top_k=cfg["top_k"],
+            stop=self.stops,
+            seed=cfg["seed"] + index,
+        )
+        if cfg.get("router_replay") or cfg.get("score_centering"):
+            # Stock Tinker comparisons do not require the Spindle package.
+            from spindle.replay import sample_with_replay
+
+            result = sample_with_replay(
+                sampler,
+                types.ModelInput.from_ints(prompt),
+                num_samples=cfg["samples_per_group"],
+                sampling_params=sampling_params,
+                return_routed_experts=cfg.get("router_replay", False),
+                return_sampling_probabilities=cfg.get("score_centering", False),
+            ).result(timeout=1800)
+        else:
+            result = sampler.sample(
+                types.ModelInput.from_ints(prompt),
+                cfg["samples_per_group"],
+                sampling_params,
+            ).result(timeout=1800)
         if len(result.sequences) != cfg["samples_per_group"]:
             raise ValueError("Incomplete sample group")
         sequences = []
@@ -199,6 +244,11 @@ class Client:
                     text=text,
                     reward=float(answer(text) == answer(str(row["answer"]))),
                     stop_reason=str(seq.stop_reason),
+                    **(
+                        {"replay": seq.replay.model_dump(exclude_none=True)}
+                        if hasattr(seq, "replay")
+                        else {}
+                    ),
                 )
             )
         saved = dict(
@@ -215,6 +265,7 @@ class Client:
             group=index,
             policy_version=version,
             started=start,
+            seconds=time.time() - start,
             output_tokens=sum(len(seq["tokens"]) for seq in sequences),
             output_lengths=[len(seq["tokens"]) for seq in sequences],
             sampling_input_tokens=len(prompt) * len(sequences),
@@ -257,7 +308,15 @@ class Client:
             rewards = np.array([s["reward"] for s in group["sequences"]])
             advantages = (rewards - rewards.mean()) / (rewards.std(ddof=1) + 1e-6)
             data.extend(
-                datum(group["prompt"], s["tokens"], s["logprobs"], float(a), trained)
+                datum(
+                    group["prompt"],
+                    s["tokens"],
+                    s["logprobs"],
+                    float(a),
+                    trained,
+                    s.get("replay"),
+                    **self.router_shape,
+                )
                 for s, a in zip(group["sequences"], advantages, strict=True)
             )
         stats = dict(
@@ -332,15 +391,24 @@ class Client:
                     raise RuntimeError(f"Unexpected policy lag {lag}")
                 if update < cfg["updates"]:
                     pending = prefetch.submit(self.rollout, snapshot, update + 1)
+                rollout_wait_s = time.time() - begin
                 train_start = time.time()
                 self.event("train_start", update=update, policy_lag=lag)
                 forward = self.trainer.forward_backward(
                     data,
-                    "ppo",
-                    loss_fn_config={
-                        "clip_low_threshold": cfg["clip_low"],
-                        "clip_high_threshold": cfg["clip_high"],
-                    },
+                    "score_centered_mis" if cfg.get("score_centering") else "ppo",
+                    loss_fn_config=(
+                        {
+                            "sampling_temperature": cfg["temperature"],
+                            "mis_low": cfg.get("mis_low", 0.2),
+                            "mis_high": cfg.get("mis_high", 5.0),
+                        }
+                        if cfg.get("score_centering")
+                        else {
+                            "clip_low_threshold": cfg["clip_low"],
+                            "clip_high_threshold": cfg["clip_high"],
+                        }
+                    ),
                 )
                 optimizer = self.trainer.optim_step(
                     types.AdamParams(
@@ -380,6 +448,12 @@ class Client:
                     seconds=time.time() - begin,
                     elapsed_seconds=time.time() - started,
                     policy_lag=lag,
+                    rollout_wait_s=rollout_wait_s,
+                    training_input_tokens=stats["training_input_tokens"],
+                    output_tokens=stats["output_tokens"],
+                    training_tokens_per_s=stats["training_input_tokens"]
+                    / (time.time() - begin),
+                    output_tokens_per_s=stats["output_tokens"] / (time.time() - begin),
                 )
         self.event("completed", updates=cfg["updates"], seconds=time.time() - started)
 

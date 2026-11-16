@@ -10,3 +10,6 @@ dist/
 .env
 scripts/results/
 *.so
+# Local benchmark stores and downloaded run bundles.
+.spindle-benchmarks/
+benchmark-results/

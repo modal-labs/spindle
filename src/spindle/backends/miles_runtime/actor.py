@@ -42,6 +42,7 @@ except ImportError:
     from . import tinker_cp
 
 from spindle.startup_timing import timeline
+from spindle.telemetry.benchmark import start_cuda_collection
 
 from . import allgather_cp_lora, expert_lora_compat, host_syncs
 from .volumes import install_cross_node_checkpoint_publish, sync_checkpoint_volume
@@ -107,6 +108,7 @@ def _use_distributed_timeout_for_gloo(minutes: int) -> None:
 
 
 def _mark_actor_initialized() -> None:
+    start_cuda_collection(torch)
     rank = dist.get_rank() if dist.is_initialized() else 0
     if rank == 0:
         timeline("trainer-rank0").mark("actor_model_loaded")

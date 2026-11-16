@@ -14,8 +14,6 @@ from tinker.types.forward_backward_input import ForwardBackwardInput
 from spindle.encoding import fingerprint
 from spindle.errors import EngineSaturated, RecordNotFound, SequenceConflict
 from spindle.request_timing import mark
-from spindle.usage import ContainerUsage
-from spindle.usage.meter import WINDOW_S
 
 from .api import (
     BATCHED_OPERATIONS,
@@ -141,7 +139,6 @@ class Engine:
         sampler_persistence_concurrency: int = 1,
         max_forward_backward_batch: int | None = None,
         max_forward_backward_models: int | None = None,
-        usage: ContainerUsage | None = None,
     ) -> None:
         if sampler_persistence_concurrency < 1:
             raise ValueError("sampler_persistence_concurrency must be positive")
@@ -153,7 +150,6 @@ class Engine:
             raise ValueError("max_forward_backward_models must be positive")
         self.executor = executor
         self.observer = observer
-        self.usage = usage
         self._persistence_active: dict[str, int] = {}
         self.max_models = max_models
         self.max_buffered = max_buffered
@@ -460,33 +456,17 @@ class Engine:
 
     async def _run_loop(self) -> None:
         busy = False
-        working_since: float | None = None
         while True:
             async with self._lock:
-                waiting_since = time.monotonic()
-                if working_since is not None and self.usage is not None:
-                    self.usage.busy(waiting_since - working_since)
                 if busy and (self._closing or self._ready_batch() is None):
                     self._observe_state(tuple(self._models), "idle")
                     busy = False
                 while not self._closing and (operations := self._ready_batch()) is None:
-                    try:
-                        await asyncio.wait_for(
-                            self._work.wait(),
-                            None if self.usage is None else WINDOW_S,
-                        )
-                    except TimeoutError:
-                        now = time.monotonic()
-                        if self.usage is not None:
-                            self.usage.idle(now - waiting_since)
-                        waiting_since = now
-                if self.usage is not None:
-                    self.usage.idle(time.monotonic() - waiting_since)
+                    await self._work.wait()
                 if self._closing:
                     return
                 self._consume_ready(operations)  # ty: ignore[invalid-argument-type]
             busy = True
-            working_since = time.monotonic()
             operation = operations[0]
             if isinstance(operation, _AcceptOperation):
                 await self._run_accept(operation)
@@ -771,13 +751,6 @@ class Engine:
     def _finish(self, operation: Operation, state: FutureState) -> None:
         if self.observer is not None:
             self.observer.finish(operation, state)
-        if (
-            self.usage is not None
-            and state.status == FutureStatus.COMPLETE
-            and operation.kind
-            in (OperationKind.FORWARD, OperationKind.FORWARD_BACKWARD)
-        ):
-            self.usage.trained(operation.model_id, operation.payload)
         model = self._models.get(operation.model_id)
         if model is not None and model.unload is None:
             self._futures[operation.request_id] = state
