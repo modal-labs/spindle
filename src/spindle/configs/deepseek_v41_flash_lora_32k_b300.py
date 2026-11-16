@@ -6,7 +6,7 @@ class Config(Parent):
 
     name = "deepseek-v41-flash-lora-32k-b300"
     trainer_image = "miles-v0.1.2-99e1ebe"
-    inference_image = "sglang-v0.5.21-a3e0e17"
+    inference_image = "sglang-v0.5.23-c4182b2"
     trainer_gpu = "B300"
     inference_gpu = "B300"
     overrides = {"miles_cfg.tensor_model_parallel_size": 2}
