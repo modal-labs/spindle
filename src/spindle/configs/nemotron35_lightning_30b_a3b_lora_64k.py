@@ -19,6 +19,8 @@ class Config(Parent):
         # Score long rows 4,096 tokens at a time. Scoring a 64K row in one pass
         # takes about 15 GB more on each GPU.
         "miles_cfg.cli_options.log_probs_chunk_size": 4096,
+        # One grouped GEMM per expert projection instead of one GEMM per expert.
+        "trainer_env.EXPERT_GROUPED_GEMM": "1",
         "sglang_cfg.max_loras_per_batch": 4,
         "sglang_cfg.max_loaded_loras": 32,
     }
