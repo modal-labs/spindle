@@ -1,37 +1,37 @@
-from spindle.configs.qwen38_27b_lora_16k_b200 import Config as Parent
+from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
 
 
 class Config(Parent):
-    name = "qwen38-27b-lora-32k-with-spec"
+    name = "qwen35-9b-instruct-lora-32k"
     max_context_length = 32768
-    inference_gpus_per_node = 2
-    inference_cpu = 64
-    inference_memory_mib = 262144
-    inference_draft_model = "incoai/Qwen3.8-27B-DFlash2"
-    inference_draft_model_revision = "015e795645c74b1a0eeef3b570031fb62e769bc5"
+    trainer_gpu = "B200"
+    trainer_gpus_per_node = 1
+    trainer_cpu = 32
+    trainer_memory_mib = 196608
+    trainer_max_clients_per_instance = 1
+    inference_gpu = "B200"
+    inference_cpu = 24
+    inference_memory_mib = 131072
+    inference_target_concurrency = 64
+    inference_draft_model = "modal-labs/Qwen3.5-9B-DFlash"
+    inference_draft_model_revision = "28407c638832073e50f1aacd89e1d15a288b7b1c"
     overrides = {
-        **Parent.overrides,
-        "miles_cfg.max_tokens_per_gpu": 32768,
-        "sglang_cfg.tp_size": 2,
-        "sglang_cfg.dtype": "bfloat16",
-        "sglang_cfg.mem_fraction_static": 0.85,
+        "trainer_env.TORCH_COMPILE_DISABLE": "1",
+        "miles_cfg.tensor_model_parallel_size": 1,
+        "miles_cfg.max_lora_slots": 1,
+        "miles_cfg.max_tokens_per_gpu": 18432,
         "sglang_cfg.max_running_requests": 64,
         "sglang_cfg.max_mamba_cache_size": 384,
         "sglang_cfg.max_queued_requests": 128,
-        "sglang_cfg.max_loaded_loras": 4,
+        "sglang_cfg.max_loaded_loras": 32,
         "sglang_cfg.max_loras_per_batch": 2,
-        "sglang_cfg.lora_backend": "csgmv",
-        "sglang_cfg.schedule_policy": "fcfs",
         "sglang_cfg.cuda_graph_max_bs_decode": 64,
-        "sglang_cfg.chunked_prefill_size": 8192,
-        "sglang_cfg.disable_prefill_cuda_graph": True,
-        "sglang_cfg.language_only": True,
+        "sglang_cfg.attention_backend": "trtllm_mha",
         "sglang_cfg.linear_attn_prefill_backend": "triton",
         "sglang_cfg.linear_attn_decode_backend": "triton",
         "sglang_cfg.linear_attn_verify_backend": "triton",
         "sglang_cfg.mamba_ssm_dtype": "float32",
         "sglang_cfg.mamba_radix_cache_strategy": "extra_buffer",
-        "sglang_cfg.kv_cache_dtype": "bfloat16",
         "sglang_cfg.speculative_algorithm": "DFLASH",
         "sglang_cfg.speculative_dflash_block_size": 8,
         "sglang_cfg.speculative_draft_attention_backend": "fa4",

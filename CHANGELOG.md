@@ -12,7 +12,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
-- The default `qwen3-8b-lora-32k` recipe uses DFlash with `z-lab/Qwen3-8B-DFlash-b16` on one B300 sampler GPU, replacing two H100 sampler GPUs.
+- The standard 32K LoRA recipes for Qwen3-8B, Qwen3.5-9B Instruct, Qwen3.8-27B and GLM-5.3 Flash use DFlash; Qwen3.5-4B uses native MTP. These replace the separate `with-spec` and `mtp` variants. Qwen3-8B samples on one B300 instead of two H100 GPUs, and Qwen3.5-4B uses B200 for training and sampling.
 
 ### Fixed
 

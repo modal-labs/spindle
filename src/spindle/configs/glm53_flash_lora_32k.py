@@ -2,7 +2,7 @@ from spindle.configs.glm53_flash_lora_64k import Config as Parent
 
 
 class Config(Parent):
-    name = "glm53-flash-lora-32k-with-spec"
+    name = "glm53-flash-lora-32k"
     max_context_length = 32768
     inference_draft_model = "modal-labs/GLM-5.3-Flash-DFlash"
     inference_draft_model_revision = "dae6d319510889a7f1ac5242d5b7fb2d5d95eb05"
