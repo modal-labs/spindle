@@ -1,6 +1,7 @@
 """Flat Python recipes. Modal and the backend validate their own options."""
 
 from copy import deepcopy
+import os
 
 
 def _apply_overrides(values, overrides):
@@ -12,10 +13,17 @@ def _apply_overrides(values, overrides):
         target[parts[-1]] = deepcopy(value)
 
 
+def _modal_platform():
+    modal = {"environment": None, "region": None}
+    if os.environ.get("SPINDLE_EXCLUDE_RESERVED_CAPACITY") == "1":
+        modal["exclude_reserved_capacity"] = True
+    return modal
+
+
 class BaseConfig:
     platform = {
         "frontend": "spindle",
-        "modal": {"environment": None, "region": None},
+        "modal": _modal_platform(),
         "secrets": {
             "api": "spindle-api",
             "sampler_proxy": "spindle-proxy",

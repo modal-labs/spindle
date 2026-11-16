@@ -13,7 +13,10 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 
 from spindle import __version__
-from spindle.backends.deployment import resolve_backend_settings
+from spindle.backends.deployment import (
+    resolve_backend_settings,
+    resolve_draft_asset_path,
+)
 from spindle.configuration import BaseConfig
 
 # Modal's smallest ephemeral disk request.
@@ -182,8 +185,7 @@ class DeploymentConfig(BaseModel):
 
     @property
     def draft_asset_path(self) -> str | None:
-        model = self.recipe.inference_draft_model
-        return f"/assets/{model}" if model else None
+        return resolve_draft_asset_path(self.recipe)
 
     @property
     def rollout_tensor_parallel_size(self) -> int:
