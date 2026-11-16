@@ -630,7 +630,8 @@ class KVEventSubscriber:
                 reason = None
             if reason is not None:
                 self._rebuild_started_at = fetch_started_at
-                logger.info(
+                # Warning level: the sidecar does not configure info logging.
+                logger.warning(
                     "KV event full rebuild started: %s, %d batches",
                     reason,
                     len(batches),
@@ -647,7 +648,7 @@ class KVEventSubscriber:
             self.checked_at = time.monotonic()
             self._publish_snapshot(force=True)
             if self._rebuild_started_at is not None:
-                logger.info(
+                logger.warning(
                     "KV event full rebuild ready: %.3fs",
                     time.monotonic() - self._rebuild_started_at,
                 )
