@@ -14,6 +14,7 @@ from miles.backends.megatron_utils import model as megatron_model
 from miles.backends.megatron_utils.lora import model as lora_model
 from miles.backends.megatron_utils.lora.actor import MultiLoRATrainRayActor
 from miles.backends.megatron_utils.lora.checkpoint import LayerWiseSlotMembers
+from miles.backends.training_utils.checkpoint.adapter import adapter_dir
 from miles.backends.training_utils.checkpoint.adapter.adapter_dir import (
     save_adapter_dir,
 )
@@ -72,10 +73,20 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
                 validate_adapter(Path(source["path"]), checkpoint=True)
         return MultiLoRATrainRayActor.load_slot(self, slot, rank, alpha, source=source)
 
+    def save_slot(self, *args: object, **kwargs: object) -> object:
+        written = MultiLoRATrainRayActor.save_slot(self, *args, **kwargs)
+        sync_checkpoint_volume("commit")
+        return written
+
+    def export_slot(self, *args: object, **kwargs: object) -> object:
+        written = MultiLoRATrainRayActor.export_slot(self, *args, **kwargs)
+        sync_checkpoint_volume("commit")
+        return written
+
     def save_slot_weights(
         self, slot: int, root: str, name: str, parametrization_fields: dict[str, object]
     ) -> object:
-        return save_adapter_dir(
+        written = save_adapter_dir(
             Path(root),
             name,
             WeightsOnlyMembers(self.adapter_slots, self.slot_optimizers),
@@ -83,6 +94,20 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             self.adapter_slots.parametrization(**parametrization_fields),
             tenant_digest="spindle",
         )
+        sync_checkpoint_volume("commit")
+        return written
+
+
+def _create_directory_on_every_node(
+    save: Callable[[Path, object], None],
+) -> Callable[[Path, object], None]:
+    @wraps(save)
+    def call(path: Path, state: object) -> None:
+        # Rank 0 creates the directory; other nodes see it only after a volume commit.
+        path.mkdir(parents=True, exist_ok=True)
+        save(path, state)
+
+    return call
 
 
 def _with_vocabulary(function: Callable[..., object]) -> Callable[..., object]:
@@ -106,6 +131,9 @@ install_replay_patches(
     train_data_conversion=train_data_conversion,
     qwen3_vl_model=qwen3_vl_model,
     miles_qwen3_vl=miles_qwen3_vl,
+)
+adapter_dir._save_adapter_state = _create_directory_on_every_node(
+    adapter_dir._save_adapter_state
 )
 tinker_losses._target_logprobs = _with_vocabulary(tinker_losses._target_logprobs)
 for _loss in REPLAY_LOSSES:

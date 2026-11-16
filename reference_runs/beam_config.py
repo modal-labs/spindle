@@ -1,4 +1,4 @@
-"""Experimental Beam recipe; Miles v0.2.0 multi-node deployment is not yet supported."""
+"""Experimental two-node Beam LoRA recipe on Miles v0.2.0."""
 
 from spindle.configuration import BaseConfig
 

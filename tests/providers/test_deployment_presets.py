@@ -108,8 +108,9 @@ def test_beam_preserves_distinct_attention_and_mlp_gates():
     ).peft_target_modules
     assert "self_attn.gate_proj" in targets
     assert "mlp.gate_proj" in targets
-    with pytest.raises(ValueError, match="only single-node trainers"):
-        DeploymentConfig.create(spec)
+    settings = backend_config(spec, "/assets/pending")
+    assert settings["miles"]["actor_num_nodes"] == 2
+    assert settings["capture_dir"].startswith("/checkpoints/")
 
 
 def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
