@@ -6,12 +6,15 @@ class Config(BaseConfig):
     model = "Qwen/Qwen3-8B"
     max_context_length = 32768
     trainer_gpu = "H100"
+    trainer_image = "miles-v0.2.0"
     trainer_gpus_per_node = 4
     trainer_cpu = 32
     trainer_memory_mib = 131072
     trainer_max_clients_per_instance = 8
     miles_cfg = {
         "model_type": "qwen3-8B",
+        "megatron_to_hf_mode": "raw",
+        "lora_type": "canonical_lora",
         "tensor_model_parallel_size": 2,
         "target_modules": [
             "q_proj",

@@ -14,7 +14,6 @@ from miles.utils import distributed_utils
 from spindle.startup_timing import timeline
 
 from .profiling import RankProfiler, TorchProfileConfig
-from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
 from .replay import install_replay_hooks
 from .replay_data import install_distribution_sharding
 from .score_centering import install_losses
@@ -30,8 +29,6 @@ def install_replay_patches(
     fill_replay_data: object,
     routing_replay_manager: object,
     train_data_conversion: ModuleType,
-    qwen3_vl_model: ModuleType,
-    miles_qwen3_vl: ModuleType,
 ) -> None:
     """Install the Miles patches every image needs, given that image's modules."""
     install_replay_hooks(
@@ -45,9 +42,6 @@ def install_replay_patches(
     )
     install_losses(tinker_losses, logit_processors)
     install_distribution_sharding(train_data_conversion)
-    install_qwen3_vl_cp_position_ids(
-        bridge_model=qwen3_vl_model, miles_qwen3_vl=miles_qwen3_vl
-    )
 
 
 def use_distributed_timeout_for_gloo(minutes: int) -> None:

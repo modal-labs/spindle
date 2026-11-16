@@ -91,6 +91,7 @@ class MilesBackendConfig(BaseModel):
     actor_num_gpus_per_node: PositiveInteger
     actor_num_nodes: PositiveInteger = 1
     megatron_to_hf_mode: Literal["bridge", "raw"] = "bridge"
+    lora_type: Literal["lora", "canonical_lora"] = "lora"
     tensor_model_parallel_size: PositiveInteger = 1
     context_parallel_size: PositiveInteger = 1
     expert_model_parallel_size: PositiveInteger = 1
@@ -200,9 +201,8 @@ class MilesBackendConfig(BaseModel):
             str(int(self.default_lora_alpha)),
             "--lora-dropout",
             str(self.lora_dropout),
-            # Miles v0.2.0 defaults serve entries to canonical_lora; v0.1.x multi-LoRA supports only lora.
             "--lora-type",
-            "lora",
+            self.lora_type,
             "--target-modules",
             ",".join(self.target_modules),
             "--no-gradient-accumulation-fusion",

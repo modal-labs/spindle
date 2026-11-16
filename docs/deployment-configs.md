@@ -109,15 +109,19 @@ Miles argument conversion lives in [miles_arguments.py](../src/spindle/backends/
 
 ### Miles options
 
-Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, the default, or `raw`: the converter Miles uses to export weights, for models without a Megatron-Bridge mapping) and `dynamic_batch_size`.
+Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, the default, or `raw`), `lora_type` (`lora`, the default, or `canonical_lora`) and `dynamic_batch_size`.
+
+For Miles native canonical multi-LoRA, set `trainer_image = "miles-v0.2.0"`, `miles_cfg.megatron_to_hf_mode = "raw"` and `miles_cfg.lora_type = "canonical_lora"`. Miles builds the model and attaches independent adapter factors to each Q/K/V and MLP gate/up projection. It still uses Megatron-Core; model loading in raw mode uses Miles' mbridge integration instead of Megatron-Bridge's model provider. The Qwen3-8B, Qwen3-4B, Qwen2.5-3B and Qwen2.5-7B-Instruct recipes use this path.
+
+Native slots support dense projections and the output head on registered Miles architectures. Grouped expert adapters are unsupported. GDN `in_proj` and GLM-5.3 KDA slots require context parallel size 1. Miles rejects unsupported targets or model architectures; the other bundled recipes keep their existing adapter implementation.
 
 ### Images
 
 `trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1 (the default), v0.1.2 (`miles-v0.1.2`), and v0.2.0 (`miles-v0.2.0`).
 
-`miles-v0.2.0` supports single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying it with more than one trainer node or with `raw` is rejected. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
+`miles-v0.2.0` supports single-node trainers in Bridge or native mode. Native mode requires `canonical_lora`. The older images support only the `lora` layout, which shares one `lora_A` across each fused projection. Sampler snapshots use Miles' SGLang adapter export.
 
-A checkpoint restores only on a trainer with the same Miles revision as the one that saved it, so keep the original image to restore older checkpoints after switching images.
+A checkpoint restores only on a trainer with the same Miles revision and adapter layout as the one that saved it. Checkpoints without a recorded layout are treated as `lora`. Keep the original image and layout to restore older checkpoints after switching a recipe to native canonical adapters.
 
 ## Prepare and launch
 

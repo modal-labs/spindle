@@ -39,6 +39,23 @@ def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
     assert config["provider_overrides"]["moe_token_dispatcher_type"] == "alltoall"
 
 
+@pytest.mark.parametrize(
+    "preset",
+    [
+        "qwen3-8b-lora-32k",
+        "qwen3-4b-lora-32k",
+        "qwen25-3b-lora-32k",
+        "qwen25-7b-instruct-lora-32k",
+    ],
+)
+def test_dense_qwen_recipes_use_native_canonical_slots(preset):
+    spec = load(config_path(preset))
+    trainer = backend_config(spec)["miles"]
+    assert spec.trainer_image == "miles-v0.2.0"
+    assert trainer["megatron_to_hf_mode"] == "raw"
+    assert trainer["lora_type"] == "canonical_lora"
+
+
 def test_moe_rollout_preserves_attention_data_parallelism():
     spec = load(config_path("qwen35-35b-a3b-fft-64k"))
     options = serving_options(spec)

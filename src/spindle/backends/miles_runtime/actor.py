@@ -42,6 +42,7 @@ from .actor_shared import (
     mark_actor_initialized as _mark_actor_initialized,
     use_distributed_timeout_for_gloo as _use_distributed_timeout_for_gloo,
 )
+from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
 from .volumes import install_cross_node_checkpoint_publish, sync_checkpoint_volume
 
 try:
@@ -64,8 +65,9 @@ install_replay_patches(
     fill_replay_data=fill_replay_data,
     routing_replay_manager=routing_replay_manager,
     train_data_conversion=train_data_conversion,
-    qwen3_vl_model=qwen3_vl_model,
-    miles_qwen3_vl=miles_qwen3_vl,
+)
+install_qwen3_vl_cp_position_ids(
+    bridge_model=qwen3_vl_model, miles_qwen3_vl=miles_qwen3_vl
 )
 
 host_syncs.install()

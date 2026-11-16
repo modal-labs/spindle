@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Changed
+
+- The Qwen3-8B, Qwen3-4B, Qwen2.5-3B and Qwen2.5-7B-Instruct LoRA recipes use Miles v0.2.0 native canonical multi-LoRA. Each projection has independent adapter factors. Their previous checkpoints require the original trainer image and adapter layout. Custom recipes can select `trainer_image = "miles-v0.2.0"` and set `megatron_to_hf_mode = "raw"` and `lora_type = "canonical_lora"` in `miles_cfg`.
+
 ## 0.1.7 - 2026-11-15
 
 See what each run or team costs on a shared deployment: Spindle records the tokens every session uses, serves them through Tinker's `get_billing_usage`, and `spindle usage` turns them into dollars per run or label. See [Cost attribution](docs/cost-attribution.md).

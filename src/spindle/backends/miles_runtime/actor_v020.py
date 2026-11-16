@@ -9,7 +9,6 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import model as qwen3_vl_model
 from miles.backends.megatron_utils import model as megatron_model
 from miles.backends.megatron_utils.lora import model as lora_model
 from miles.backends.megatron_utils.lora.actor import MultiLoRATrainRayActor
@@ -28,7 +27,6 @@ from miles.backends.training_utils.loss.hub import (
 from miles.backends.training_utils.replay.data import fill_replay_data
 from miles.ray.rollout import train_data_conversion
 from miles.utils.replay_base import routing_replay_manager
-from miles_plugins.models import qwen3_vl as miles_qwen3_vl
 
 from spindle.backends.score_centering import REPLAY_LOSSES
 
@@ -39,6 +37,7 @@ from .actor_shared import (
     use_distributed_timeout_for_gloo,
 )
 from .native_checkpoint import validate_adapter
+from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
 from .volumes import sync_checkpoint_volume
 
 if TYPE_CHECKING:
@@ -54,6 +53,16 @@ class WeightsOnlyMembers(LayerWiseSlotMembers):
 class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
     def init(self, args: TrainerConfig, role: str, **kwargs: object) -> int | None:
         use_distributed_timeout_for_gloo(args.backend.distributed_timeout_minutes)
+        if args.megatron_to_hf_mode == "bridge":
+            # Native workers do not use the Bridge Qwen-VL provider.
+            from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
+                model as qwen3_vl_model,
+            )
+            from miles_plugins.models import qwen3_vl as miles_qwen3_vl
+
+            install_qwen3_vl_cp_position_ids(
+                bridge_model=qwen3_vl_model, miles_qwen3_vl=miles_qwen3_vl
+            )
         result = MultiLoRATrainRayActor.init(self, args, role, **kwargs)
         mark_actor_initialized()
         return result
@@ -104,8 +113,6 @@ install_replay_patches(
     fill_replay_data=fill_replay_data,
     routing_replay_manager=routing_replay_manager,
     train_data_conversion=train_data_conversion,
-    qwen3_vl_model=qwen3_vl_model,
-    miles_qwen3_vl=miles_qwen3_vl,
 )
 tinker_losses._target_logprobs = _with_vocabulary(tinker_losses._target_logprobs)
 for _loss in REPLAY_LOSSES:

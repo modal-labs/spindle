@@ -39,8 +39,9 @@ def api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
 
 
 @pytest.mark.parametrize("restore_optimizer", [False, True])
+@pytest.mark.parametrize("lora_type", ["lora", "canonical_lora"])
 def test_native_restore_preserves_slot_configuration_and_optimizer_intent(
-    api: ModuleType, restore_optimizer: bool
+    api: ModuleType, restore_optimizer: bool, lora_type: str
 ) -> None:
     class NativeBridge:
         async def load_slot(
@@ -55,10 +56,11 @@ def test_native_restore_preserves_slot_configuration_and_optimizer_intent(
                 assert source["path"] == "/checkpoint/miles"
                 assert source["parametrization_fields"]["lora_rank"] == rank
                 assert source["parametrization_fields"]["lora_alpha"] == alpha
+                assert source["parametrization_fields"]["lora_type"] == lora_type
             return None
 
     args = SimpleNamespace(
-        hf_checkpoint="/model", lora_type="lora", experts_shared_outer_loras=False
+        hf_checkpoint="/model", lora_type=lora_type, experts_shared_outer_loras=False
     )
     bridge = api.AdapterBridge(NativeBridge(), args)
 

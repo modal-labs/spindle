@@ -726,13 +726,26 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
 @pytest.mark.parametrize(
     "changes, match",
     [
-        ({"miles_cfg__megatron_to_hf_mode": "raw"}, "megatron_to_hf_mode"),
+        ({"miles_cfg__megatron_to_hf_mode": "raw"}, "canonical_lora"),
         ({"trainer_nodes": 2}, "single-node"),
     ],
 )
 def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
     with pytest.raises(ValueError, match=match):
         backend_config(recipe(trainer_image="miles-v0.2.0", **changes))
+
+
+@pytest.mark.parametrize("image", [None, "miles-v0.1.2"])
+def test_canonical_slots_require_the_native_capable_image(image):
+    with pytest.raises(ValueError, match="canonical_lora requires trainer_image"):
+        backend_config(
+            recipe(trainer_image=image, miles_cfg__lora_type="canonical_lora")
+        )
+
+
+def test_lora_layout_cannot_be_overridden_through_cli_options():
+    with pytest.raises(ValueError, match="managed"):
+        backend_config(recipe(miles_cfg__cli_options__lora_type="canonical_lora"))
 
 
 def test_backend_dispatch_rejects_unknown_backend():
