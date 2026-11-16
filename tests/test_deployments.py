@@ -19,7 +19,7 @@ from spindle.backends.miles_arguments import (
     defer_config_overrides,
 )
 from spindle.configs.qwen35_9b_lora_16k import Config as Parent
-from spindle.configuration import BaseConfig
+from spindle.configuration import BaseConfig, _modal_platform
 from spindle.control_plane import ControlPlane, create_control_plane_app
 from spindle.control_plane.deployments import (
     DeploymentConflict,
@@ -723,6 +723,18 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
         backend_config(spec)
 
 
+@pytest.mark.parametrize(
+    "changes, match",
+    [
+        ({"miles_cfg__megatron_to_hf_mode": "raw"}, "megatron_to_hf_mode"),
+        ({"trainer_nodes": 2}, "single-node"),
+    ],
+)
+def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
+    with pytest.raises(ValueError, match=match):
+        backend_config(recipe(trainer_image="miles-v0.2.0", **changes))
+
+
 def test_backend_dispatch_rejects_unknown_backend():
     with pytest.raises(ValueError, match="backend"):
         backend_config(recipe(backend="missing"))
@@ -1274,3 +1286,15 @@ async def test_a_config_another_frontend_container_just_added_shows_at_once(read
     await writer.add(other)
     async with client_for(reader) as client:
         assert await read(client) & {other.name, other.model}
+
+
+@pytest.mark.parametrize("value", [None, "1"])
+def test_exclude_reserved_capacity_env_default(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("SPINDLE_EXCLUDE_RESERVED_CAPACITY", raising=False)
+    else:
+        monkeypatch.setenv("SPINDLE_EXCLUDE_RESERVED_CAPACITY", value)
+    expected = {"environment": None, "region": None}
+    if value:
+        expected["exclude_reserved_capacity"] = True
+    assert _modal_platform() == expected

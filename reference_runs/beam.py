@@ -58,6 +58,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import tinker
@@ -427,10 +428,20 @@ def build_datums(cache, step, config):
                 types.Datum(
                     model_input=types.ModelInput.from_ints(full[:-1]),
                     loss_fn_inputs={
-                        "target_tokens": full[1:],
-                        "logprobs": [0.0] * padding + sequence.logprobs,
-                        "advantages": [0.0] * padding
-                        + [float(advantage) / total] * len(sequence.tokens),
+                        "target_tokens": types.TensorData(
+                            data=full[1:], dtype="int64", shape=[len(full) - 1]
+                        ),
+                        "logprobs": types.TensorData(
+                            data=[0.0] * padding + sequence.logprobs,
+                            dtype="float32",
+                            shape=[len(full) - 1],
+                        ),
+                        "advantages": types.TensorData(
+                            data=[0.0] * padding
+                            + [float(advantage) / total] * len(sequence.tokens),
+                            dtype="float32",
+                            shape=[len(full) - 1],
+                        ),
                         **sequence.replay.training_inputs(
                             len(sequence.tokens), num_layers=52, experts_per_token=8
                         ),
@@ -629,11 +640,12 @@ def run(args, config):
             in inspect.signature(tinker.ServiceClient).parameters
             else "default_headers"
         )
-        service = tinker.ServiceClient(
-            base_url=os.environ["TINKER_BASE_URL"],
-            api_key=os.environ["TINKER_API_KEY"],
-            **{header_option: headers},
-        )
+        service_options: dict[str, Any] = {
+            "base_url": os.environ["TINKER_BASE_URL"],
+            "api_key": os.environ["TINKER_API_KEY"],
+            header_option: headers,
+        }
+        service = tinker.ServiceClient(**service_options)
 
         async def create_training():
             operation = (

@@ -22,12 +22,7 @@ from spindle.backends.miles_config import MilesBackendConfig
 from spindle.errors import BackendFailed
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
-from .config import backend_config
-from .native_checkpoints import (
-    NativeCheckpoints,
-    NativeSourceError,
-    uses_native_checkpoints,
-)
+from .native_checkpoint import materialize_adapter
 from .replay_data import install_bridge_replay, validate_routed_experts
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
@@ -59,18 +54,10 @@ except ImportError:
     create_trainer_handles = None
 
 
-try:
-    from miles.ray.train.init_request import TrainerControllerInitRequest
-    from miles.ray.wiring import compute_backend_capability
-    from miles.utils.args.trainer_utils import compute_trainer_config
-    from miles.utils.hf_utils.config import load_hf_config
-    from miles.utils.lora.hf_lora_targets import get_hf_lora_targets
-except ImportError:
-    TrainerControllerInitRequest = None
-
-
 class MilesRuntime:
     """Synchronous owner of Miles's asynchronous Ray trainer controller."""
+
+    _v020 = None
 
     def __init__(self, config: MilesBackendConfig) -> None:
         if _runtime_import_error is not None:
@@ -78,6 +65,12 @@ class MilesRuntime:
                 "MilesRuntime requires Miles and Ray in the trainer image"
             ) from _runtime_import_error
         self.config = config
+        self._v020 = None
+        if os.environ.get("SPINDLE_MILES_API") == "0.2":
+            # This API module requires dependencies absent in legacy trainer images.
+            from . import v020
+
+            self._v020 = v020
         # Record the commit actually installed from the branch in this image.
         self.revision = subprocess.check_output(
             [
@@ -101,7 +94,6 @@ class MilesRuntime:
         self._trainer = None
         self._worker_manager = None
         self._bridge = None
-        self._native_checkpoints = None
         self._owns_ray = False
         self._owns_object_store = False
         self._unit_ids = count(1)
@@ -113,6 +105,10 @@ class MilesRuntime:
             self._stop_loop()
             raise
 
+    @property
+    def checkpoint_format(self):
+        return self._v020.CHECKPOINT_FORMAT if self._v020 else "miles_torch_dist"
+
     def load_slot(
         self,
         slot: int,
@@ -122,17 +118,6 @@ class MilesRuntime:
         checkpoint: str | None = None,
         restore_optimizer: bool = True,
     ) -> None:
-        if self._native_checkpoints is not None:
-            self._run(
-                self._native_checkpoints.load_slot(
-                    slot,
-                    rank,
-                    alpha,
-                    checkpoint=checkpoint,
-                    restore_optimizer=restore_optimizer,
-                )
-            )
-            return
         self._run(
             self._bridge.load_slot(
                 slot,
@@ -143,14 +128,8 @@ class MilesRuntime:
             )
         )
 
-    @property
-    def native_checkpoint_api(self) -> bool:
-        return self._native_checkpoints is not None
-
     def unload_slot(self, slot: int) -> None:
         self._run(self._bridge.unload_slot(slot))
-        if self._native_checkpoints is not None:
-            self._native_checkpoints.slots.pop(slot, None)
 
     def forward_backward(
         self,
@@ -163,10 +142,10 @@ class MilesRuntime:
         if any("routed_experts" in row for _, row in slot_rows):
             validate_routed_experts(
                 slot_rows,
-                num_layers=backend_config(self._args).num_layers,
-                num_experts=backend_config(self._args).num_experts,
-                topk=backend_config(self._args).moe_router_topk,
-                moe_layer_freq=getattr(backend_config(self._args), "moe_layer_freq", 1),
+                num_layers=self._args.num_layers,
+                num_experts=self._args.num_experts,
+                topk=self._args.moe_router_topk,
+                moe_layer_freq=getattr(self._args, "moe_layer_freq", 1),
             )
         unit_id = next(self._unit_ids)
         method = (
@@ -189,12 +168,12 @@ class MilesRuntime:
     def save_slot(
         self, slot: int, path: str, *, include_optimizer: bool = True
     ) -> None:
-        if self._native_checkpoints is not None:
-            self._run(
-                self._native_checkpoints.capture(
-                    slot, path, include_optimizer=include_optimizer
-                )
+        if self._v020 is not None:
+            written = self._run(
+                self._bridge.save_slot(slot, path, include_optimizer=include_optimizer)
             )
+            # Outside _run: a bad capture fails this request, not the shared trainer.
+            materialize_adapter(written, Path(path), checkpoint=True)
             return
         if include_optimizer:
             self._run(self._bridge.save_slot(slot, path))
@@ -215,16 +194,10 @@ class MilesRuntime:
         target_modules: tuple[str, ...],
         lora_dropout: float,
     ) -> None:
-        if self._native_checkpoints is not None:
-            if self._native_checkpoints.slots[slot] != (rank, alpha):
-                raise ValueError(
-                    "sampler export rank/alpha do not match the loaded slot"
-                )
-            self._run(
-                self._native_checkpoints.capture(slot, path, include_optimizer=False)
-            )
+        written = self._run(self._bridge.export_slot(slot, rank, alpha, path))
+        if self._v020 is not None:
+            materialize_adapter(written, Path(path), checkpoint=False)
             return
-        self._run(self._bridge.export_slot(slot, rank, alpha, path))
         _materialize_capture(path)
 
     def torch_profile_start(self) -> None:
@@ -255,8 +228,6 @@ class MilesRuntime:
             result = self._call(coroutine)
             _check_result(result)
             return result
-        except NativeSourceError:
-            raise
         except Exception as exc:
             self._failure = exc
             raise BackendFailed(f"Miles trainer failed: {exc}") from exc
@@ -290,15 +261,20 @@ class MilesRuntime:
         os.environ.setdefault("no_proxy", "127.0.0.1")
 
         install_bridge_replay(tinker_runtime)
-        _configure_actor_spec(train_specs)
+        if self._v020 is not None:
+            self._v020.configure_actor()
+        else:
+            _configure_actor_spec(train_specs)
         if create_trainer_handles is None:
             _allow_context_parallel_multi_lora(lora_arguments)
-        _allow_allgather_cp_bshd_multi_lora(lora_arguments)
+        if self._v020 is None:
+            _allow_allgather_cp_bshd_multi_lora(lora_arguments)
         architecture = (
             shlex.split(load_model_args(self.config.model_type))
             if self.config.model_type
             else []
         )
+        parse_options = {"preprocess_args": _configure_args} if self._v020 else {}
         with _temporary_argv([*architecture, *self.config.miles_arguments()]):
             if self.config.cli_options:
 
@@ -308,16 +284,14 @@ class MilesRuntime:
                     )
 
                 args = parse_args(
-                    add_custom_arguments=configure,
-                    entry="serve",
-                    preprocess_args=_configure_training_args,
+                    add_custom_arguments=configure, entry="serve", **parse_options
                 )
             else:
-                args = parse_args(
-                    entry="serve", preprocess_args=_configure_training_args
-                )
-        self._args = args
+                args = parse_args(entry="serve", **parse_options)
+        self._args = self._v020.replay_args(args) if self._v020 else args
 
+        if self._v020 is None:
+            _configure_args(args)
         configure_logger(args, source=_main_process_identity())
         startup = timeline(BACKEND_COMPONENT)
         startup.mark("miles_args_parsed")
@@ -353,23 +327,15 @@ class MilesRuntime:
         object_store.init_instance(args, contribute_segment=False)
         self._owns_object_store = True
         startup.mark("ray_workers_launched")
-        if create_trainer_handles is not None:
+        if self._v020 is not None:
+            self._trainer, request = await self._v020.initialize_trainer(args)
+            await self._trainer.init(request)
+        elif create_trainer_handles is not None:
             configs = compute_trainer_configs(args)
             (actor_config,) = [c for c in configs if c.role == ACTOR_ROLE]
-            if TrainerControllerInitRequest is not None:
-                capability = compute_backend_capability(args)
-                handles = create_trainer_handles(
-                    args, trainer_configs=configs, capability=capability
-                )
-                self._args = compute_trainer_config(args, actor_config)
-                request = TrainerControllerInitRequest.from_args(
-                    args, trainer=actor_config
-                )
-            else:
-                handles = create_trainer_handles(args, trainer_configs=configs)
-                request = compute_trainer_args(args, actor_config)
+            handles = create_trainer_handles(args, trainer_configs=configs)
             self._trainer = handles[actor_config.trainer_id]
-            await self._trainer.init(request)
+            await self._trainer.init(compute_trainer_args(args, actor_config))
         else:
             self._trainer = TrainerController(
                 args=args,
@@ -381,16 +347,9 @@ class MilesRuntime:
             )
             await self._trainer.init()
         startup.mark("trainer_actors_initialized")
-        lora_layout = (
-            get_hf_lora_targets(load_hf_config(self.config.hf_checkpoint).to_dict())
-            if TrainerControllerInitRequest is not None
-            else None
-        )
-        self._bridge = _array_bridge(self._trainer, lora_layout=lora_layout)
-        if uses_native_checkpoints(self._bridge):
-            self._native_checkpoints = NativeCheckpoints(
-                self._bridge, args, self.config
-            )
+        self._bridge = _array_bridge(self._trainer, native=self._v020 is not None)
+        if self._v020 is not None:
+            self._bridge = self._v020.AdapterBridge(self._bridge, args)
         startup.mark("miles_backend_ready")
 
     async def _close(self) -> None:
@@ -424,13 +383,6 @@ class MilesRuntime:
             self._worker_manager = None
 
 
-def _configure_training_args(args) -> None:
-    """Set trainer options before Miles validates and freezes its configuration."""
-    args.lora_A_init_method = "kaiming"
-    args.use_dynamic_global_batch_size = True
-    args.delay_split_train_data_by_dp = True
-
-
 _WORKER_ENV_VARS = (
     "SPINDLE_CHECKPOINT_VOLUME",
     "SPINDLE_BULLETIN_VOLUME",
@@ -442,7 +394,7 @@ _WORKER_ENV_VARS = (
 )
 
 
-def _array_bridge(trainer, *, lora_layout=None):
+def _array_bridge(trainer, *, native=False):
     """Miles's ``_execute_batch`` builds per-token Python lists and returns log
     probabilities with ``.tolist()``; this keeps rows and outputs as arrays."""
 
@@ -492,10 +444,8 @@ def _array_bridge(trainer, *, lora_layout=None):
                         outputs[index] = recorded
             return [outputs[index] for index in range(len(slot_datums))]
 
-    kwargs = {"router_url": "", "dp_size": 1}
-    if lora_layout is not None:
-        kwargs["lora_layout"] = lora_layout
-    return ArrayBackend(trainer, **kwargs)
+    options = {"lora_layout": None} if native else {}
+    return ArrayBackend(trainer, router_url="", dp_size=1, **options)
 
 
 def _worker_env() -> dict[str, str]:
@@ -536,6 +486,13 @@ def _temporary_argv(arguments: list[str]):
         sys.argv = original
 
 
+def _configure_args(args) -> None:
+    # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
+    args.lora_A_init_method = "kaiming"
+    args.use_dynamic_global_batch_size = True
+    args.delay_split_train_data_by_dp = True
+
+
 def _check_result(result) -> None:
     if isinstance(result, (list, tuple)):
         for item in result:
@@ -552,12 +509,7 @@ def _main_process_identity():
 
 
 def _configure_actor_spec(train_specs) -> None:
-    legacy = hasattr(train_specs, "_compute_spec_trainer")
-    original = (
-        train_specs._compute_spec_trainer
-        if legacy
-        else train_specs.TrainerSpec.create.__func__
-    )
+    original = train_specs._compute_spec_trainer
     if getattr(original, "_spindle_actor_spec", False):
         return
 
@@ -576,10 +528,7 @@ def _configure_actor_spec(train_specs) -> None:
         return spec
 
     compute._spindle_actor_spec = True
-    if legacy:
-        train_specs._compute_spec_trainer = compute
-    else:
-        train_specs.TrainerSpec.create = classmethod(compute)
+    train_specs._compute_spec_trainer = compute
 
 
 def _allow_allgather_cp_bshd_multi_lora(lora_arguments) -> None:

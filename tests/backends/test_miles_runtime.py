@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from pydantic import BaseModel, ConfigDict
 
 from spindle.backends.miles_runtime import runtime as miles_runtime
 from spindle.backends.miles_runtime.runtime import (
@@ -144,7 +143,6 @@ def test_require_cluster_nodes_rejects_short_gpu_total(monkeypatch):
 
 def test_upstream_error_result_invalidates_runtime():
     runtime = MilesRuntime.__new__(MilesRuntime)
-    runtime._native_checkpoints = None
     runtime._closed = False
     runtime._failure = None
     runtime._call = asyncio.run
@@ -158,12 +156,46 @@ def test_upstream_error_result_invalidates_runtime():
         runtime._run(error())
 
 
+@pytest.mark.parametrize("operation", ["save_slot", "export_slot_peft"])
+def test_rejected_native_capture_fails_only_its_request(tmp_path, operation):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    runtime._v020 = SimpleNamespace()
+    capture = tmp_path / "capture"
+    incomplete = tmp_path / ".capture.1234"
+    incomplete.mkdir()
+
+    async def written(*args, **kwargs):
+        return incomplete
+
+    runtime._bridge = SimpleNamespace(save_slot=written, export_slot=written)
+    if operation == "save_slot":
+        call = lambda: runtime.save_slot(0, str(capture))  # noqa: E731
+    else:
+        call = lambda: runtime.export_slot_peft(  # noqa: E731
+            slot=0,
+            path=str(capture),
+            rank=8,
+            alpha=16.0,
+            base_model="m",
+            target_modules=(),
+            lora_dropout=0.0,
+        )
+
+    with pytest.raises((ValueError, FileNotFoundError)):
+        call()
+    assert runtime._failure is None
+    assert not capture.exists()
+    assert not incomplete.exists()
+
+
 @pytest.mark.parametrize("failed_rank", [0, 1])
 def test_weights_only_worker_error_invalidates_runtime_before_capture(
     tmp_path, failed_rank
 ):
     runtime = MilesRuntime.__new__(MilesRuntime)
-    runtime._native_checkpoints = None
     runtime._closed = False
     runtime._failure = None
     runtime._call = asyncio.run
@@ -225,21 +257,13 @@ def test_allgather_cp_guard_is_skipped_only_for_bshd(allgather_cp, qkv_format, s
     assert args.allgather_cp is allgather_cp
 
 
-@pytest.mark.parametrize("native", [False, True])
-def test_array_bridge_keeps_the_miles_contract(monkeypatch, native):
+def test_array_bridge_keeps_the_miles_contract(monkeypatch):
     """Rows go to the workers as arrays (RL fields as tensors, which Miles
     slices per context-parallel rank) and come back ordered by sample index."""
 
     class MilesBackend:
         def __init__(self, trainer, router_url, dp_size=1):
             self.trainer = trainer
-
-    class NativeMilesBackend(MilesBackend):
-        def __init__(self, trainer, router_url, lora_layout, dp_size=1):
-            super().__init__(trainer, router_url, dp_size=dp_size)
-            self.lora_layout = lora_layout
-
-    layout = SimpleNamespace(attention=("q_proj",)) if native else None
 
     def build_train_data(slot_datums):
         rows = [row for _, row in slot_datums]
@@ -256,7 +280,7 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch, native):
         miles_runtime,
         "tinker_runtime",
         SimpleNamespace(
-            MilesBackend=NativeMilesBackend if native else MilesBackend,
+            MilesBackend=MilesBackend,
             _build_train_data=build_train_data,
             ROLLOUT_DATA_VALUE_SPEC={},
         ),
@@ -304,11 +328,7 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch, native):
             },
         ),
     ]
-    bridge = _array_bridge(
-        SimpleNamespace(forward_backward=forward_backward), lora_layout=layout
-    )
-    if native:
-        assert bridge.lora_layout is layout
+    bridge = _array_bridge(SimpleNamespace(forward_backward=forward_backward))
     outputs = asyncio.run(bridge._execute_batch("forward_backward", 1, rows, "ppo", {}))
 
     (sent,) = store.values
@@ -319,84 +339,3 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch, native):
     assert [o["logprobs"].tolist() for o in outputs] == [[-1.0] * 3, [-2.0] * 2]
     assert outputs[0]["logprobs"].dtype == np.float32
     assert store.removed == [0]
-
-
-def test_native_source_rejection_keeps_runtime_available():
-    from spindle.backends.miles_runtime.native_checkpoints import NativeSourceError
-
-    runtime = MilesRuntime.__new__(MilesRuntime)
-    runtime._closed = False
-    runtime._failure = None
-    runtime._call = asyncio.run
-
-    async def rejected():
-        raise NativeSourceError("checkpoint rank mismatch")
-
-    async def healthy():
-        return {"grad_norm": 1.0}
-
-    with pytest.raises(ValueError, match="rank mismatch"):
-        runtime._run(rejected())
-    assert runtime._failure is None
-    assert runtime._run(healthy()) == {"grad_norm": 1.0}
-
-
-def test_native_type_error_after_bridge_call_is_fatal():
-    from spindle.backends.miles_runtime.native_checkpoints import NativeCheckpoints
-
-    changed = []
-
-    async def bridge_load(*args, **kwargs):
-        changed.append("slot-mutated")
-        raise TypeError("restore failed after bridge invocation")
-
-    io = NativeCheckpoints.__new__(NativeCheckpoints)
-    io.bridge = SimpleNamespace(load_slot=bridge_load)
-    io.slots = {}
-    runtime = MilesRuntime.__new__(MilesRuntime)
-    runtime._closed = False
-    runtime._failure = None
-    runtime._call = asyncio.run
-    with pytest.raises(BackendFailed, match="after bridge invocation"):
-        runtime._run(io.load_slot(0, 2, 4.0))
-    assert changed == ["slot-mutated"]
-    assert isinstance(runtime._failure, TypeError)
-
-
-def test_v020_actor_spec_classmethod_preserves_config_and_subclasses():
-    class Spec(BaseModel):
-        model_config = ConfigDict(frozen=True)
-        worker_class: str
-        model_id: str
-
-        @classmethod
-        def create(cls, config):
-            return cls(worker_class=config.worker_class, model_id=config.model_id)
-
-    class ChildSpec(Spec):
-        pass
-
-    specs = SimpleNamespace(TrainerSpec=Spec)
-    config = SimpleNamespace(
-        worker_class="miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor",
-        model_id="model-a",
-    )
-    before = Spec.create(config)
-    _configure_actor_spec(specs)
-    once = Spec.create.__func__
-    _configure_actor_spec(specs)
-    assert Spec.create.__func__ is once
-    result = Spec.create(config)
-    assert (
-        result.worker_class
-        == "spindle.backends.miles_runtime.actor.SpindleMilesTrainRayActor"
-    )
-    assert result.model_id == before.model_id
-    assert before.worker_class == config.worker_class
-    assert isinstance(ChildSpec.create(config), ChildSpec)
-    assert (
-        Spec.create(
-            SimpleNamespace(worker_class="fft", model_id="model-b")
-        ).worker_class
-        == "fft"
-    )

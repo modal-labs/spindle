@@ -776,6 +776,7 @@ def test_execute_sample_routes_lora_models_to_shared_pool(monkeypatch) -> None:
     assert specs == [expected]
 
     assert exported_stats == {
+        "pool_app_name": expected.app_name,
         "prompt_tokens": 7,
         "generated_tokens": 11,
         "version_served_start": 3,

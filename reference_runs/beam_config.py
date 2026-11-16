@@ -1,4 +1,4 @@
-"""Beam BF16 LoRA on sixteen H200 trainers and one eight-B300 sampler."""
+"""Experimental Beam recipe; Miles v0.2.0 multi-node deployment is not yet supported."""
 
 from spindle.configuration import BaseConfig
 

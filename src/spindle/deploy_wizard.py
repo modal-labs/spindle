@@ -26,15 +26,7 @@ CONFIG_DIR = Path(__file__).with_name("configs")
 SERVED_TIMEOUT_S = 20
 CONTEXT_CHOICES = (2_048, 16_384, 32_768, 65_536, 131_072, 262_144)
 DEFAULT_CONTEXT = 32_768
-PROVIDER_ORDER = (
-    "Qwen",
-    "openai",
-    "nvidia",
-    "deepseek-ai",
-    "zai-org",
-    "moonshotai",
-    "reflection",
-)
+PROVIDER_ORDER = ("Qwen", "openai", "nvidia", "deepseek-ai", "zai-org", "moonshotai")
 MODE_LABELS = {"lora": "LoRA", "full": "Full fine-tune"}
 
 
@@ -212,7 +204,7 @@ def check_setup(console: Console, environment: str | None) -> None:
         for secret in REQUIRED_SECRETS:
             name = names[secret.platform_key]  # ty: ignore[invalid-argument-type]
             label = f"{name} · {', '.join(secret.keys)}"
-            problem = secret_problem(name, secret.keys, environment)  # ty: ignore[invalid-argument-type]
+            problem = secret_problem(name, secret.keys, environment)
             if problem is None:
                 table.add_row("[green]✓[/green]", label, secret.purpose)
             else:

@@ -362,6 +362,7 @@ def _row(
 
 def _post_report(rows: list[dict]) -> None:
     from slack_sdk import WebClient
+    from slack_sdk.errors import SlackApiError
 
     client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
     channel = os.environ["SLACK_CHANNEL_ID"]
@@ -377,6 +378,8 @@ def _post_report(rows: list[dict]) -> None:
     )["ts"]
     for row in rows:
         try:
+            blocks = []
+            text = ""
             if row["status"] == "success":
                 png = render_timing_history_chart(
                     [
@@ -385,28 +388,51 @@ def _post_report(rows: list[dict]) -> None:
                     ],
                     config_name=row["config"],
                 )
-                if png:
-                    client.files_upload_v2(
+                if not png:
+                    continue
+                uploaded = client.files_upload_v2(
+                    content=png,
+                    filename=f"timing_history_{row['config']}.png",
+                    title=row["config"],
+                )
+                blocks.append(
+                    {
+                        "type": "image",
+                        "slack_file": {"id": uploaded["files"][0]["id"]},
+                        "alt_text": f"{row['config']} timing history",
+                    }
+                )
+            else:
+                text = f"`{row['config']}` failed"
+                if row.get("error"):
+                    text += f"\n```{row['error'][:1500]}```"
+            if row.get("modal_app_url"):
+                if text:
+                    text += "\n"
+                text += f"<{row['modal_app_url']}|Trainer logs>"
+            if text:
+                blocks.append(
+                    {"type": "section", "text": {"type": "mrkdwn", "text": text}}
+                )
+            for attempt in range(5):
+                try:
+                    client.chat_postMessage(
                         channel=channel,
                         thread_ts=thread_ts,
-                        content=png,
-                        filename=f"timing_history_{row['config']}.png",
-                        title=row["config"],
+                        text=text,
+                        blocks=blocks,
+                        mrkdwn=True,
+                        unfurl_links=False,
+                        unfurl_media=False,
                     )
-                continue
-            text = f"`{row['config']}` failed"
-            if row.get("error"):
-                text += f"\n```{row['error'][:1500]}```"
-            if row.get("modal_app_url"):
-                text += f"\n<{row['modal_app_url']}|Modal logs>"
-            client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=text,
-                mrkdwn=True,
-                unfurl_links=False,
-                unfurl_media=False,
-            )
+                    break
+                except SlackApiError as exc:
+                    if attempt == 4 or not any(
+                        "invalid slack file" in error
+                        for error in exc.response.get("errors", [])
+                    ):
+                        raise
+                    time.sleep(2**attempt)
         except Exception as exc:
             print(f"error: reply failed for {row['config']}: {exc}")
 
@@ -431,6 +457,7 @@ def monitor(script: str) -> dict:
         url = modal.App.lookup(
             TRAINER_APPS[script], environment_name="spindle"
         ).get_dashboard_url()
+        url += f"?activeTab=logs&start={started}&end={time.time()}&live=false"
     except Exception:
         url = None
     point = RunPoint(

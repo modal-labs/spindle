@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 from copy import deepcopy
@@ -516,7 +517,7 @@ def test_deepseek_v41_lora_trainer_image_is_registered():
     "backend,field", [("miles", "trainer_image"), ("sglang", "inference_image")]
 )
 def test_beam_runtime_images_resolve(backend, field):
-    recipe = load(config_path("beam-501b-a23b-lora-5k"))
+    recipe = load(Path(__file__).parents[2] / "reference_runs/beam_config.py")
     assert isinstance(
         deployment_apps.image_for(backend, getattr(recipe, field)), modal.Image
     )

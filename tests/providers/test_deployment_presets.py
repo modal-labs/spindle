@@ -1,8 +1,10 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from spindle.backends.deployment import backend_config, serving_options
+from spindle.backends.miles_config import MilesBackendConfig
 from spindle.control_plane.deployments import FrontendSettings
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.modal.deployment_configs import (
@@ -94,13 +96,20 @@ def test_single_client_recipe_keeps_shared_backend_capacity():
 
 
 def test_beam_preserves_distinct_attention_and_mlp_gates():
-    deployment = DeploymentConfig.create(load(config_path("beam-501b-a23b-lora-5k")))
-    assert deployment.recipe.trainer_image == "miles-v0.2.0"
-    assert deployment.recipe.miles_cfg["cli_options"]["lora_type"] == "lora"
-    assert deployment.recipe.miles_cfg["cli_options"]["qkv_format"] == "thd"
-    targets = deployment.inference_settings["lora_target_modules"]
+    spec = load(Path(__file__).parents[2] / "reference_runs/beam_config.py")
+    assert spec.trainer_image == "miles-v0.2.0"
+    assert spec.miles_cfg["cli_options"]["lora_type"] == "lora"
+    assert spec.miles_cfg["cli_options"]["qkv_format"] == "thd"
+    targets = MilesBackendConfig(
+        hf_checkpoint="/assets/pending",
+        actor_num_gpus_per_node=spec.trainer_gpus_per_node,
+        actor_num_nodes=spec.trainer_nodes,
+        **spec.miles_cfg,
+    ).peft_target_modules
     assert "self_attn.gate_proj" in targets
     assert "mlp.gate_proj" in targets
+    with pytest.raises(ValueError, match="only single-node trainers"):
+        DeploymentConfig.create(spec)
 
 
 def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):

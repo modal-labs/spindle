@@ -50,6 +50,7 @@ from .keys import (
     trainer_slot_wait_key,
 )
 from .queues import SharedSnapshot, read_queues, record_queue_event
+from .usage import SessionUsageWriter
 from .records import (
     ModelCreationRecord,
     ModelRecord,
@@ -214,6 +215,7 @@ class ControlPlane:
         creation_error: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_gpu_wait: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_slots: Callable[[str], int | None] = lambda _: None,
+        usage: SessionUsageWriter | None = None,
     ) -> None:
         self.kv = kv
         self.engines = engines
@@ -234,6 +236,7 @@ class ControlPlane:
         self.creation_error = creation_error
         self.trainer_gpu_wait = trainer_gpu_wait
         self.trainer_slots = trainer_slots
+        self.usage = usage
         self._queue = SharedSnapshot(
             lambda _: read_queues(self.kv, self.engines),
             lambda: self.clock(),
@@ -269,6 +272,8 @@ class ControlPlane:
                 seen_at=now,
             ).model_dump(mode="json"),
         )
+        if self.usage is not None:
+            self.usage.put_session(session.session_id, user_metadata)
         return session
 
     async def heartbeat(self, session_id: str) -> SessionLastSeenRecord:
@@ -342,6 +347,8 @@ class ControlPlane:
         )
         model = ModelRecord.model_validate(model_insert.value)
         if model_insert.created:
+            if self.usage is not None:
+                self.usage.model_used(model.model_id, session_id)
             await asyncio.gather(
                 self.kv.put(
                     trainer_demand_key(model.model_id),
@@ -467,17 +474,8 @@ class ControlPlane:
         except FileNotFoundError:
             raise RecordNotFound("checkpoint metadata", path) from None
         schema_version = metadata.get("schema_version")
-        if isinstance(schema_version, bool) or schema_version not in (1, 2):
+        if isinstance(schema_version, bool) or schema_version != 1:
             raise ValueError("unsupported checkpoint metadata")
-        if schema_version == 2 and (
-            not isinstance(schema_version, int)
-            or metadata.get("backend") != "miles"
-            or metadata.get("checkpoint_format")
-            not in ("miles_adapter_state_v1", "miles_sampler_export_v1")
-            or metadata.get("has_optimizer")
-            is not (metadata.get("checkpoint_format") == "miles_adapter_state_v1")
-        ):
-            raise ValueError("unsupported native Miles checkpoint metadata")
         saved_base_model = metadata.get("base_model")
         definition_id = metadata.get("engine_definition_id")
         parameterization = metadata.get("parameterization")
@@ -490,8 +488,6 @@ class ControlPlane:
             "type"
         ) not in {"lora", "full"}:
             raise ValueError("checkpoint metadata has invalid parameterization")
-        if schema_version == 2 and parameterization["type"] != "lora":
-            raise ValueError("native Miles checkpoint requires LoRA parameterization")
         if parameterization["type"] == "lora" and not isinstance(lora_config, Mapping):
             raise ValueError("checkpoint metadata has no lora_config")
         if parameterization["type"] == "full" and lora_config is not None:
@@ -510,12 +506,6 @@ class ControlPlane:
         definition_ids: Collection[str] | None = None,
     ) -> ModelCreation:
         metadata = await self.checkpoint_metadata(path)
-        if (
-            metadata["schema_version"] == 2
-            and optimizer
-            and not metadata["has_optimizer"]
-        ):
-            raise ValueError("checkpoint does not include optimizer state")
         path = self.resolve_checkpoint_path(path)
         saved_base_model = metadata["base_model"]
         definition_id = metadata["engine_definition_id"]
@@ -847,6 +837,9 @@ class ControlPlane:
             pending = asyncio.create_task(self._read_route(model_id))
             self._route_reads[model_id] = pending
         model, placement = await asyncio.shield(pending)
+        if self.usage is not None:
+            # Also covers models created before usage was recorded.
+            self.usage.model_used(model_id, model.session_id)
         if placement is None:
             await self._touch_session(model.session_id)
             if await self._lost(model_id):
@@ -1682,6 +1675,7 @@ class ControlPlane:
             "placement:",
         )
         sessions: list[str] = []
+        user_metadata: dict[str, dict[str, str] | None] = {}
         last_seen: dict[str, float] = {}
         closed_sessions: set[str] = set()
         for key, value in session_items:
@@ -1693,7 +1687,9 @@ class ControlPlane:
                     SessionClosedRecord.model_validate(value).session_id
                 )
             elif key.startswith("session:"):
-                sessions.append(SessionRecord.model_validate(value).session_id)
+                session = SessionRecord.model_validate(value)
+                sessions.append(session.session_id)
+                user_metadata[session.session_id] = session.user_metadata
 
         models_by_session: dict[str, list[ModelRecord]] = defaultdict(list)
         creations_by_session: dict[str, list[str]] = defaultdict(list)
@@ -1736,6 +1732,11 @@ class ControlPlane:
         for session_id in closed_sessions:
             models = models_by_session[session_id]
             if any(model.model_id in placed for model in models):
+                continue
+            # The session's record is the last copy of its labels.
+            if self.usage is not None and not await asyncio.wrap_future(
+                self.usage.put_session(session_id, user_metadata.get(session_id))
+            ):
                 continue
             if self.sampling_task_stores is not None:
                 await self.sampling_task_stores.delete_session(session_id)
