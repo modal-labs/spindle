@@ -8,6 +8,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - DeepSeek-V4.1-Flash samplers run SGLang v0.5.23 like every other sampler, with decoder SWA bounded replay turned off. On v0.5.23 that feature made LoRA samplers crash on long prompts, and its logprobs don't match a full prefill. The samplers switch over at their next deploy (#304).
 
+### Fixed
+
+- Long-sequence training requests with expert-routing replay no longer fail with intermittent 503 errors.
+
 ## 0.1.8 - 2026-11-18
 
 Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen and Nemotron-3 Nano LoRA recipes move to Miles native adapters, so checkpoints they saved before 0.1.8 load only on their original trainer image. A new recipe trains Nemotron 3.5 Super VL 120B-A12B on text, sampled logprobs match the trainer at any temperature, multi-target scoring handles mixed candidate counts in one pass, and a rewritten guide shows how to profile and tune a deployment config.
