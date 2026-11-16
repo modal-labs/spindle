@@ -321,6 +321,18 @@ class MilesCommandBackend(Backend):
                 str(capture_path / "miles"),
                 include_optimizer=include_optimizer,
             )
+        lora_config = CheckpointLoraConfig(
+            rank=state.rank,
+            alpha=state.alpha,
+            seed=state.seed,
+            train_attn=state.train_attn,
+            train_mlp=state.train_mlp,
+            train_unembed=state.train_unembed,
+        )
+        if self._native:
+            lora_config = lora_config.model_copy(
+                update={"target_modules": list(self.config.target_modules)}
+            )
         metadata = CheckpointMetadata(
             schema_version=1,
             checkpoint_format=self.runtime.checkpoint_format,
@@ -329,19 +341,7 @@ class MilesCommandBackend(Backend):
             base_model=self.base_model,
             engine_definition_id=os.environ["SPINDLE_DEFINITION_ID"],
             parameterization=Parameterization(type="lora"),
-            lora_config=CheckpointLoraConfig(
-                rank=state.rank,
-                alpha=state.alpha,
-                seed=state.seed,
-                train_attn=state.train_attn,
-                train_mlp=state.train_mlp,
-                train_unembed=state.train_unembed,
-                **(
-                    {"target_modules": list(self.config.target_modules)}
-                    if self._native
-                    else {}
-                ),
-            ),
+            lora_config=lora_config,
             optimizer_step=state.optimizer_step,
             has_optimizer=include_optimizer,
             topology=self._checkpoint_topology(),

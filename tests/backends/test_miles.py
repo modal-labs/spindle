@@ -499,8 +499,15 @@ def test_backend_pads_dp_ragged_batches(tmp_path) -> None:
     assert len(dp1_runtime.last_slot_rows) == 1
 
 
-def test_checkpoint_capture_persist_and_restore(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("checkpoint_format", "native"),
+    [("miles_torch_dist", False), ("miles_adapter_state", True)],
+)
+def test_checkpoint_capture_persist_and_restore(
+    tmp_path, checkpoint_format, native
+) -> None:
     runtime = FakeMilesRuntime()
+    runtime.checkpoint_format = checkpoint_format
     backend = _backend(tmp_path, runtime)
     backend.accept_model("model-a", _spec())
     backend.jobs["model-a"].optimizer_step = 3
@@ -517,6 +524,8 @@ def test_checkpoint_capture_persist_and_restore(tmp_path, monkeypatch) -> None:
 
     assert metadata["miles_revision"] == runtime.revision
     assert metadata["backend"] == "miles"
+    assert metadata["checkpoint_format"] == checkpoint_format
+    assert ("target_modules" in metadata["lora_config"]) == native
     assert json.loads((Path(uri) / "miles" / "metadata.json").read_text()) == {
         "sharded_backend": "torch_dist"
     }
