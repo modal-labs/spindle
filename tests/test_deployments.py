@@ -1301,7 +1301,6 @@ def test_speculative_draft_model_is_downloaded_asset_and_sglang_path(algorithm):
     assert (
         row.inference_settings["speculative_draft_model_path"] == row.draft_asset_path
     )
-    assert row.inference_settings["speculative_draft_model_revision"] is None
 
 
 def test_speculative_draft_model_cannot_replace_base_model():
@@ -1339,7 +1338,6 @@ def test_native_mtp_reuses_the_resolved_target_checkpoint(weights):
     )
     assert row.draft_asset_path is None
     assert row.inference_settings["speculative_draft_model_path"] == row.asset_path
-    assert row.inference_settings["speculative_draft_model_revision"] is None
 
 
 @pytest.mark.parametrize("value", [None, "1"])

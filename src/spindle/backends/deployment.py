@@ -149,9 +149,6 @@ def serving_options(spec, draft_model_path=None):
         raise ValueError("sglang.tp_size must equal the replica GPU allocation")
     if draft_model_path is not None:
         options["speculative_draft_model_path"] = draft_model_path
-        # The draft is materialized locally by Spindle, so this must not cause
-        # SGLang/Hugging Face to resolve a second remote revision.
-        options["speculative_draft_model_revision"] = None
     return options
 
 

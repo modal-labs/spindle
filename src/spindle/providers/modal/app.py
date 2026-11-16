@@ -226,9 +226,9 @@ async def prepare_model_assets(definition_id: str) -> None:
             local_dir=checkpoint,
         )
     await model_assets.commit.aio()
-    StartupTimeline("model-assets", origin=started, labels={"path": checkpoint}).mark(
-        "assets_ready"
-    )
+    StartupTimeline(
+        "model-assets", origin=started, labels={"path": definition.asset_path}
+    ).mark("assets_ready")
     await shared_kv().put(await _weights_ready_key(definition_id), time.time())
 
 
