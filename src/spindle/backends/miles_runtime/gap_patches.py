@@ -11,6 +11,8 @@
 - permute_fusion: let the MoE dispatcher use Transformer Engine's fused permute
   and unpermute while expert adapters are on; slot ids follow the same order
   through an index rebuilt from the routing map.
+- expert_grouped_mm: run frozen MoE expert weights through one torch grouped GEMM
+  per projection instead of Transformer Engine's per-expert cuBLAS calls.
 """
 
 from __future__ import annotations
@@ -40,6 +42,8 @@ def install(logit_processors) -> None:
         _install_logits_split(logit_processors)
     if "permute_bwd" in on:
         _install_permute_bwd()
+    if "expert_grouped_mm" in on:
+        _install_expert_grouped_mm()
     if on:
         _log(action="installed", patches=",".join(sorted(on)))
 
@@ -235,3 +239,45 @@ class _ContiguousGrad(torch.autograd.Function):
 
 def contiguous_grad(tensor: torch.Tensor) -> torch.Tensor:
     return _ContiguousGrad.apply(tensor)
+
+
+def _stacked_weight(module) -> torch.Tensor:
+    """[experts, out, in] weight whose rows the module's per-expert parameters now view."""
+    stacked = module.__dict__.get("_spindle_stacked_weight")
+    if stacked is None:
+        weights = [getattr(module, f"weight{i}") for i in range(module.num_gemms)]
+        stacked = torch.stack([w.detach() for w in weights])
+        for i, weight in enumerate(weights):
+            weight.data = stacked[i]
+        module.__dict__["_spindle_stacked_weight"] = stacked
+    return stacked
+
+
+def _install_expert_grouped_mm() -> None:
+    from megatron.core.extensions import transformer_engine as te_ext
+
+    cls = te_ext.TEGroupedLinear
+    original = cls.forward
+
+    def forward(self, x, m_splits):
+        eligible = (
+            x.dtype == torch.bfloat16
+            and x.dim() == 2
+            and x.size(0) > 0
+            and not getattr(self, "use_bias", False)
+            and not any(getattr(self, f"weight{i}").requires_grad for i in range(self.num_gemms))
+            and not self.config.fp8
+            and not getattr(self.config, "fp4", None)
+        )
+        if not eligible:
+            return original(self, x, m_splits)
+        stacked = _stacked_weight(self)
+        if isinstance(m_splits, torch.Tensor):
+            counts = m_splits.to(device=x.device, dtype=torch.int32)
+        else:
+            counts = torch.tensor(list(m_splits), dtype=torch.int32).pin_memory().to(x.device, non_blocking=True)
+        offsets = counts.cumsum(0, dtype=torch.int32)
+        out = torch._grouped_mm(x, stacked.transpose(1, 2), offsets)
+        return out, None
+
+    cls.forward = forward
