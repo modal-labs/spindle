@@ -1,30 +1,32 @@
 """Take every row's response logits from one split of the micro-batch logits.
 
-Miles slices each row's response out of the packed ``[tokens, vocab]`` logits.
-In backward, each slice becomes a full-size zero tensor with the row's gradient
-copied in, and autograd adds those tensors together: one full-size fill and
-add per row. A micro-batch of 30 short rows spends more time there than in
-the language-model head. A single ``split`` builds the gradient once.
+Miles slices each row's response from the packed logits, so backward fills and
+adds one full-size gradient per row. One ``split`` builds it once.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
+from types import ModuleType
 
-def install(logit_processors) -> None:
+import torch
+
+
+def install(logit_processors: ModuleType) -> None:
     original = logit_processors._iter_response_chunks
     if getattr(original, "__spindle_split__", False):
         return
 
     def _iter_response_chunks(
-        logits,
+        logits: torch.Tensor,
         *,
-        args,
-        unconcat_tokens,
-        total_lengths,
-        response_lengths,
-        max_seq_lens=None,
-        include_response_indices,
-    ):
+        args: object,
+        unconcat_tokens: Sequence[torch.Tensor],
+        total_lengths: Sequence[int],
+        response_lengths: Sequence[int],
+        max_seq_lens: Sequence[int] | None = None,
+        include_response_indices: bool,
+    ) -> Iterator[tuple[torch.Tensor, torch.Tensor, Sequence[int]]]:
         layout = None
         if (
             args.qkv_format == "thd"
@@ -50,7 +52,9 @@ def install(logit_processors) -> None:
         for piece, tokens, response_length in zip(
             pieces_of_rows, unconcat_tokens, response_lengths, strict=False
         ):
-            response_tokens = tokens[-response_length:] if response_length else tokens[0:0]
+            response_tokens = (
+                tokens[-response_length:] if response_length else tokens[0:0]
+            )
             indices = range(response_length) if include_response_indices else ()
             yield pieces[piece], response_tokens, indices
 
@@ -58,7 +62,9 @@ def install(logit_processors) -> None:
     logit_processors._iter_response_chunks = _iter_response_chunks
 
 
-def split_layout(total_lengths, response_lengths, rows):
+def split_layout(
+    total_lengths: Sequence[int], response_lengths: Sequence[int], rows: int
+) -> tuple[list[int], list[int]] | None:
     """Split sizes covering ``[0, rows)`` and the piece holding each row's response.
 
     Row ``i``'s response logits are ``[end_i - response_i - 1, end_i - 1)``, the
@@ -70,8 +76,9 @@ def split_layout(total_lengths, response_lengths, rows):
         end += total
         start, stop = end - response - 1, end - 1
         if response == 0:
+            # Miles' empty window can sit at -1 or past the logits.
             start = stop = max(cursor, min(stop, rows))
-        if start < cursor or stop > rows or start > stop:
+        if start < cursor or stop > rows:
             return None
         if start > cursor:
             sizes.append(start - cursor)
