@@ -156,13 +156,25 @@ def test_upstream_error_result_invalidates_runtime():
         runtime._run(error())
 
 
+@pytest.mark.parametrize("commit_fails", [False, True])
 @pytest.mark.parametrize("operation", ["save_slot", "export_slot_peft"])
-def test_rejected_native_capture_fails_only_its_request(tmp_path, operation):
+def test_rejected_native_capture_fails_only_its_request(
+    tmp_path, monkeypatch, operation, commit_fails
+):
     runtime = MilesRuntime.__new__(MilesRuntime)
     runtime._closed = False
     runtime._failure = None
     runtime._call = asyncio.run
     runtime._v020 = SimpleNamespace()
+    if commit_fails:
+        monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "checkpoints")
+        monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(tmp_path))
+
+        async def execute(method, **kwargs):
+            assert method == "commit_checkpoint_volume"
+            raise RuntimeError("checkpoint volume commit failed on 1 node(s)")
+
+        runtime._trainer = SimpleNamespace(_execute_slots=execute)
     capture = tmp_path / "capture"
     incomplete = tmp_path / ".capture.1234"
     incomplete.mkdir()
@@ -184,7 +196,7 @@ def test_rejected_native_capture_fails_only_its_request(tmp_path, operation):
             lora_dropout=0.0,
         )
 
-    with pytest.raises((ValueError, FileNotFoundError)):
+    with pytest.raises((ValueError, FileNotFoundError, RuntimeError)):
         call()
     assert runtime._failure is None
     assert not capture.exists()

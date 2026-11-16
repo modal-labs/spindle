@@ -36,6 +36,7 @@ from .miles_config import (
 from .miles_runtime.data import build_outputs, pad_slot_rows, prepare_batch
 from .miles_runtime.profiling import RankProfiler, StepPhaseTimer, TorchProfileConfig
 from .miles_runtime.runtime import MilesRuntime
+from .miles_runtime.volumes import on_checkpoint_volume
 
 
 @dataclass(slots=True)
@@ -74,6 +75,7 @@ class MilesCommandBackend(Backend):
         self.slot_to_job: dict[int, str] = {}
         # A volume refresh must not race checkpoint writes on the persistence lane.
         self._checkpoint_io_lock = threading.RLock()
+        self._captures_on_volume = on_checkpoint_volume(capture_dir)
         self._native = self.runtime.checkpoint_format == "miles_adapter_state"
         self._checkpoint_captures: dict[str, dict[str, Any]] = {}
         self._sampler_captures: dict[str, dict[str, Any]] = {}
@@ -309,6 +311,7 @@ class MilesCommandBackend(Backend):
                 "save_checkpoint", state.optimizer_step, model_id=model_id
             ),
             self._record("spindle/save_checkpoint"),
+            self._volume_capture_io(),
         ):
             self.runtime.save_slot(
                 self.job_to_slot[model_id],
@@ -443,6 +446,7 @@ class MilesCommandBackend(Backend):
                 "save_sampler_weights", state.optimizer_step, model_id=model_id
             ),
             self._record("spindle/save_sampler_weights"),
+            self._volume_capture_io(),
         ):
             self.runtime.export_slot_peft(
                 slot=self.job_to_slot[model_id],
@@ -484,6 +488,7 @@ class MilesCommandBackend(Backend):
                     "publish_weights", publish_step, model_id=capture["model_id"]
                 ),
                 self._record("spindle/publish_weights"),
+                self._volume_capture_io(),
             ):
                 bulletin.publish(
                     VersionRef(
@@ -502,6 +507,12 @@ class MilesCommandBackend(Backend):
             capture = self._sampler_captures.pop(capture_id, None)
             if capture is not None:
                 shutil.rmtree(capture["path"], ignore_errors=True)
+
+    def _volume_capture_io(self) -> contextlib.AbstractContextManager:
+        """Volume reloads fail on open files, so captures on the volume share the persistence lock."""
+        if self._captures_on_volume:
+            return self._checkpoint_io_lock
+        return contextlib.nullcontext()
 
     def unload_model(self, model_id: str) -> None:
         if model_id not in self.jobs:

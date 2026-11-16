@@ -26,6 +26,14 @@ def _checkpoint_volume_path(path: Path) -> str | None:
         return None
 
 
+def on_checkpoint_volume(path: Path) -> bool:
+    """Whether ``path`` lives on the checkpoint volume, where nodes see only committed writes."""
+    return (
+        "SPINDLE_CHECKPOINT_VOLUME" in os.environ
+        and _checkpoint_volume_path(Path(path)) is not None
+    )
+
+
 def _checkpoint_root() -> Path:
     return Path(os.environ.get("SPINDLE_CHECKPOINT_ROOT") or "/checkpoints")
 

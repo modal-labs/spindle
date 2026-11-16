@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -24,7 +25,7 @@ from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
 from .native_checkpoint import materialize_adapter
 from .replay_data import install_bridge_replay, validate_routed_experts
-from .volumes import sync_checkpoint_volume
+from .volumes import on_checkpoint_volume, sync_checkpoint_volume
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
 _runtime_import_error = None
@@ -174,7 +175,7 @@ class MilesRuntime:
                 self._bridge.save_slot(slot, path, include_optimizer=include_optimizer)
             )
             # Outside _run: a bad capture fails this request, not the shared trainer.
-            sync_checkpoint_volume("reload")
+            self._gather_capture(written, Path(path))
             materialize_adapter(written, Path(path), checkpoint=True)
             return
         if include_optimizer:
@@ -198,10 +199,23 @@ class MilesRuntime:
     ) -> None:
         written = self._run(self._bridge.export_slot(slot, rank, alpha, path))
         if self._v020 is not None:
-            sync_checkpoint_volume("reload")
+            self._gather_capture(written, Path(path))
             materialize_adapter(written, Path(path), checkpoint=False)
             return
         _materialize_capture(path)
+
+    def _gather_capture(self, written: Path, path: Path) -> None:
+        """Make every node's writes to a capture on the checkpoint volume visible here."""
+        if not on_checkpoint_volume(path):
+            return
+        try:
+            self._run_best_effort(
+                self._trainer._execute_slots("commit_checkpoint_volume")
+            )
+            sync_checkpoint_volume("reload")
+        except Exception:
+            shutil.rmtree(written, ignore_errors=True)
+            raise
 
     def torch_profile_start(self) -> None:
         self._run_best_effort(self._trainer._execute_slots("torch_profile_start"))
