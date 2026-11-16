@@ -70,6 +70,7 @@ Bundled LoRA recipes enable speculative decoding with these checkpoints:
 | Recipe | Method | Draft checkpoint |
 | --- | --- | --- |
 | `qwen35-4b-lora-32k-mtp-b200` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
+| `nemotron35-lightning-30b-a3b-lora-64k-mtp` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
 | `qwen3-8b-lora-32k-dflash-b300` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
 | `qwen35-9b-instruct-lora-32k-dflash-b200` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
 | `qwen38-27b-lora-32k-dflash-b200` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
