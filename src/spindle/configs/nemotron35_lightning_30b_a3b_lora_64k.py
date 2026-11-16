@@ -13,6 +13,10 @@ class Config(Parent):
         "miles_cfg.max_lora_slots": 4,
         "sglang_cfg.max_loras_per_batch": 4,
         "sglang_cfg.max_loaded_loras": 32,
+        # Prefill runs eagerly on this hybrid model, so each admission costs a
+        # whole pass; once 32 requests are decoding, admit new ones every 16 steps.
+        "sglang_cfg.prefill_decode_interval": 16,
+        "sglang_cfg.prefill_decode_interval_min_bs": 32,
     }
 
 
