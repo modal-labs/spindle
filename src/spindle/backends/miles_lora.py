@@ -74,6 +74,7 @@ class MilesCommandBackend(Backend):
         self.slot_to_job: dict[int, str] = {}
         # A volume refresh must not race checkpoint writes on the persistence lane.
         self._checkpoint_io_lock = threading.RLock()
+        self._native = self.runtime.checkpoint_format == "miles_adapter_state"
         self._checkpoint_captures: dict[str, dict[str, Any]] = {}
         self._sampler_captures: dict[str, dict[str, Any]] = {}
         self._timer = StepPhaseTimer()
@@ -316,7 +317,7 @@ class MilesCommandBackend(Backend):
             )
         metadata = {
             "schema_version": 1,
-            "checkpoint_format": "miles_torch_dist",
+            "checkpoint_format": self.runtime.checkpoint_format,
             "backend": "miles",
             "miles_revision": self.runtime.revision,
             "base_model": self.base_model,
@@ -344,6 +345,8 @@ class MilesCommandBackend(Backend):
                 "pipeline_model_parallel_size": 1,
             },
         }
+        if self._native:
+            metadata["lora_config"]["target_modules"] = list(self.config.target_modules)
         (capture_path / "metadata.json").write_text(
             json.dumps(metadata, sort_keys=True),
             encoding="utf-8",
@@ -376,12 +379,15 @@ class MilesCommandBackend(Backend):
                     ),
                     self._record("spindle/persist_checkpoint"),
                 ):
-                    _install_capture(
-                        capture["path"],
-                        target,
-                        overwrite=overwrite,
-                        world_size=self.config.world_size,
-                    )
+                    if self._native:
+                        _install_directory(capture["path"], target, overwrite=overwrite)
+                    else:
+                        _install_capture(
+                            capture["path"],
+                            target,
+                            overwrite=overwrite,
+                            world_size=self.config.world_size,
+                        )
                     _commit_volume(os.environ.get("SPINDLE_CHECKPOINT_VOLUME"))
                 return str(target)
             finally:
@@ -645,7 +651,7 @@ class MilesCommandBackend(Backend):
             raise ValueError("checkpoint was not created by the Miles backend")
         if metadata.get("miles_revision") != self.runtime.revision:
             raise ValueError("checkpoint Miles revision does not match the deployment")
-        if metadata.get("checkpoint_format") != "miles_torch_dist":
+        if metadata.get("checkpoint_format") != self.runtime.checkpoint_format:
             raise ValueError("unsupported Miles checkpoint format")
         if metadata.get("base_model") != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")
@@ -653,6 +659,11 @@ class MilesCommandBackend(Backend):
         if (
             int(lora.get("rank", 0)) != state.rank
             or float(lora.get("alpha", 0)) != state.alpha
+        ):
+            raise ValueError("checkpoint LoRA configuration does not match the model")
+        # Checked here because a target mismatch found by Miles disables the whole trainer.
+        if self._native and lora.get("target_modules") != list(
+            self.config.target_modules
         ):
             raise ValueError("checkpoint LoRA configuration does not match the model")
         expected_targets = {

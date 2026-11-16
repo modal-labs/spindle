@@ -50,6 +50,7 @@ from .lora_pool import LoraPoolSpec
 from .lora_pool import deploy_pool as deploy_lora
 from .megatron_image import image as megatron_image
 from .miles_v012_image import image as miles_v012_image
+from .miles_v020_image import image as miles_v020_image
 from .miles_image import image as miles_image
 from .ray_cluster import start_trainer_cluster
 from .rollout_image import image as rollout_image
@@ -57,7 +58,7 @@ from .serve import run_engine_with_backend
 from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
 
-TRAINER_IMAGES = {"miles-v0.1.2": miles_v012_image}
+TRAINER_IMAGES = {"miles-v0.1.2": miles_v012_image, "miles-v0.2.0": miles_v020_image}
 
 
 def image_for(backend, name=""):

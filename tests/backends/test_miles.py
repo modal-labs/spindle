@@ -30,6 +30,7 @@ from spindle.providers.modal.checkpoint_storage import ModalCheckpointStorage
 
 class FakeMilesRuntime:
     revision = "a" * 40
+    checkpoint_format = "miles_torch_dist"
 
     def __init__(self) -> None:
         self.calls = []
@@ -226,6 +227,7 @@ def test_config_exports_lora_through_the_raw_converter() -> None:
     arguments = config.miles_arguments()
     assert arguments[arguments.index("--megatron-to-hf-mode") + 1] == "raw"
     assert "--multi-lora-n-adapters" in arguments
+    assert arguments[arguments.index("--lora-type") + 1] == "lora"
     with pytest.raises(ValueError, match="megatron_to_hf_mode"):
         _config(megatron_to_hf_mode="direct")
 
@@ -997,3 +999,28 @@ def test_a_capture_short_of_a_nodes_shards_is_refused(monkeypatch, tmp_path):
 )
 def test_hf_targets_match_tinker_training_flags(targets, expected):
     assert lora_target_flags(targets) == expected
+
+
+@pytest.mark.parametrize("changed", ["checkpoint_format", "target_modules"])
+def test_native_checkpoint_rejects_incompatible_adapter_before_slot_load(
+    tmp_path, changed
+):
+    runtime = FakeMilesRuntime()
+    runtime.checkpoint_format = "miles_adapter_state"
+    backend = _backend(tmp_path, runtime)
+    backend.accept_model("model-a", _spec())
+    backend.capture_checkpoint(
+        "model-a", "capture", destination="step", include_optimizer=True
+    )
+    checkpoint = Path(backend.persist_checkpoint("capture", "step"))
+    metadata_path = checkpoint / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    if changed == "checkpoint_format":
+        metadata[changed] = "miles_torch_dist"
+    else:
+        metadata["lora_config"][changed] = ["different_target"]
+    metadata_path.write_text(json.dumps(metadata))
+    previous = list(runtime.calls)
+    with pytest.raises(ValueError):
+        backend.load_checkpoint("model-a", str(checkpoint), restore_optimizer=True)
+    assert runtime.calls == previous
