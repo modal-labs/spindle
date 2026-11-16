@@ -84,6 +84,19 @@ def _unfused_permute_index(routing_map: torch.Tensor, num_out_tokens: int) -> to
 def _install_permute_fusion() -> None:
     from megatron.bridge.peft import multi_lora_layers as layers
     from megatron.core.transformer.moe import moe_utils, token_dispatcher
+    from miles.backends.megatron_utils.lora import bridge as miles_bridge
+
+    validate = miles_bridge._validate_multi_lora_moe_support
+
+    def _validate_multi_lora_moe_support(args, provider):
+        fused = provider.moe_permute_fusion
+        provider.moe_permute_fusion = False
+        try:
+            validate(args, provider)
+        finally:
+            provider.moe_permute_fusion = fused
+
+    miles_bridge._validate_multi_lora_moe_support = _validate_multi_lora_moe_support
 
     init = layers.MultiLoRAGroupedExpertLinear.__init__
 
