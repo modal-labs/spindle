@@ -32,6 +32,7 @@ See what each run or team costs on a shared deployment: Spindle records the toke
 - The `spindle deploy` model picker starts with no model selected, so you no longer deploy Qwen3.6-35B-A3B unless you pick it (#281).
 - Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
 - Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
+- Loading a checkpoint whose `metadata.json` is invalid now fails with one error that names each bad field, such as `invalid checkpoint metadata: engine_definition_id: Field required`.
 
 ### Fixed
 

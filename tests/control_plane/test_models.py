@@ -31,7 +31,12 @@ async def checkpoint_metadata(path: str) -> dict[str, object]:
         "base_model": "Qwen/Qwen3-4B",
         "engine_definition_id": DEFINITION,
         "parameterization": {"type": "lora"},
-        "lora_config": {"rank": 32},
+        "lora_config": {
+            "rank": 32,
+            "train_attn": True,
+            "train_mlp": True,
+            "train_unembed": True,
+        },
     }
 
 

@@ -732,19 +732,14 @@ def create_control_plane_app(
     @app.post("/api/v1/weights_info")
     async def weights_info(body: WeightsInfoBody) -> dict[str, object]:
         metadata = await control_plane.checkpoint_metadata(body.tinker_path)
-        parameterization = metadata["parameterization"]
-        lora_config = metadata["lora_config"]
-        assert isinstance(parameterization, dict)
-        assert lora_config is None or isinstance(lora_config, dict)
+        lora_config = metadata.lora_config
         return {
-            "base_model": metadata["base_model"],
-            "is_lora": parameterization["type"] == "lora",
-            "lora_rank": lora_config.get("rank") if lora_config else None,
-            "train_unembed": (
-                lora_config.get("train_unembed") if lora_config else None
-            ),
-            "train_mlp": lora_config.get("train_mlp") if lora_config else None,
-            "train_attn": lora_config.get("train_attn") if lora_config else None,
+            "base_model": metadata.base_model,
+            "is_lora": metadata.parameterization.type == "lora",
+            "lora_rank": lora_config.rank if lora_config else None,
+            "train_unembed": lora_config.train_unembed if lora_config else None,
+            "train_mlp": lora_config.train_mlp if lora_config else None,
+            "train_attn": lora_config.train_attn if lora_config else None,
         }
 
     @app.post("/api/v1/save_weights_for_sampler")
