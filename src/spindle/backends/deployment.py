@@ -120,14 +120,13 @@ def backend_config(spec, asset_path="/assets/pending"):
         extra_args=("--seq-length", str(spec.max_context_length)),
         **settings,
     )
-    config.validate()
     if config.world_size % (
         config.expert_model_parallel_size * config.expert_tensor_parallel_size
     ):
         raise ValueError("expert parallel sizes must divide the trainer GPU allocation")
     if spec.trainer_max_clients_per_instance > config.max_lora_slots:
         raise ValueError("max_clients_per_instance exceeds max_lora_slots")
-    settings = {"miles": asdict(config), "checkpoint_dir": "/checkpoints"}
+    settings = {"miles": config.model_dump(), "checkpoint_dir": "/checkpoints"}
     if spec.trainer_nodes > 1:
         # Captures on the shared volume let every node's shards be assembled.
         settings["capture_dir"] = "/checkpoints/.spindle-captures"

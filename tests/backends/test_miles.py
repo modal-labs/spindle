@@ -222,13 +222,12 @@ def test_config_points_reference_load_at_the_hf_checkpoint() -> None:
 
 def test_config_exports_lora_through_the_raw_converter() -> None:
     config = _config(megatron_to_hf_mode="raw")
-    config.validate()
 
     arguments = config.miles_arguments()
     assert arguments[arguments.index("--megatron-to-hf-mode") + 1] == "raw"
     assert "--multi-lora-n-adapters" in arguments
-    with pytest.raises(ValueError, match="bridge or raw"):
-        _config(megatron_to_hf_mode="direct").validate()
+    with pytest.raises(ValueError, match="megatron_to_hf_mode"):
+        _config(megatron_to_hf_mode="direct")
 
 
 def test_config_wildcard_targets_serve_by_module_suffix() -> None:
@@ -284,46 +283,73 @@ def test_config_multi_node_topology() -> None:
     assert arguments[arguments.index("--actor-num-gpus-per-node") + 1] == "8"
 
 
-def test_config_rejects_tensor_parallel_spanning_nodes() -> None:
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {
+                "actor_num_nodes": 2,
+                "actor_num_gpus_per_node": 8,
+                "tensor_model_parallel_size": 16,
+            },
+            "must evenly divide",
+        ),
+        (
+            {
+                "actor_num_nodes": 3,
+                "actor_num_gpus_per_node": 8,
+                "tensor_model_parallel_size": 6,
+                "context_parallel_size": 2,
+            },
+            "must evenly divide",
+        ),
+        (
+            {
+                "actor_num_gpus_per_node": 8,
+                "tensor_model_parallel_size": 4,
+                "context_parallel_size": 4,
+            },
+            "must be a multiple",
+        ),
+        (
+            {"actor_num_gpus_per_node": 4, "tensor_model_parallel_size": 3},
+            "must be a multiple",
+        ),
+        ({"actor_num_gpus_per_node": True}, "actor_num_gpus_per_node"),
+        ({"actor_num_nodes": "2"}, "actor_num_nodes"),
+        ({"max_lora_slots": 0}, "max_lora_slots"),
+        ({"hf_checkpoint": ""}, "hf_checkpoint"),
+        ({"model_type": ""}, "native architecture options"),
+        ({"target_modules": []}, "target_modules"),
+        ({"target_modules": [""]}, "target_modules"),
+        ({"default_lora_alpha": 1.5}, "positive integer"),
+        ({"default_lora_alpha": 0}, "default_lora_alpha"),
+        ({"lora_dropout": -0.1}, "lora_dropout"),
+        ({"lora_dropout": 1}, "lora_dropout"),
+        ({"unknown_option": True}, "unknown_option"),
+    ],
+)
+def test_config_rejects_invalid_settings_at_construction(overrides, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        _config(**overrides)
+
+
+def test_config_json_round_trip() -> None:
     config = _config(
-        actor_num_gpus_per_node=8,
-        actor_num_nodes=2,
-        tensor_model_parallel_size=16,
+        model_type="",
+        cli_options={"num_layers": 4},
+        target_modules=["linear_qkv", "linear_proj"],
+        extra_args=["--seq-length", "4096"],
+        default_lora_alpha=32.0,
+    )
+    parsed, _, _ = parse_backend_config(
+        json.loads(json.dumps({"miles": config.model_dump()}))
     )
 
-    with pytest.raises(ValueError, match="must evenly divide"):
-        config.validate()
-
-    config = _config(
-        actor_num_gpus_per_node=8,
-        actor_num_nodes=3,
-        tensor_model_parallel_size=6,
-        context_parallel_size=2,
-    )
-
-    with pytest.raises(ValueError, match="must evenly divide"):
-        config.validate()
-
-
-def test_config_rejects_non_divisible_context_parallel_topology() -> None:
-    config = _config(
-        actor_num_gpus_per_node=8,
-        tensor_model_parallel_size=4,
-        context_parallel_size=4,
-    )
-
-    with pytest.raises(ValueError, match="must be a multiple"):
-        config.validate()
-
-
-def test_config_rejects_non_divisible_data_parallel_topology() -> None:
-    config = _config(
-        actor_num_gpus_per_node=4,
-        tensor_model_parallel_size=3,
-    )
-
-    with pytest.raises(ValueError, match="must be a multiple"):
-        config.validate()
+    assert parsed == config
+    assert parsed.miles_arguments() == config.miles_arguments()
+    with pytest.raises(ValueError, match="frozen"):
+        parsed.max_lora_rank = 64
 
 
 def test_default_unembed_request_is_frozen_without_an_unembed_target(tmp_path) -> None:
