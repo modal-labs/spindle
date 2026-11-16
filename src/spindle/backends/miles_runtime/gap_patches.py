@@ -8,6 +8,9 @@
 - permute_bwd: MoE token permute whose backward is a scatter-add, not a BF16
   index_add_.
 - lora_grad: give stacked expert-adapter weights contiguous gradients.
+- permute_fusion: let the MoE dispatcher use Transformer Engine's fused permute
+  and unpermute while expert adapters are on; slot ids follow the same order
+  through an index rebuilt from the routing map.
 """
 
 from __future__ import annotations
@@ -29,8 +32,10 @@ def _log(**fields) -> None:
 
 def install(logit_processors) -> None:
     on = enabled()
-    if "relu2" in on:
-        _install_relu2()
+    if "relu2" in on or "permute_fusion" in on:
+        _install_provider_overrides(relu2="relu2" in on, permute_fusion="permute_fusion" in on)
+    if "permute_fusion" in on:
+        _install_permute_fusion()
     if "logits_split" in on:
         _install_logits_split(logit_processors)
     if "permute_bwd" in on:
@@ -43,17 +48,87 @@ def lora_grad_enabled() -> bool:
     return "lora_grad" in enabled()
 
 
-def _install_relu2() -> None:
+def _install_provider_overrides(*, relu2: bool, permute_fusion: bool) -> None:
     from megatron.bridge import AutoBridge
 
     original = AutoBridge.to_megatron_provider
 
     def to_megatron_provider(bridge, *args, **kwargs):
         provider = original(bridge, *args, **kwargs)
-        provider.use_fused_weighted_squared_relu = True
+        if relu2:
+            provider.use_fused_weighted_squared_relu = True
+        if permute_fusion:
+            # Miles turns the fusion off right before finalize; turn it back on there.
+            finalize = provider.finalize
+
+            def finalize_with_fusion(*a, **k):
+                provider.moe_permute_fusion = True
+                return finalize(*a, **k)
+
+            provider.finalize = finalize_with_fusion
         return provider
 
     AutoBridge.to_megatron_provider = to_megatron_provider
+
+
+def _unfused_permute_index(routing_map: torch.Tensor, num_out_tokens: int) -> torch.Tensor:
+    num_tokens = routing_map.shape[0]
+    flat = routing_map.bool().T.contiguous().reshape(-1).argsort(descending=True, stable=True)
+    return flat[:num_out_tokens] % num_tokens
+
+
+def _install_permute_fusion() -> None:
+    from megatron.bridge.peft import multi_lora_layers as layers
+    from megatron.core.transformer.moe import moe_utils, token_dispatcher
+
+    init = layers.MultiLoRAGroupedExpertLinear.__init__
+
+    def __init__(self, to_wrap, *args, **kwargs):
+        config = to_wrap.config
+        fused = config.moe_permute_fusion
+        config.moe_permute_fusion = False
+        try:
+            init(self, to_wrap, *args, **kwargs)
+        finally:
+            config.moe_permute_fusion = fused
+
+    layers.MultiLoRAGroupedExpertLinear.__init__ = __init__
+
+    co_permute = layers._co_permute_slot_ids
+
+    def _co_permute_slot_ids(dispatcher, slot_ids, num_local_experts):
+        if not dispatcher.config.moe_permute_fusion:
+            return co_permute(dispatcher, slot_ids, num_local_experts)
+        if getattr(dispatcher, "ep_size", 1) > 1 or getattr(dispatcher, "tp_size", 1) > 1:
+            raise NotImplementedError("permute_fusion prototype covers expert parallel size 1 only")
+        index = _unfused_permute_index(dispatcher.routing_map, dispatcher.num_out_tokens)
+        slot_ids = slot_ids.index_select(0, index)
+        if num_local_experts > 1:
+            slot_ids, _ = layers.sort_chunks_by_idxs(
+                slot_ids,
+                dispatcher.num_global_tokens_per_local_expert.ravel(),
+                dispatcher.sort_input_by_local_experts,
+                fused=False,
+            )
+        return slot_ids
+
+    layers._co_permute_slot_ids = _co_permute_slot_ids
+
+    permute = moe_utils.permute
+    checked = []
+
+    def checked_permute(tokens, routing_map, probs=None, num_out_tokens=None, fused=False, *args, **kwargs):
+        out = permute(tokens, routing_map, probs, num_out_tokens, fused, *args, **kwargs)
+        if fused and not checked and num_out_tokens is not None:
+            checked.append(True)
+            with torch.no_grad():
+                index = _unfused_permute_index(routing_map, num_out_tokens)
+                same = bool(torch.equal(out[0], tokens.index_select(0, index)))
+            _log(action="fused_permute_order_check", equal=same)
+        return out
+
+    moe_utils.permute = checked_permute
+    token_dispatcher.permute = checked_permute
 
 
 def _install_logits_split(processors) -> None:
