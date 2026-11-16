@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Synthetic monitor benchmark bundles retain raw recipe events and stock SDK result metrics, including partial failed runs, with optional uploads to a separate collector. Run-attributed OTLP points and spans can share a long-lived server resource.
+
 - Forward-only eval and control-plane latency benchmarks, a dense/MoE CI matrix, a nightly async RL replay workflow template, and capture-to-sampler-ready timing. Benchmark jobs can target a separate results collector.
 - Benchmark suites, a local results browser with JSON uploads and revision comparisons, and an OTLP receiver. Opt-in benchmark telemetry captures native sampler metrics, trainer results, backend phases, and GPU memory statistics.
 

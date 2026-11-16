@@ -238,7 +238,9 @@ available separately through [the profiling guide](profiling.md).
 Spindle revisions that predate these collectors still run, with an explicit
 coverage warning. Only their pre-existing OTLP signals can be received. Without
 an OTLP destination, the run retains client measurements and reports the missing
-server telemetry. A run ID on the OTLP resource is required for correlation.
+server telemetry. A `spindle.run_id` on each point or span takes precedence over its resource.
+Use a stable deployment ID on shared server resources and a distinct run ID in
+model metadata. Shared GPU and queue measurements stay in the deployment stream.
 
 ## Compare runs
 
@@ -297,3 +299,38 @@ publication. The results store joins these by model and version and reports
 generation and requires synchronized clocks across hosts. Missing or negative
 intervals are omitted; their raw boundary records remain available. The broader
 `weight_sync.update_to_first_response_s` client observation is retained.
+
+
+## Fine-grained synthetic monitor results
+
+The synthetic monitor launcher retains recipe `events.jsonl` and `metrics.jsonl`
+files in a portable benchmark bundle, including partial results from failed runs.
+It also observes stock SDK forward, backward, optimizer, checkpoint, and sampling
+results. Every returned metrics field is retained, including backend-specific and
+new fields, together with input/output token counts, sequence counts, and
+submit-to-observed-result latency. That latency includes queueing, transport, and
+client waiting; it is not GPU execution time. Training inputs, sampled text, and
+per-token outputs are not captured by the SDK observer.
+
+The observer is opt-in outside the launcher: set `SPINDLE_BENCHMARK_RUN_ID` and
+`SPINDLE_BENCHMARK_LOG_DIR`, then call
+`spindle.benchmarks.client_metrics.install_from_env()` before creating SDK clients.
+The command-based RL benchmark runner installs it automatically in its child
+processes. Model creation preserves user metadata and adds the benchmark run ID.
+
+Each synmon run writes a separate JSON file to the
+`spindle-synmon-benchmark-results` volume and saves its `benchmark_run_id` in
+history. Download the bundle and upload it through the results browser. Setting
+`SPINDLE_SYNMON_COLLECTOR_URL` enables automatic uploads to a separate HTTPS
+Modal collector, authenticated with `MODAL_PROXY_TOKEN_ID` and
+`MODAL_PROXY_TOKEN_SECRET`. Collection failures remain visible in the bundle and
+history; they do not replace the workload's success or failure result.
+
+Server-side phase timings, replay statistics, weight synchronization, sampler
+metrics, CUDA allocation, and device telemetry require an instrumented server
+exporting to the collector. The client observer cannot recover fields that the
+server never exports. Coverage records and `telemetry.server_records` distinguish
+client-only captures from captures containing server telemetry. A stable shared
+server resource ID keeps deployment-wide device measurements separate from
+run-attributed trainer metrics. Configuring a collector on the client does not
+reconfigure or redeploy an existing server.

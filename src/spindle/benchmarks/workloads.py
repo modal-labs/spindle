@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 import httpx
@@ -22,8 +22,17 @@ from tinker import types
 
 from spindle.client import create_full_training_client_async
 
+from .events import EventReader
+from .schema import BenchmarkConfig
 
-def prompt_tokens(tokenizer, length, client):
+if TYPE_CHECKING:
+    from .runner import Recorder
+    from transformers import PreTrainedTokenizerBase
+
+
+def prompt_tokens(
+    tokenizer: PreTrainedTokenizerBase, length: int, client: int
+) -> list[int]:
     text = f"Benchmark client {client}. Explain how to implement a stable parallel reduction. "
     seed = tokenizer.encode(text, add_special_tokens=False)
     if not seed:
@@ -31,7 +40,7 @@ def prompt_tokens(tokenizer, length, client):
     return (seed * (length // len(seed) + 1))[:length]
 
 
-async def sdk_suite(config, base_url, recorder):
+async def sdk_suite(config: BenchmarkConfig, base_url: str, recorder: Recorder) -> None:
     headers = {}
     if os.getenv("MODAL_PROXY_TOKEN_ID"):
         headers = {
@@ -75,13 +84,13 @@ async def sdk_suite(config, base_url, recorder):
             for context in config.context_lengths:
 
                 async def drive(
-                    client,
-                    trainer,
+                    client: int,
+                    trainer: tinker.TrainingClient,
                     *,
-                    context=context,
-                    clients=clients,
-                    tokenizer=tokenizer,
-                ):
+                    context: int = context,
+                    clients: int = clients,
+                    tokenizer: PreTrainedTokenizerBase = tokenizer,
+                ) -> None:
                     tokens = prompt_tokens(
                         tokenizer,
                         context + (1 if config.suite != "inference" else 0),
@@ -336,7 +345,9 @@ async def sdk_suite(config, base_url, recorder):
                         recorder.collection_error("unload_model", type(exc).__name__)
 
 
-async def control_plane_suite(config, base_url, recorder):
+async def control_plane_suite(
+    config: BenchmarkConfig, base_url: str, recorder: Recorder
+) -> None:
     headers = {"X-API-Key": os.environ["TINKER_API_KEY"]}
     if os.getenv("MODAL_PROXY_TOKEN_ID"):
         headers.update(
@@ -364,15 +375,15 @@ async def control_plane_suite(config, base_url, recorder):
                 gate = asyncio.Event()
 
                 async def drive(
-                    client,
+                    client: int,
                     *,
-                    gate=gate,
-                    count=count,
-                    errors=errors,
-                    latencies=latencies,
-                    phase=phase,
-                    clients=clients,
-                ):
+                    gate: asyncio.Event = gate,
+                    count: int = count,
+                    errors: list[str] = errors,
+                    latencies: list[float] = latencies,
+                    phase: str = phase,
+                    clients: int = clients,
+                ) -> None:
                     await gate.wait()
                     for request in range(count):
                         started = time.monotonic()
@@ -437,7 +448,9 @@ async def control_plane_suite(config, base_url, recorder):
                     raise RuntimeError(f"{len(errors)} control-plane requests failed")
 
 
-def recipe_command(config, root, output, base_url):
+def recipe_command(
+    config: BenchmarkConfig, root: Path, output: Path, base_url: str
+) -> tuple[list[str], Path]:
     work = output / "recipe"
     work.mkdir(parents=True)
     if config.recipe == "dapo":
@@ -533,16 +546,19 @@ def recipe_command(config, root, output, base_url):
     return command, work
 
 
-def command_suite(config, root, output, base_url, recorder):
+def command_suite(
+    config: BenchmarkConfig, root: Path, output: Path, base_url: str, recorder: Recorder
+) -> None:
     command, work = recipe_command(config, root, output, base_url)
     instrumentation = work / "instrumentation"
     instrumentation.mkdir()
     proxy_helper = root / "examples/shared-server/with_proxy_auth.py"
     if proxy_helper.is_file():
         shutil.copy2(proxy_helper, instrumentation / "with_proxy_auth.py")
-        (instrumentation / "sitecustomize.py").write_text(
-            'import os\nif os.getenv("MODAL_PROXY_TOKEN_ID"):\n    import with_proxy_auth\n    with_proxy_auth.install()\n'
-        )
+    (instrumentation / "sitecustomize.py").write_text(
+        'import os\nif os.getenv("MODAL_PROXY_TOKEN_ID"):\n    import with_proxy_auth\n    with_proxy_auth.install()\n'
+        "from spindle.benchmarks.client_metrics import install_from_env\ninstall_from_env()\n"
+    )
     recipe_files = {
         str(p.relative_to(work)): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(work.rglob("*"))
@@ -553,41 +569,8 @@ def command_suite(config, root, output, base_url, recorder):
         json.dumps(recipe_files, sort_keys=True).encode()
     ).hexdigest()
     recorder.store.register(recorder.manifest)
-    offsets = {}
+    reader = EventReader(recorder)
     process = None
-    completed = 0
-
-    def ingest():
-        nonlocal completed
-        for path in work.rglob("*.jsonl"):
-            if "events" not in path.name and "metrics" not in path.name:
-                continue
-            with path.open() as stream:
-                stream.seek(offsets.get(str(path), 0))
-                while line := stream.readline():
-                    if not line.endswith("\n"):
-                        break
-                    try:
-                        value = json.loads(line)
-                    except ValueError:
-                        recorder.collection_error(
-                            str(path.relative_to(work)), "Invalid JSON line"
-                        )
-                        offsets[str(path)] = stream.tell()
-                        continue
-                    offsets[str(path)] = stream.tell()
-                    if value.get("event") in ("update_done", "step_done"):
-                        completed += 1
-                    recorder.record(
-                        {"recipe": value},
-                        {
-                            "source": str(path.relative_to(work)),
-                            "event": value.get("event", "metrics"),
-                            "step": value.get("update", value.get("step", 0)),
-                        },
-                        raw=value,
-                        stamp=value.get("time"),
-                    )
 
     try:
         with (output / "recipe.log").open("w") as log:
@@ -601,6 +584,7 @@ def command_suite(config, root, output, base_url, recorder):
                     ),
                     "TINKER_BASE_URL": base_url,
                     "SPINDLE_BENCHMARK_RUN_ID": recorder.run_id,
+                    "SPINDLE_BENCHMARK_LOG_DIR": str(work / "sdk"),
                 },
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -608,16 +592,16 @@ def command_suite(config, root, output, base_url, recorder):
             )
             deadline = time.monotonic() + config.timeout_s
             while process.poll() is None:
-                ingest()
+                reader.read(work)
                 if time.monotonic() > deadline:
                     raise TimeoutError("RL benchmark exceeded timeout_s")
                 time.sleep(1)
-            ingest()
+            reader.read(work, final=True)
             if process.returncode:
                 raise RuntimeError(
                     f"RL recipe exited with {process.returncode}; see recipe.log"
                 )
-            if completed < config.steps * config.clients[0]:
+            if reader.completed < config.steps * config.clients[0]:
                 raise ValueError(
                     "RL recipe did not emit the expected completed updates"
                 )
@@ -631,4 +615,4 @@ def command_suite(config, root, output, base_url, recorder):
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-            ingest()
+            reader.read(work, final=True)

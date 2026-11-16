@@ -30,8 +30,7 @@ def decode_metrics(data):
     request = ExportMetricsServiceRequest.FromString(data)
     for resource in request.resource_metrics:
         resource_attrs = attributes(resource.resource.attributes)
-        run_id = resource_attrs.get("spindle.run_id")
-        if not run_id:
+        if not resource_attrs.get("spindle.run_id") and not resource.scope_metrics:
             raise ValueError("OTLP resources require spindle.run_id")
         for scope in resource.scope_metrics:
             for metric in scope.metrics:
@@ -40,6 +39,11 @@ def decode_metrics(data):
                     continue
                 for point in getattr(metric, metric_type).data_points:
                     point_labels = attributes(point.attributes)
+                    run_id = point_labels.get("spindle.run_id") or resource_attrs.get(
+                        "spindle.run_id"
+                    )
+                    if not run_id:
+                        raise ValueError("OTLP points require spindle.run_id")
                     name = (
                         point_labels.get("prometheus.name")
                         or point_labels.get("spindle.metric.original_name")
@@ -107,12 +111,16 @@ def decode_traces(data):
     request = ExportTraceServiceRequest.FromString(data)
     for resource in request.resource_spans:
         resource_attrs = attributes(resource.resource.attributes)
-        run_id = resource_attrs.get("spindle.run_id")
-        if not run_id:
+        if not resource_attrs.get("spindle.run_id") and not resource.scope_spans:
             raise ValueError("OTLP resources require spindle.run_id")
         for scope in resource.scope_spans:
             for span in scope.spans:
                 span_attributes = attributes(span.attributes)
+                run_id = span_attributes.get("spindle.run_id") or resource_attrs.get(
+                    "spindle.run_id"
+                )
+                if not run_id:
+                    raise ValueError("OTLP spans require spindle.run_id")
                 yield (
                     str(run_id),
                     {

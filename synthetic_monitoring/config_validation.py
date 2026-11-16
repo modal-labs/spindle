@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 import modal
 
 from synthetic_monitoring.chart import RunPoint, render_timing_history_chart
+from synthetic_monitoring.metrics import SynmonMetrics, collector_url
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODAL_ENV = "spindle-ci"
@@ -118,12 +119,20 @@ slack_secret = modal.Secret.from_name("spindle-bot-slack", environment_name=MODA
 api_secret = modal.Secret.from_name("spindle-prod-api", environment_name=MODAL_ENV)
 hf_secret = modal.Secret.from_name("huggingface-secret", environment_name=MODAL_ENV)
 
+results_volume = modal.Volume.from_name(
+    "spindle-synmon-benchmark-results", create_if_missing=True
+)
+RESULTS_ROOT = Path("/benchmark-results")
 app = modal.App("spindle-synmon-launcher")
 
 
-def client_env(base_url: str) -> dict[str, str]:
+def client_env(
+    base_url: str, capture: SynmonMetrics | None = None, output: Path | None = None
+) -> dict[str, str]:
     env = os.environ.copy()
     env["TINKER_BASE_URL"] = base_url
+    if capture is not None and output is not None:
+        env.update(capture.environment(output))
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, ["/opt/proxy-auth", env.get("PYTHONPATH")])
     )
@@ -146,7 +155,7 @@ def guess_number_renderer(model: str) -> str | None:
 
 
 def run_guess_number(
-    model: str, renderer: str, base_url: str
+    model: str, renderer: str, base_url: str, capture: SynmonMetrics | None = None
 ) -> tuple[dict[str, float], dict[str, float]]:
     log_path = Path(tempfile.mkdtemp(prefix="synmon-guess-number-"))
     command = [
@@ -165,9 +174,16 @@ def run_guess_number(
     ]
     print("running", " ".join(command))
     started = time.time()
-    subprocess.run(
-        command, check=True, env=client_env(base_url), timeout=GUESS_NUMBER["timeout_s"]
-    )
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            env=client_env(base_url, capture, log_path),
+            timeout=GUESS_NUMBER["timeout_s"],
+        )
+    finally:
+        if capture is not None:
+            capture.ingest(final=True)
     lines = (log_path / "metrics.jsonl").read_text().splitlines()
     steps = [json.loads(line) for line in lines if line.strip()]
     steps = [step for step in steps if "env/all/reward/total" in step]
@@ -189,7 +205,9 @@ def run_guess_number(
     return timings, metrics
 
 
-def run_script(name: str, base_url: str) -> dict[str, float]:
+def run_script(
+    name: str, base_url: str, capture: SynmonMetrics | None = None
+) -> dict[str, float]:
     spec = SCRIPTS[name]
     output = Path(tempfile.mkdtemp(prefix=f"synmon-{name}-"))
     if name == "dapo-math":
@@ -238,9 +256,16 @@ def run_script(name: str, base_url: str) -> dict[str, float]:
         ]
     print("running", " ".join(command))
     started = time.time()
-    subprocess.run(
-        command, check=True, env=client_env(base_url), timeout=spec["timeout_s"]
-    )
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            env=client_env(base_url, capture, output),
+            timeout=spec["timeout_s"],
+        )
+    finally:
+        if capture is not None:
+            capture.ingest(final=True)
     clients: dict[int | str, list[dict]] = {}
     for path in output.rglob("events.jsonl"):
         for line in path.read_text().splitlines():
@@ -356,6 +381,7 @@ def _row(
         "metrics": point.metrics,
         "prior_metrics": prior.metrics if ok and prior else {},
         "modal_app_url": point.modal_app_url,
+        "benchmark_run_id": point.benchmark_run_id,
         "error": error,
     }
 
@@ -437,18 +463,38 @@ def _post_report(rows: list[dict]) -> None:
             print(f"error: reply failed for {row['config']}: {exc}")
 
 
+def finish_metrics(
+    capture: SynmonMetrics, status: str, timings: dict[str, float]
+) -> dict[str, float]:
+    try:
+        _, health = capture.finish(
+            status, timings, RESULTS_ROOT, collector_url=collector_url()
+        )
+        results_volume.commit()
+        return {**health, "telemetry.durable_bundle_ok": 1.0}
+    except Exception as exc:
+        print(
+            f"error: benchmark export failed for {capture.run_id}: {type(exc).__name__}"
+        )
+        return {"telemetry.durable_bundle_ok": 0.0}
+
+
 @app.function(
     image=probe_image,
     timeout=MONITOR_TIMEOUT_S,
     secrets=[api_secret, hf_secret],
     single_use_containers=True,
+    volumes={str(RESULTS_ROOT): results_volume},
 )
 def monitor(script: str) -> dict:
     started = time.time()
     error: str | None = None
     timings = {}
+    capture = SynmonMetrics(
+        script, {**SCRIPTS[script], "trainer_app": TRAINER_APPS[script]}
+    )
     try:
-        timings = run_script(script, os.environ["TINKER_BASE_URL"])
+        timings = run_script(script, os.environ["TINKER_BASE_URL"], capture)
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         print(f"error: {script} failed: {error}")
@@ -460,12 +506,15 @@ def monitor(script: str) -> dict:
         url += f"?activeTab=logs&start={started}&end={time.time()}&live=false"
     except Exception:
         url = None
+    metrics = finish_metrics(capture, "failed" if error else "completed", timings)
     point = RunPoint(
         ts=started,
         timings=timings,
         total_duration_s=time.time() - started,
         status="failed" if error else "success",
         modal_app_url=url,
+        metrics=metrics,
+        benchmark_run_id=capture.run_id,
     )
     return _row(script, point, _record(script, point), error)
 
@@ -534,6 +583,7 @@ def served_models() -> dict[str, str | None]:
     timeout=GUESS_NUMBER["timeout_s"] + 15 * 60,
     secrets=[api_secret],
     single_use_containers=True,
+    volumes={str(RESULTS_ROOT): results_volume},
 )
 def regression(model: str, renderer: str) -> dict:
     config = f"guess-number/{model}"
@@ -541,9 +591,12 @@ def regression(model: str, renderer: str) -> dict:
     error: str | None = None
     timings: dict[str, float] = {}
     metrics: dict[str, float] = {}
+    capture = SynmonMetrics(
+        config, {**GUESS_NUMBER, "model": model, "renderer": renderer}
+    )
     try:
         timings, metrics = run_guess_number(
-            model, renderer, os.environ["TINKER_BASE_URL"]
+            model, renderer, os.environ["TINKER_BASE_URL"], capture
         )
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
@@ -553,7 +606,11 @@ def regression(model: str, renderer: str) -> dict:
         timings=timings,
         total_duration_s=time.time() - started,
         status="failed" if error else "success",
-        metrics=metrics,
+        metrics={
+            **metrics,
+            **finish_metrics(capture, "failed" if error else "completed", timings),
+        },
+        benchmark_run_id=capture.run_id,
     )
     return _row(config, point, _record(config, point, one_success_per_day=False), error)
 
