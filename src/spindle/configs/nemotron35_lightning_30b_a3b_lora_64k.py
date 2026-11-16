@@ -17,6 +17,9 @@ class Config(Parent):
         # whole pass; once 32 requests are decoding, admit new ones every 16 steps.
         "sglang_cfg.prefill_decode_interval": 16,
         "sglang_cfg.prefill_decode_interval_min_bs": 32,
+        # Expert adapters run through SGLang's virtual-expert kernels, which are
+        # faster than the default MoE LoRA kernels at decode batch sizes.
+        "sglang_cfg.lora_use_virtual_experts": True,
     }
 
 
