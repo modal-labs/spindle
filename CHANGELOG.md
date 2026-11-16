@@ -10,6 +10,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - Miles LoRA configs can bypass checkpoint revision checks for debugging with `dangerously_allow_checkpoint_revision_mismatch`, disabled by default.
 - Experimental Beam-1.0-501B-A23B BF16 LoRA recipe in `reference_runs/beam_config.py`, kept outside bundled deployments because Miles v0.2.0 currently rejects multi-node trainers.
 
+### Changed
+
+- The `miles-v0.2.0` trainer image now runs Miles `f45c63c1`, which adds Beam support to the Megatron Bridge. Checkpoints saved by this image at Miles `15afe217` no longer restore, because restores require the same Miles revision. Set `dangerously_allow_checkpoint_revision_mismatch` to load them for debugging.
+
 ## 0.1.7 - 2026-11-15
 
 See what each run or team costs on a shared deployment: Spindle records the tokens every session uses, serves them through Tinker's `get_billing_usage`, and `spindle usage` turns them into dollars per run or label. See [Cost attribution](docs/cost-attribution.md).
