@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 
 import modal
+
+from spindle.control_plane.deployments import RegistryUnavailable
 
 from ..contracts import (
     SamplingTask,
@@ -10,6 +13,8 @@ from ..contracts import (
     SamplingTaskStatus,
     SessionKeyValueStores,
 )
+
+logger = logging.getLogger(__name__)
 
 SpawnSamplingTask = Callable[[SamplingTask], Awaitable[str]]
 
@@ -50,6 +55,10 @@ class ModalSamplingTaskPlatform:
         except TimeoutError:
             return SamplingTaskState(SamplingTaskStatus.PENDING)
         except (modal.exception.NotFoundError, modal.exception.OutputExpiredError):
+            return None
+        except RegistryUnavailable as exc:
+            # The client resubmits a lost sample.
+            logger.warning("sample %s lost: %s", task_id, exc)
             return None
         except (
             modal.exception.ConnectionError,

@@ -10,8 +10,7 @@ class Config(Parent):
     trainer_cpu = 32
     trainer_memory_mib = 131072
     trainer_max_clients_per_instance = 8
-    inference_gpu = "H100"
-    inference_target_concurrency = 32
+    inference_gpu = ["B200", "H100"]
     overrides = {
         "miles_cfg.model_type": "qwen3.5-4B",
         "miles_cfg.tensor_model_parallel_size": 1,
@@ -19,7 +18,8 @@ class Config(Parent):
         "miles_cfg.max_tokens_per_gpu": 16384,
         "miles_cfg.cli_options.log_probs_chunk_size": 4096,
         "miles_cfg.cli_options.balance_data": True,
-        "sglang_cfg.max_running_requests": 64,
+        "sglang_cfg.max_running_requests": 128,
+        "sglang_cfg.max_queued_requests": 128,
         "sglang_cfg.mem_fraction_static": 0.85,
     }
 

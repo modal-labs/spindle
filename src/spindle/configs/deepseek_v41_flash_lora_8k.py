@@ -71,6 +71,7 @@ class Config(BaseConfig):
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
     }
+    inference_image = "spindle.providers.modal.deepseek_v41_image:inference_image"
     inference_gpu = ["B300", "B200", "H200"]
     inference_gpus_per_node = 8
     inference_cpu = 32
