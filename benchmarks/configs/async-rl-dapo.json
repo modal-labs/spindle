@@ -1,0 +1,14 @@
+{
+  "name": "qwen27b-dapo",
+  "suite": "async-rl",
+  "recipe": "dapo",
+  "model": "Qwen/Qwen3.8-27B",
+  "deployment": "src/spindle/configs/qwen38_27b_lora_64k.py",
+  "clients": [2],
+  "context_lengths": [8192],
+  "output_tokens": 1024,
+  "steps": 5,
+  "rank": 32,
+  "recipe_config": {"groups_per_update": 1, "samples_per_group": 4, "max_candidate_groups": 4, "warmup_samples": 1},
+  "deployment_overrides": {"trainer_max_clients_per_instance": 2, "inference_min_replicas": 0, "inference_max_replicas": 1}
+}

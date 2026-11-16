@@ -1,0 +1,28 @@
+{
+  "name": "ci-large-moe-eval",
+  "experiment": "ci-large-moe",
+  "suite": "eval",
+  "model": "zai-org/GLM-5.3",
+  "deployment": "src/spindle/configs/glm53_lora_256k.py",
+  "clients": [
+    1,
+    2,
+    4
+  ],
+  "context_lengths": [
+    1024,
+    8192
+  ],
+  "steps": 10,
+  "warmup_steps": 2,
+  "batch_size": 1,
+  "timeout_s": 14400,
+  "deployment_overrides": {
+    "trainer_gpu": "B300",
+    "inference_gpu": "B300",
+    "trainer_max_clients_per_instance": 4,
+    "inference_min_replicas": 0,
+    "inference_max_replicas": 1,
+    "weights_revision": "ba32f8c19c8738e2c57c71798c601d477a7bf844"
+  }
+}

@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Spindle benchmarks</title>
+  <style>
+    :root {
+      font: 14px system-ui;
+      color: #dce5ee;
+      background: #10151c;
+      color-scheme: dark;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+    }
+    header {
+      padding: 22px 30px;
+      border-bottom: 1px solid #303946;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0;
+      margin-right: auto;
+    }
+    button,
+    select,
+    input {
+      background: #1b2530;
+      color: inherit;
+      border: 1px solid #455368;
+      border-radius: 5px;
+      padding: 8px;
+    }
+    button {
+      cursor: pointer;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 290px 1fr;
+      min-height: calc(100vh - 85px);
+    }
+    aside {
+      padding: 20px;
+      border-right: 1px solid #303946;
+      max-height: 90vh;
+      overflow: auto;
+    }
+    .run {
+      display: block;
+      padding: 12px 4px;
+      border-bottom: 1px solid #303946;
+      word-break: break-word;
+    }
+    .run small {
+      display: block;
+      color: #9aabbe;
+      margin-top: 5px;
+    }
+    .content {
+      padding: 24px;
+      min-width: 0;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    #metric {
+      max-width: 100%;
+      min-width: 260px;
+    }
+    #chart {
+      width: 100%;
+      height: 310px;
+      background: #141d27;
+      border-radius: 6px;
+      margin-top: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 18px 0;
+      font-size: 12px;
+    }
+    td,
+    th {
+      padding: 9px;
+      text-align: left;
+      border-bottom: 1px solid #303946;
+      word-break: break-word;
+    }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 12px;
+      max-height: 500px;
+      overflow: auto;
+      background: #141d27;
+      padding: 16px;
+    }
+    details {
+      margin: 20px 0;
+    }
+    .muted {
+      color: #9aabbe;
+    }
+    #message {
+      padding: 0 30px;
+      color: #ffc675;
+    }
+    label {
+      cursor: pointer;
+    }
+    a {
+      color: #8fc7ff;
+    }
+    .pill {
+      color: #9be1d0;
+    }
+    #legend {
+      font-size: 12px;
+      overflow-wrap: anywhere;
+      margin-top: 8px;
+    }
+    @media (max-width: 800px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+      aside {
+        border-right: 0;
+        max-height: 250px;
+      }
+      .content {
+        padding: 16px;
+      }
+    }
+  </style>
+  <header>
+    <h1>Spindle <span class="muted">/ benchmarks</span></h1>
+    <button id="refresh">Refresh</button
+    ><button id="upload">Upload results</button
+    ><input id="file" type="file" accept=".json" hidden /><button id="auth">
+      Access token
+    </button>
+  </header>
+  <p id="message" role="status"></p>
+  <main>
+    <aside>
+      <strong>Runs</strong>
+      <p class="muted">
+        Select runs to compare. Every recorded metric is available.
+      </p>
+      <div id="runs"></div>
+    </aside>
+    <section class="content">
+      <div class="controls">
+        <input
+          id="search"
+          placeholder="Filter metrics…"
+          aria-label="Filter metrics"
+        /><select id="metric" aria-label="Metric"></select
+        ><select id="axis" aria-label="X axis">
+          <option value="elapsed">Elapsed seconds</option>
+          <option value="clients">Client count</option>
+          <option value="step">Step</option>
+          <option value="context_length">Context tokens</option></select
+        ><span id="count" class="muted"></span>
+        <input
+          id="labels"
+          placeholder="Filter sample labels…"
+          aria-label="Filter sample labels"
+        />
+      </div>
+      <svg
+        id="chart"
+        viewBox="0 0 900 310"
+        role="img"
+        aria-label="Selected metric comparison"
+      ></svg>
+      <div id="legend"></div>
+      <div id="summary"></div>
+      <details>
+        <summary>All samples and labels</summary>
+        <div id="samples"></div>
+      </details>
+      <details open>
+        <summary>Run details, collection errors, and raw records</summary>
+        <div id="details"></div>
+      </details>
+    </section>
+  </main>
+  <script type="module">
+    let runs = [],
+      catalog = [],
+      selected = new Set(
+        new URLSearchParams(location.search)
+          .get("runs")
+          ?.split(",")
+          .filter(Boolean) || [],
+      ),
+      token = sessionStorage.getItem("benchmark-token") || "";
+    const $ = (id) => document.getElementById(id),
+      colors = [
+        "#70cbb7",
+        "#91baff",
+        "#f7bb77",
+        "#d79beb",
+        "#ee8992",
+        "#e6dc84",
+      ];
+    function node(tag, text, cls) {
+      const n = document.createElement(tag);
+      if (text !== undefined) n.textContent = text;
+      if (cls) n.className = cls;
+      return n;
+    }
+    async function api(path, options = {}) {
+      const r = await fetch(path, {
+        ...options,
+        headers: {
+          ...options.headers,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!r.ok) throw Error(`${r.status}: ${await r.text()}`);
+      return r.json();
+    }
+    function fail(e) {
+      $("message").textContent = String(e.message || e);
+    }
+    function table(headers, rows) {
+      const t = node("table"),
+        tr = node("tr");
+      headers.forEach((h) => tr.append(node("th", h)));
+      t.append(tr);
+      rows.forEach((row) => {
+        const tr = node("tr");
+        row.forEach((c) => tr.append(node("td", c)));
+        t.append(tr);
+      });
+      return t;
+    }
+    async function refresh() {
+      runs = await api("/api/runs");
+      $("runs").replaceChildren();
+      for (const run of runs) {
+        const label = node("label", undefined, "run"),
+          box = node("input");
+        box.type = "checkbox";
+        box.checked = selected.has(run.run_id);
+        box.onchange = async () => {
+          box.checked ? selected.add(run.run_id) : selected.delete(run.run_id);
+          history.replaceState(
+            null,
+            "",
+            `?runs=${encodeURIComponent([...selected].join(","))}`,
+          );
+          await chooseRuns();
+        };
+        label.append(
+          box,
+          document.createTextNode(" " + (run.name || run.run_id)),
+          node(
+            "small",
+            `${run.suite || run.config?.suite || ""} · ${run.status || "unknown"} · ${(run.revision || "unverified").slice(0, 12)}`,
+          ),
+        );
+        $("runs").append(label);
+      }
+      if (!runs.length)
+        $("runs").append(
+          node(
+            "p",
+            "No runs yet. Upload a result bundle or run a benchmark.",
+            "muted",
+          ),
+        );
+      await chooseRuns();
+    }
+    async function chooseRuns() {
+      catalog = await api(
+        "/api/metrics?runs=" + encodeURIComponent([...selected].join(",")),
+      );
+      filterMetrics();
+      $("details").replaceChildren();
+      for (const id of selected) {
+        const d = node("details"),
+          manifest = runs.find((run) => run.run_id === id),
+          p = node("pre", JSON.stringify(manifest, null, 2)),
+          download = node("button", "Download bundle");
+        let bundle;
+        async function loadBundle() {
+          if (!bundle)
+            bundle = await api(`/api/runs/${encodeURIComponent(id)}/bundle`);
+          return bundle;
+        }
+        download.onclick = async () => {
+          try {
+            await loadBundle();
+            const a = node("a");
+            a.href = URL.createObjectURL(
+              new Blob([JSON.stringify(bundle, null, 2)], {
+                type: "application/json",
+              }),
+            );
+            a.download = id + ".json";
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+          } catch (e) {
+            fail(e);
+          }
+        };
+        const raw = node("details"),
+          rawBody = node("pre");
+        raw.append(
+          node("summary", "Load raw records and collection errors"),
+          rawBody,
+        );
+        raw.ontoggle = async () => {
+          if (!raw.open) return;
+          try {
+            await loadBundle();
+            rawBody.textContent = JSON.stringify(bundle.records, null, 2);
+          } catch (e) {
+            fail(e);
+          }
+        };
+        d.append(node("summary", id), download, p, raw);
+        $("details").append(d);
+      }
+    }
+    function filterMetrics() {
+      const prev = $("metric").value;
+      $("metric").replaceChildren();
+      for (const m of catalog.filter((m) =>
+        m.name.toLowerCase().includes($("search").value.toLowerCase()),
+      )) {
+        const opt = node(
+          "option",
+          `${m.name}${m.unit ? " [" + m.unit + "]" : ""} · ${m.samples} samples`,
+        );
+        opt.value = m.name;
+        $("metric").append(opt);
+      }
+      if ([...$("metric").options].some((o) => o.value === prev))
+        $("metric").value = prev;
+      $("count").textContent = `${catalog.length} metric entries`;
+      draw().catch(fail);
+    }
+    function svg(tag, attrs, text) {
+      const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v));
+      if (text !== undefined) n.textContent = text;
+      return n;
+    }
+    async function draw() {
+      const name = $("metric").value,
+        allRows = name
+          ? await api(
+              "/api/series?runs=" +
+                encodeURIComponent([...selected].join(",")) +
+                "&metric=" +
+                encodeURIComponent(name),
+            )
+          : [];
+      const rows = allRows.filter((r) =>
+        JSON.stringify(r.labels)
+          .toLowerCase()
+          .includes($("labels").value.toLowerCase()),
+      );
+      const chart = $("chart");
+      chart.replaceChildren();
+      $("legend").replaceChildren();
+      $("summary").replaceChildren();
+      $("samples").replaceChildren();
+      if (!rows.length) {
+        chart.append(
+          svg(
+            "text",
+            { x: 40, y: 150, fill: "#9aabbe" },
+            "Select runs and a metric to inspect results.",
+          ),
+        );
+        return;
+      }
+      const groups = new Map(),
+        starts = new Map();
+      const axis = $("axis").value;
+      for (const r of rows) {
+        starts.set(
+          r.run_id,
+          Math.min(starts.get(r.run_id) ?? Infinity, r.time),
+        );
+        const seriesLabels = Object.fromEntries(
+          Object.entries(r.labels).filter(
+            ([key]) =>
+              ![
+                "step",
+                "seq_id",
+                "spindle.seq_id",
+                "spindle.request_id",
+                axis,
+              ].includes(key),
+          ),
+        );
+        const key = r.run_id + " " + JSON.stringify(seriesLabels);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(r);
+      }
+      function x(r) {
+        return axis === "elapsed"
+          ? r.time - starts.get(r.run_id)
+          : Number(r.labels[axis]);
+      }
+      const plotted = rows.filter((r) => Number.isFinite(x(r)));
+      if (!plotted.length) {
+        chart.append(
+          svg(
+            "text",
+            { x: 40, y: 150, fill: "#9aabbe" },
+            "This metric has no samples for the selected X axis.",
+          ),
+        );
+        return;
+      }
+      const xs = plotted.map(x),
+        ys = plotted.map((r) => r.value),
+        xmin = xs.reduce((a, b) => Math.min(a, b), Infinity),
+        xmax = xs.reduce((a, b) => Math.max(a, b), -Infinity),
+        ymin = ys.reduce((a, b) => Math.min(a, b), Infinity),
+        ymax = ys.reduce((a, b) => Math.max(a, b), -Infinity),
+        X = (v) => 70 + ((v - xmin) / (xmax - xmin || 1)) * 790,
+        Y = (v) => 260 - ((v - ymin) / (ymax - ymin || 1)) * 225;
+      for (let i = 0; i < 5; i++) {
+        const y = 35 + (i * 225) / 4,
+          v = ymax - (i * (ymax - ymin)) / 4;
+        chart.append(
+          svg("line", { x1: 70, x2: 860, y1: y, y2: y, stroke: "#303946" }),
+          svg(
+            "text",
+            { x: 5, y: y + 4, fill: "#9aabbe", "font-size": 10 },
+            v.toPrecision(4),
+          ),
+        );
+      }
+      chart.append(
+        svg(
+          "text",
+          { x: 70, y: 290, fill: "#9aabbe", "font-size": 11 },
+          `${axis}: ${xmin.toPrecision(4)} → ${xmax.toPrecision(4)}`,
+        ),
+      );
+      let i = 0;
+      for (const [key, samples] of groups) {
+        const color = colors[i++ % colors.length],
+          valid = samples
+            .filter((r) => Number.isFinite(x(r)))
+            .sort((a, b) => x(a) - x(b));
+        chart.append(
+          svg("polyline", {
+            points: valid.map((r) => `${X(x(r))},${Y(r.value)}`).join(" "),
+            fill: "none",
+            stroke: color,
+            "stroke-width": 1.5,
+          }),
+        );
+        for (const r of valid) {
+          const c = svg("circle", {
+            cx: X(x(r)),
+            cy: Y(r.value),
+            r: 3,
+            fill: color,
+          });
+          c.append(
+            svg(
+              "title",
+              {},
+              `${key}\n${name}: ${r.value}\n${new Date(r.time * 1000).toISOString()}`,
+            ),
+          );
+          chart.append(c);
+        }
+        const label = samples[0].labels;
+        const caption =
+          samples[0].run_id +
+          " · " +
+          Object.entries(label)
+            .filter(([key]) =>
+              [
+                "client",
+                "clients",
+                "context_length",
+                "phase",
+                "rank",
+                "spindle.component",
+                "tp_rank",
+              ].includes(key),
+            )
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ");
+        const l = node("div", caption);
+        l.title = key;
+        l.style.color = color;
+        $("legend").append(l);
+      }
+      const summaries = [...groups].map(([key, s]) => {
+        const vals = s.map((r) => r.value).sort((a, b) => a - b);
+        return [
+          key,
+          vals.length,
+          Number(vals[0].toPrecision(6)),
+          Number(vals.at(-1).toPrecision(6)),
+          Number((vals.reduce((a, b) => a + b, 0) / vals.length).toPrecision(6)),
+        ];
+      });
+      $("summary").append(
+        node(
+          "p",
+          "Raw sample summaries; warm-up and measurement phases remain separate label series. Histogram buckets are cumulative counts, not latency samples.",
+          "muted",
+        ),
+        table(["Series", "Samples", "Min", "Max", "Mean"], summaries),
+      );
+      $("samples").append(
+        table(
+          ["Run", "Time", "Value", "Labels"],
+          rows.map((r) => [
+            r.run_id,
+            new Date(r.time * 1000).toISOString(),
+            r.value,
+            JSON.stringify(r.labels),
+          ]),
+        ),
+      );
+    }
+    $("refresh").onclick = () => refresh().catch(fail);
+    $("search").oninput = filterMetrics;
+    $("labels").oninput = () => draw().catch(fail);
+    $("metric").onchange = () => draw().catch(fail);
+    $("axis").onchange = () => draw().catch(fail);
+    $("auth").onclick = () => {
+      token = prompt("Benchmark access token", token) || "";
+      sessionStorage.setItem("benchmark-token", token);
+      refresh().catch(fail);
+    };
+    $("upload").onclick = () => $("file").click();
+    $("file").onchange = async () => {
+      try {
+        const file = $("file").files[0];
+        if (!file) return;
+        const result = await api("/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: await file.text(),
+        });
+        selected.add(result.run_id);
+        $("message").textContent = `Imported ${result.records} records`;
+        await refresh();
+      } catch (e) {
+        fail(e);
+      }
+    };
+    refresh().catch(fail);
+  </script>
+</html>

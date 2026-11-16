@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 import torch
 
+from spindle.telemetry.benchmark import record as record_benchmark_metrics
+
 PROFILE_STEP_ENV = "SPINDLE_TORCH_PROFILE_STEP"
 PROFILE_DIR_ENV = "SPINDLE_TORCH_PROFILE_DIR"
 PROFILE_RANKS_ENV = "SPINDLE_TORCH_PROFILE_RANKS"
@@ -79,6 +81,11 @@ class StepPhaseTimer:
         model_id: str | None = None,
         **extra: object,
     ) -> None:
+        record_benchmark_metrics(
+            {"duration_s": seconds},
+            {"phase": phase, "step": step, "model_id": model_id or ""},
+            "spindle.backend.timer",
+        )
         with self._lock:
             accumulators = self._steps.setdefault(step, {})
             self._prune_locked()

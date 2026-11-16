@@ -1,0 +1,14 @@
+{
+  "name": "qwen9b-swe-gym",
+  "suite": "async-rl",
+  "recipe": "swe-gym",
+  "model": "Qwen/Qwen3.5-9B",
+  "deployment": "src/spindle/configs/qwen35_9b_lora_128k.py",
+  "clients": [2],
+  "context_lengths": [32768],
+  "output_tokens": 8192,
+  "steps": 5,
+  "rank": 32,
+  "timeout_s": 14400,
+  "deployment_overrides": {"trainer_max_clients_per_instance": 2, "inference_min_replicas": 0, "inference_max_replicas": 1}
+}

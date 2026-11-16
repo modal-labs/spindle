@@ -450,7 +450,12 @@ def _array_bridge(trainer, *, native=False):
 
 def _worker_env() -> dict[str, str]:
     """Settings the trainer actors need that a pre-existing Ray cluster lacks."""
-    return {name: os.environ[name] for name in _WORKER_ENV_VARS if name in os.environ}
+    names = (
+        set(_WORKER_ENV_VARS)
+        | {name for name in os.environ if name.startswith("OTEL_")}
+        | {"SPINDLE_BENCHMARK_METRICS"}
+    )
+    return {name: os.environ[name] for name in names if name in os.environ}
 
 
 def _require_cluster_nodes(

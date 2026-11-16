@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 
+from spindle.telemetry.benchmark import enabled, start_collection
+
 
 def start_sglang(
     model_path: str,
@@ -149,7 +151,11 @@ def start_sglang(
                 str(max_queued_requests),
             ]
         )
-    return subprocess.Popen(command, start_new_session=True)
+    if enabled():
+        command.append("--enable-metrics")
+    process = subprocess.Popen(command, start_new_session=True)
+    start_collection(urls=(f"http://127.0.0.1:{port}/metrics",), process=process)
+    return process
 
 
 def start_fft_sidecar(

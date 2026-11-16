@@ -3,7 +3,9 @@
 from contextvars import ContextVar
 
 from stitch.service import create_app
-from stitch.sync import AdmissionGate, Reconciler
+from stitch.sync import AdmissionGate
+
+from .full_sidecar import MeasuredReconciler
 from stitch.types import VersionRef
 from starlette.responses import JSONResponse
 
@@ -66,7 +68,7 @@ class AssignedGate(AdmissionGate):
         return super()._rejection(constraint)
 
 
-class AssignedReconciler(Reconciler):
+class AssignedReconciler(MeasuredReconciler):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.gate = AssignedGate(

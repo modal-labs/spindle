@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict
@@ -12,6 +13,8 @@ from typing import Any
 
 from tinker import AdamParams, ForwardBackwardOutput
 from tinker.types.forward_backward_input import ForwardBackwardInput
+
+from spindle.telemetry.benchmark import record as record_benchmark_metrics
 
 from spindle.backends.contract import (
     Backend,
@@ -230,11 +233,19 @@ class DistributedExecutor:
             if not isinstance(payload, SaveWeightsForSamplerPayload):
                 raise TypeError("sampler publication requires a sampler payload")
             capture_id = uuid.uuid4().hex
+            capture_started = time.time()
             publication = await asyncio.to_thread(
                 self._dispatch,
                 self.command_group,
                 "capture_sampler_snapshot",
                 (model_id, capture_id, payload.publish_version),
+            )
+            record_benchmark_metrics(
+                {"weight_sync.capture_started_unix_s": capture_started},
+                {
+                    "spindle.model_id": model_id,
+                    "publish_version": publication.publish_version,
+                },
             )
             return {
                 "capture_id": capture_id,

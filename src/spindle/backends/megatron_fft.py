@@ -14,6 +14,7 @@ from tinker import AdamParams, ForwardBackwardOutput, OptimStepResponse
 
 from spindle.engine.spmd import DistributedExecutor, initialize_distributed_runtime
 from spindle.inference.fft_bulletin import FFTSnapshotBulletin
+from spindle.telemetry.benchmark import start_cuda_collection
 
 from .contract import (
     Backend,
@@ -68,6 +69,7 @@ class FFTMegatronBackend(Backend):
         self.rank = dist.get_rank()
         self.world_size = dist.get_world_size()
         initialize_megatron(config)
+        start_cuda_collection(torch)
 
         self.model_id: str | None = None
         self.accumulating = False

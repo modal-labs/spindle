@@ -22,6 +22,7 @@ from spindle.engine.http import create_engine_app
 from spindle.usage import ContainerUsage
 from spindle.startup_timing import TRAINER_COMPONENT, timeline
 from spindle.telemetry.trainer import TrainerTelemetry
+from spindle.telemetry.benchmark import start_collection
 
 from .engines import EngineInstanceRecord, instance_key
 from .kv import ModalKeyValueStore
@@ -76,6 +77,7 @@ async def serve_engine(
     )
     engine = None
     trainer_telemetry = None
+    benchmark_collection = start_collection()
     try:
         engine = await make_server()
         startup.mark("backend_ready")
@@ -125,6 +127,7 @@ async def serve_engine(
             )
             await server.serve()
     finally:
+        benchmark_collection.set()
         try:
             if engine is not None:
                 await engine.close()

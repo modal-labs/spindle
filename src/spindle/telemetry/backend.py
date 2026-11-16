@@ -14,6 +14,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .benchmark import record as record_benchmark_metrics
+
 PHASES = frozenset(
     {
         "prepare",
@@ -103,6 +105,11 @@ def phase(name: str):
         entry["ok"] = True
     finally:
         entry["end_ns"] = time.time_ns()
+        record_benchmark_metrics(
+            {"duration_s": (entry["end_ns"] - entry["start_ns"]) / 1e9},
+            {"phase": name},
+            "spindle.backend.phase",
+        )
 
 
 def measured(name: str):

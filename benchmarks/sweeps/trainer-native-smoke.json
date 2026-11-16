@@ -1,0 +1,39 @@
+{
+  "deployment": "src/spindle/configs/qwen35_4b_fft_64k.py",
+  "deployment_overrides": {
+    "inference_min_replicas": 0,
+    "inference_max_replicas": 1,
+    "trainer_gpus_per_node": 1,
+    "trainer_max_clients_per_instance": 1,
+    "trainer_max_instances": 1,
+    "weights_revision": "1cfa9a7208912126459214e8b04321603b3df60c",
+    "platform.requires_proxy_auth": true,
+    "model": "Qwen/Qwen3-4B",
+    "max_context_length": 2048,
+    "megatron_cfg.tensor_model_parallel_size": 1,
+    "megatron_cfg.context_parallel_size": 1,
+    "megatron_cfg.sequence_parallel": false,
+    "megatron_cfg.max_tokens_per_microbatch": 2048,
+    "megatron_cfg.fp32_lm_head": false,
+    "trainer_gpu": "H200",
+    "sglang_cfg.disable_prefill_cuda_graph": true,
+    "sglang_cfg.cuda_graph_max_bs_decode": 16,
+    "sglang_cfg.max_running_requests": 16,
+    "sglang_cfg.chunked_prefill_size": 2048
+  },
+  "name": "trainer-native-scaling-smoke",
+  "batch_sizes": [
+    1,
+    2
+  ],
+  "context_lengths": [
+    128,
+    512
+  ],
+  "clients": [
+    1
+  ],
+  "steps": 3,
+  "warmup_steps": 1,
+  "timeout_s": 1800
+}

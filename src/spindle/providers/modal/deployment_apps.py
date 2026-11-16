@@ -156,7 +156,8 @@ def log_scheduled_gpus(role: str) -> None:
 
 def deployment_env(values):
     """Keep user environment overrides separate from Spindle's deployment wiring."""
-    if any(key.startswith("SPINDLE_") for key in values):
+    benchmark_keys = {"SPINDLE_BENCHMARK_METRICS", "SPINDLE_BENCHMARK_PROMETHEUS_URLS"}
+    if any(key.startswith("SPINDLE_") and key not in benchmark_keys for key in values):
         raise ValueError("SPINDLE_ environment variables are managed by Spindle")
     return dict(values)
 

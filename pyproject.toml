@@ -31,7 +31,7 @@ version = { attr = "spindle.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-spindle = ["skills/**/*"]
+spindle = ["skills/**/*", "benchmarks/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -336,3 +336,4 @@ dev = [
 
 [project.scripts]
 spindle = "spindle.deployment_cli:main"
+spindle-bench = "spindle.benchmarks.__main__:main"

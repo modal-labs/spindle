@@ -12,6 +12,7 @@ from miles.ray import train_actor
 from miles.utils import distributed_utils
 
 from spindle.startup_timing import timeline
+from spindle.telemetry.benchmark import start_cuda_collection
 
 from .profiling import RankProfiler, TorchProfileConfig
 from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
@@ -64,6 +65,7 @@ def use_distributed_timeout_for_gloo(minutes: int) -> None:
 
 
 def mark_actor_initialized() -> None:
+    start_cuda_collection(torch)
     rank = dist.get_rank() if dist.is_initialized() else 0
     if rank == 0:
         timeline("trainer-rank0").mark("actor_model_loaded")

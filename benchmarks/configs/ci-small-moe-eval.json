@@ -1,0 +1,28 @@
+{
+  "name": "ci-small-moe-eval",
+  "experiment": "ci-small-moe",
+  "suite": "eval",
+  "model": "Qwen/Qwen3.6-35B-A3B",
+  "deployment": "src/spindle/configs/qwen36_35b_a3b_lora_32k.py",
+  "clients": [
+    1,
+    2,
+    4
+  ],
+  "context_lengths": [
+    1024,
+    8192
+  ],
+  "steps": 10,
+  "warmup_steps": 2,
+  "batch_size": 1,
+  "timeout_s": 14400,
+  "deployment_overrides": {
+    "trainer_gpu": "H200",
+    "inference_gpu": "H200",
+    "trainer_max_clients_per_instance": 4,
+    "inference_min_replicas": 0,
+    "inference_max_replicas": 1,
+    "weights_revision": "345d467b117d1fd5eda9b879a5988de9ae5f47a7"
+  }
+}

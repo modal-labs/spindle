@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, Response
 from stitch.types import VersionConstraint, VersionRef
 
 from spindle.startup_timing import timeline
+from spindle.telemetry.benchmark import record as record_benchmark_metrics
 
 from .bulletin import SnapshotBulletin, SnapshotNotFound
 from .request_replay import RequestReplay
@@ -306,6 +307,13 @@ async def _prepare_adapter(
                     timeline("sampler-sidecar").mark(
                         "first_adapter_loaded", adapter=resolved.identity
                     )
+                record_benchmark_metrics(
+                    {"weight_sync.ready_unix_s": time.time()},
+                    {
+                        "spindle.model_id": str(resolved.run_id),
+                        "publish_version": resolved.version,
+                    },
+                )
                 app.state.registered_adapters[resolved.identity] = str(path)
                 return resolved, None
 

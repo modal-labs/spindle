@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import torch
 import torch.distributed as dist
 from megatron.bridge.peft.multi_lora_layers import load_adapter
 from megatron.core import parallel_state
@@ -13,6 +14,7 @@ from tinker import AdamParams, ForwardBackwardOutput, OptimStepResponse
 
 from spindle.engine.spmd import DistributedExecutor, initialize_distributed_runtime
 from spindle.telemetry.backend import measured
+from spindle.telemetry.benchmark import start_cuda_collection
 
 from .contract import (
     Backend,
@@ -82,6 +84,7 @@ class LoraMegatronBackend(Backend):
         self.rank = dist.get_rank()
         self.persistence_group = persistence_group
         initialize_megatron(config)
+        start_cuda_collection(torch)
 
         self.model, self.optimizers, self.bridge = create_model_and_optimizer(config)
 
