@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any, TypeAlias
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from tinker import AdamParams, LoraConfig
@@ -49,7 +49,7 @@ class SkipPayload(OperationPayloadModel):
     error: str
 
 
-OperationPayload: TypeAlias = (
+type OperationPayload = (
     ForwardBackwardInput
     | AdamParams
     | LoadCheckpointPayload

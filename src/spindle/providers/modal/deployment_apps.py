@@ -6,6 +6,7 @@ created on demand with the existing LoRA/FFT pool lifecycle.
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from modal.config import config
 
 from spindle.deployments import DeploymentConfig
 from spindle.inference.serving import (
+    sglang_busy,
     start_fft_sidecar,
     start_lora_sidecar,
     supervise_children,
@@ -26,6 +28,7 @@ from spindle.inference.serving import (
     wait_http,
 )
 from spindle.startup_timing import SAMPLER_COMPONENT, TRAINER_COMPONENT, timeline
+from spindle.usage import ContainerUsage, poll_busy
 
 from .app_tags import app_tags
 from .deployment import trainer_deployment_env
@@ -47,19 +50,24 @@ from .lora_pool import LoraPoolSpec
 from .lora_pool import deploy_pool as deploy_lora
 from .megatron_image import image as megatron_image
 from .miles_v012_image import image as miles_v012_image
+from .miles_v020_image import image as miles_v020_image
 from .miles_image import image as miles_image
 from .ray_cluster import start_trainer_cluster
 from .rollout_image import image as rollout_image
 from .serve import run_engine_with_backend
+from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
 
-TRAINER_IMAGES = {"miles-v0.1.2": miles_v012_image}
+TRAINER_IMAGES = {"miles-v0.1.2": miles_v012_image, "miles-v0.2.0": miles_v020_image}
 
 
 def image_for(backend, name=""):
     if not modal.is_local():
         return modal.Image.debian_slim()
     if name:
+        if ":" in name:
+            module, attribute = name.rsplit(":", 1)
+            return getattr(importlib.import_module(module), attribute)
         if name not in TRAINER_IMAGES:
             raise ValueError(
                 f"unknown trainer image {name!r}; choose from {sorted(TRAINER_IMAGES)}"
@@ -70,12 +78,13 @@ def image_for(backend, name=""):
     ]
 
 
-def build_sampler_image(frontend, environment):
+def build_sampler_image(frontend, environment, images=("",)):
     """Build the pool image ahead of the first request; pools reuse the cached build."""
     app = modal.App.lookup(
         frontend, environment_name=environment, create_if_missing=True
     )
-    image_for("sglang").build(app)
+    for name in dict.fromkeys(images):
+        image_for("sglang", name).build(app)
 
 
 def volumes_for(platform):
@@ -89,6 +98,7 @@ def volumes_for(platform):
         "/bulletin": modal.Volume.from_name(
             storage["bulletin"], create_if_missing=True, version=2
         ),
+        USAGE_ROOT: usage_volume(platform["frontend"]),
     }
 
 
@@ -105,6 +115,16 @@ def secrets_for(platform, *, training=False):
         if names["huggingface"]:
             result.append(modal.Secret.from_name(names["huggingface"]))
     return result
+
+
+def trainer_experimental_options(rdma, platform):
+    if not rdma:
+        return {}
+    options = {"efa_enabled": True}
+    # Modal accepts this option only on clustered functions.
+    if platform["modal"].get("exclude_reserved_capacity"):
+        options["exclude_reserved_capacity"] = True
+    return options
 
 
 def server_placement(region):
@@ -168,7 +188,8 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         log_scheduled_gpus("trainer")
         run_trainer(saved, instance_id, platform)
 
-    if recipe.trainer_nodes > 1:
+    rdma = recipe.trainer_nodes > 1 or recipe.trainer_rdma
+    if rdma:
         trainer = modal.clustered(size=recipe.trainer_nodes, rdma=True)(trainer)
     trainer = app.function(
         name="trainer",
@@ -190,7 +211,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         volumes=volumes_for(platform),
         secrets=secrets_for(platform, training=True),
         env=env,  # ty: ignore[invalid-argument-type]
-        experimental_options={"efa_enabled": True} if recipe.trainer_nodes > 1 else {},
+        experimental_options=trainer_experimental_options(rdma, platform),
     )(trainer)
 
     return app, trainer
@@ -257,6 +278,12 @@ def run_trainer(deployment, instance_id, platform=None):
         sampler_persistence_concurrency=recipe.sampler_persistence_concurrency,
         max_forward_backward_models=recipe.trainer_max_clients_per_batch,
         on_startup_error=failed,
+        usage=lambda: ContainerUsage(
+            start_usage_meter(platform["frontend"]),
+            app_name=deployment.trainer_app_name,
+            base_model=recipe.model,
+            started_at=startup.origin,
+        ),
     )
 
 
@@ -294,7 +321,9 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
     @app.server(
         name="Server",
         serialized=True,
-        image=image if image is not None else image_for("sglang"),
+        image=image
+        if image is not None
+        else image_for("sglang", recipe.inference_image),
         gpu=gpu_request(recipe.inference_gpu, recipe.inference_gpus_per_node),
         cpu=recipe.inference_cpu,
         memory=recipe.inference_memory_mib,
@@ -315,7 +344,9 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         ),
         min_containers=minimum,
         max_containers=maximum,
-        target_concurrency=recipe.inference_target_concurrency,
+        target_concurrency=recipe.inference_target_concurrency
+        or options["max_running_requests"],
+        scaleup_window=recipe.inference_scaleup_window_s,
         scaledown_window=window,
         startup_timeout=recipe.inference_startup_timeout_s,
         exit_grace_period=300,
@@ -327,6 +358,7 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         def start(self):
             self.sidecar = None
             self.sglang = None
+            self.busy_poll = None
             log_scheduled_gpus("sampler")
             startup = timeline(SAMPLER_COMPONENT, pool=pool.app_name)
             startup.mark("server_enter")
@@ -374,9 +406,29 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                 terminate(self.sidecar)
                 terminate(self.sglang)
                 raise
+            if (meter := sample_meter(platform["frontend"])) is not None:
+                busy = sglang_busy(8001)
+                try:
+                    wait_http("http://127.0.0.1:8001/metrics", self.sglang, timeout=30)
+                    busy()
+                except Exception:
+                    # Without busy time, the pool's cost is split by tokens alone.
+                    logging.getLogger(__name__).exception(
+                        "Can't read SGLang metrics; not recording pool idle time"
+                    )
+                else:
+                    usage = ContainerUsage(
+                        meter,
+                        app_name=pool.app_name,
+                        base_model=recipe.model,
+                        started_at=startup.origin,
+                    )
+                    self.busy_poll = poll_busy(usage, busy)
 
         @modal.exit()
         def stop(self):
+            if self.busy_poll is not None:
+                self.busy_poll.set()
             terminate(self.sidecar)
             terminate(self.sglang)
 

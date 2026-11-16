@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from types import SimpleNamespace
 
 from spindle.backends.miles_runtime import mamba_packing
@@ -7,22 +8,22 @@ class Params:
     seq_idx = None
     total_tokens = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.seq_idx = f"rows of {self.total_tokens} tokens"
 
 
 class Tokens:
-    def size(self, dim):
+    def size(self, dim: int) -> int:
         return 384
 
 
-def patched(original):
+def patched(original: Callable) -> Callable:
     model = SimpleNamespace(get_packed_seq_params=original)
     mamba_packing.install(model)
     return model.get_packed_seq_params
 
 
-def test_packed_rows_get_sequence_indices_over_the_whole_micro_batch():
+def test_packed_rows_get_sequence_indices_over_the_whole_micro_batch() -> None:
     get_packed_seq_params = patched(lambda batch, args: Params())
     batch = {"tokens": Tokens()}
 

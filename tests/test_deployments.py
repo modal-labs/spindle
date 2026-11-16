@@ -19,7 +19,7 @@ from spindle.backends.miles_arguments import (
     defer_config_overrides,
 )
 from spindle.configs.qwen35_9b_lora_16k import Config as Parent
-from spindle.configuration import BaseConfig
+from spindle.configuration import BaseConfig, _modal_platform
 from spindle.control_plane import ControlPlane, create_control_plane_app
 from spindle.control_plane.deployments import (
     DeploymentConflict,
@@ -231,6 +231,16 @@ def test_asset_paths_follow_the_model():
     assert a.asset_path == f"/assets/{a.recipe.model}"
     b = resolved(recipe(model="other/Qwen3.5-9B-Base"))
     assert a.asset_path != b.asset_path
+
+
+@pytest.mark.parametrize(
+    "field", ["inference_target_concurrency", "inference_scaleup_window_s"]
+)
+@pytest.mark.parametrize("value", [0, "32", True])
+def test_autoscaling_settings_are_positive_integers_or_none(field, value):
+    assert resolved(**{field: 48})
+    with pytest.raises(ValueError, match=field):
+        resolved(**{field: value})
 
 
 @pytest.mark.parametrize("field", ["trainer_disk_mib", "inference_disk_mib"])
@@ -713,6 +723,18 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
         backend_config(spec)
 
 
+@pytest.mark.parametrize(
+    "changes, match",
+    [
+        ({"miles_cfg__megatron_to_hf_mode": "raw"}, "megatron_to_hf_mode"),
+        ({"trainer_nodes": 2}, "single-node"),
+    ],
+)
+def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
+    with pytest.raises(ValueError, match=match):
+        backend_config(recipe(trainer_image="miles-v0.2.0", **changes))
+
+
 def test_backend_dispatch_rejects_unknown_backend():
     with pytest.raises(ValueError, match="backend"):
         backend_config(recipe(backend="missing"))
@@ -802,7 +824,7 @@ def test_config_import_error_preserves_traceback_and_restores_path(tmp_path):
 
 
 def test_no_yaml_config_ingestion(tmp_path):
-    with pytest.raises(ValueError, match="Python .py"):
+    with pytest.raises(ValueError, match=r"Python \.py"):
         load(tmp_path / "old.yaml")
 
 
@@ -1264,3 +1286,15 @@ async def test_a_config_another_frontend_container_just_added_shows_at_once(read
     await writer.add(other)
     async with client_for(reader) as client:
         assert await read(client) & {other.name, other.model}
+
+
+@pytest.mark.parametrize("value", [None, "1"])
+def test_exclude_reserved_capacity_env_default(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("SPINDLE_EXCLUDE_RESERVED_CAPACITY", raising=False)
+    else:
+        monkeypatch.setenv("SPINDLE_EXCLUDE_RESERVED_CAPACITY", value)
+    expected = {"environment": None, "region": None}
+    if value:
+        expected["exclude_reserved_capacity"] = True
+    assert _modal_platform() == expected
