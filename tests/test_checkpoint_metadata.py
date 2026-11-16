@@ -40,10 +40,20 @@ MILES_LORA = {
         "pipeline_model_parallel_size": 1,
     },
 }
+MILES_NATIVE_LORA = {
+    **MILES_LORA,
+    "checkpoint_format": "miles_adapter_state",
+    "lora_config": {
+        **MILES_LORA["lora_config"],
+        "target_modules": ["linear_qkv", "linear_proj"],
+    },
+}
 
 
-@pytest.mark.parametrize("saved", [MEGATRON_LORA, MEGATRON_FULL, MILES_LORA])
-def test_saved_metadata_keeps_its_shape(saved) -> None:
+@pytest.mark.parametrize(
+    "saved", [MEGATRON_LORA, MEGATRON_FULL, MILES_LORA, MILES_NATIVE_LORA]
+)
+def test_saved_metadata_keeps_its_shape(saved: dict[str, object]) -> None:
     assert CheckpointMetadata.parse(saved).to_json() == saved
 
 
@@ -65,7 +75,9 @@ def test_unknown_fields_from_newer_writers_are_ignored() -> None:
         ),
     ],
 )
-def test_invalid_metadata_names_the_problem(changes, message) -> None:
+def test_invalid_metadata_names_the_problem(
+    changes: dict[str, object], message: str
+) -> None:
     with pytest.raises(ValueError, match="invalid checkpoint metadata") as error:
         CheckpointMetadata.parse({**MEGATRON_LORA, **changes})
 

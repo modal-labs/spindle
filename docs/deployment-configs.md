@@ -113,7 +113,11 @@ Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, 
 
 ### Images
 
-`trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1 and v0.1.2.
+`trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1 (the default), v0.1.2 (`miles-v0.1.2`), and v0.2.0 (`miles-v0.2.0`).
+
+`miles-v0.2.0` supports single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying it with more than one trainer node or with `raw` is rejected. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
+
+A checkpoint restores only on a trainer with the same Miles revision as the one that saved it, so keep the original image to restore older checkpoints after switching images.
 
 ## Prepare and launch
 
@@ -181,7 +185,7 @@ class Config(Parent):
 config = Config()
 ```
 
-Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Modal accepts the option only on clustered functions, so other trainers and inference pools are unaffected.
+Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Modal accepts the option only on clustered functions, so other trainers and inference pools are unaffected. To turn it on for every recipe you load, set `SPINDLE_EXCLUDE_RESERVED_CAPACITY=1` in the environment that runs `spindle deploy` or builds recipes.
 
 The frontend's URL is `https://<workspace>-<environment>--<frontend>-server.modal.run`. To choose the part after `--`, set `"platform.url_label"`; for example `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. Changing the label changes the URL clients use.
 

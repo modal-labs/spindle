@@ -25,6 +25,7 @@ class CheckpointLoraConfig(_Frozen):
     train_attn: bool
     train_mlp: bool
     train_unembed: bool
+    target_modules: list[str] | None = None
 
 
 class MilesTopology(_Frozen):
