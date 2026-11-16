@@ -1,7 +1,7 @@
 """Megatron's Mamba mixer restarts its convolution and state at each packed
 sequence only when PackedSeqParams carries seq_idx, which it derives from
-total_tokens. Miles leaves total_tokens unset, so every row after the first in
-a micro-batch continues from the previous row's state.
+total_tokens. Miles before v0.2.0 leaves total_tokens unset, so every row after
+the first in a micro-batch continues from the previous row's state.
 """
 
 from __future__ import annotations
