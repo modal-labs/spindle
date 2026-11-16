@@ -63,12 +63,11 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
 
-## Speculative inference
+## Spec decoding
 
-The bundled speculative recipes below can increase inference tokens per second (TPS); benchmark them at your intended request concurrency.
-Monitor RL stability by comparing rewards, KL divergence, and sampling-versus-training log-probability mismatch against a run without speculative decoding.
+We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 
 
-Bundled LoRA recipes enable speculative decoding with these checkpoints:
+Currently we have LoRA training recipes with validated draft models as the following configs: 
 
 | Recipe | Method | Draft checkpoint |
 | --- | --- | --- |
