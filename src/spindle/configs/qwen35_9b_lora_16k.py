@@ -37,12 +37,12 @@ class Config(BaseConfig):
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
     }
     trainer_max_clients_per_instance = 6
-    inference_gpu = "H200"
+    inference_gpu = ["B200", "H200"]
     sglang_cfg = {
         "tp_size": 1,
         "mem_fraction_static": 0.8,
-        "max_running_requests": 32,
-        "max_queued_requests": 8,
+        "max_running_requests": 128,
+        "max_queued_requests": 128,
         "max_loaded_loras": 64,
         "max_loras_per_batch": 8,
     }

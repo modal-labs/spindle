@@ -1,6 +1,10 @@
+import io
 from unittest.mock import Mock, patch
 
+import pytest
+
 from spindle.inference.serving import (
+    sglang_busy,
     start_fft_sidecar,
     start_sglang,
     supervise_children,
@@ -81,3 +85,29 @@ def test_fft_sidecar_receives_store_scope() -> None:
     command = popen.call_args.args[0]
     assert command[command.index("--run-id") + 1] == "run-a"
     assert command[command.index("--pinned-version") + 1] == "7"
+
+
+def metrics(running: float, queued: float, finished: float) -> io.BytesIO:
+    return io.BytesIO(
+        f"""# TYPE sglang:num_running_reqs gauge
+sglang:num_running_reqs{{dp_rank="0"}} {running}
+sglang:num_running_reqs 0.0
+sglang:num_queue_reqs{{dp_rank="0"}} {queued}
+sglang:num_requests_total{{dp_rank="0",is_streaming="false"}} {finished}
+""".encode()
+    )
+
+
+def test_sglang_counts_running_queued_and_just_finished_requests_as_busy() -> None:
+    pages = [metrics(0, 0, 4), metrics(2, 0, 4), metrics(0, 0, 6), metrics(0, 3, 6)]
+    busy = sglang_busy(8001)
+    with patch("urllib.request.urlopen", side_effect=[*pages, metrics(0, 0, 6)]):
+        assert [busy() for _ in range(5)] == [False, True, True, True, False]
+
+
+def test_sglang_without_request_metrics_is_an_error_not_idle() -> None:
+    with (
+        patch("urllib.request.urlopen", return_value=io.BytesIO(b"other 1\n")),
+        pytest.raises(ValueError, match="num_running_reqs"),
+    ):
+        sglang_busy(8001)()

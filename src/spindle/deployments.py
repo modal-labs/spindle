@@ -47,6 +47,9 @@ def _validate_recipe(recipe: BaseConfig) -> None:
                 raise ValueError(
                     f"{field} must be a string or non-empty array of strings"
                 )
+        elif field in {"inference_target_concurrency", "inference_scaleup_window_s"}:
+            if value is not None and (type(value) is not int or value < 1):
+                raise ValueError(f"{field} must be a positive integer or None")
         elif isinstance(default, bool):
             if not isinstance(value, bool):
                 raise ValueError(f"{field} must be boolean")
@@ -200,6 +203,7 @@ class DeploymentConfig(BaseModel):
             recipe.trainer_gpu,
             recipe.trainer_gpus_per_node,
             recipe.trainer_nodes,
+            recipe.trainer_rdma,
             recipe.trainer_cpu,
             recipe.trainer_memory_mib,
             recipe.trainer_disk_mib,
@@ -223,6 +227,7 @@ class DeploymentConfig(BaseModel):
             recipe.parameterization,
             recipe.max_context_length,
             recipe.sglang_cfg,
+            recipe.inference_image,
             recipe.inference_gpu,
             recipe.inference_gpus_per_node,
             recipe.inference_cpu,
@@ -231,6 +236,7 @@ class DeploymentConfig(BaseModel):
             recipe.inference_min_replicas,
             recipe.inference_max_replicas,
             recipe.inference_target_concurrency,
+            recipe.inference_scaleup_window_s,
             recipe.inference_scaledown_window_s,
             recipe.inference_startup_timeout_s,
             recipe.inference_env,
