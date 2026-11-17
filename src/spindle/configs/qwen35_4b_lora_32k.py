@@ -4,7 +4,7 @@ from spindle.configs._qwen35_lora_32k import Qwen35Lora32k as Parent
 class Config(Parent):
     name = "qwen35-4b-lora-32k"
     trainer_image = "miles-v0.1.1-fdd808c"
-    inference_image = "sglang-v0.5.23-c4182b2"
+    inference_image = "sglang-v0.5.23-803bccb"
     model = "Qwen/Qwen3.5-4B"
     trainer_gpu = "B200"
     inference_gpu = "B200"

@@ -160,9 +160,9 @@ def _datum(tokens, final_token) -> Datum:
     )
 
 
-def _backend(tmp_path, runtime=None) -> MilesCommandBackend:
+def _backend(tmp_path, runtime=None, **overrides) -> MilesCommandBackend:
     return MilesCommandBackend(
-        _config(),
+        _config(**overrides),
         checkpoint_dir=tmp_path / "checkpoints",
         capture_dir=tmp_path / "captures",
         base_model="Qwen/Qwen3-4B",
@@ -587,6 +587,56 @@ def test_checkpoint_restore_rejects_different_lora_targets(
 
     with pytest.raises(ValueError, match="LoRA targets"):
         backend.load_checkpoint("model-a", str(uri))
+
+
+GDN_TARGETS = (
+    "linear_qkv",
+    "linear_proj",
+    "linear_fc1",
+    "linear_fc2",
+    "output_layer",
+    "in_proj_qkv",
+    "in_proj_z",
+    "in_proj_b",
+    "in_proj_a",
+    "out_proj",
+)
+
+
+@pytest.mark.parametrize(
+    "saved_modules, deployment_modules, accepted",
+    [
+        (None, None, True),
+        (None, GDN_TARGETS, False),
+        (list(GDN_TARGETS), None, False),
+        (list(reversed(GDN_TARGETS)), GDN_TARGETS, True),
+    ],
+)
+def test_checkpoint_restore_checks_target_modules(
+    tmp_path, saved_modules, deployment_modules, accepted
+) -> None:
+    source = _backend(tmp_path / "source")
+    source.accept_model("model-a", _spec())
+    source.capture_checkpoint(
+        "model-a", "capture-a", destination="step-1", include_optimizer=False
+    )
+    uri = Path(source.persist_checkpoint("capture-a", "step-1"))
+    metadata = json.loads((uri / "metadata.json").read_text())
+    if saved_modules is None:
+        del metadata["lora_config"]["target_modules"]
+    else:
+        metadata["lora_config"]["target_modules"] = saved_modules
+    overrides = (
+        {} if deployment_modules is None else {"target_modules": deployment_modules}
+    )
+    target = _backend(tmp_path / "target", **overrides)
+    target.accept_model("model-a", _spec())
+
+    if accepted:
+        target._validate_checkpoint(metadata, target.jobs["model-a"], False)
+    else:
+        with pytest.raises(ValueError, match="target_modules do not match"):
+            target._validate_checkpoint(metadata, target.jobs["model-a"], False)
 
 
 def test_checkpoint_topology_defaults_legacy_data_parallel_size(tmp_path) -> None:

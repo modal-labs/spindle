@@ -37,10 +37,13 @@ except ImportError:
 
 from . import (
     allgather_cp_lora,
+    expert_grouped_gemm,
     expert_lora_compat,
+    gradient_accumulation,
     host_syncs,
     mamba_packing,
     moe_permute,
+    response_logits,
 )
 from .actor_shared import (
     ProfiledActor,
@@ -61,6 +64,7 @@ except ImportError as error:
 if tinker_cp is not None:
     tinker_cp.install()
 
+gradient_accumulation.install(lora_model)
 install_replay_patches(
     megatron_model=megatron_model,
     lora_model=lora_model,
@@ -78,6 +82,8 @@ host_syncs.install()
 allgather_cp_lora.install(megatron_model)
 mamba_packing.install(megatron_model)
 moe_permute.install()
+response_logits.install(logit_processors)
+expert_grouped_gemm.install()
 
 
 def _publish_checkpoints_across_nodes() -> None:

@@ -63,11 +63,52 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
 
+### Older Qwen3.5 LoRA checkpoints
+
+The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers. A checkpoint saved by these recipes before that change has no adapters for those layers, so loading it fails with `checkpoint LoRA target_modules do not match the deployment`.
+
+To keep training or sampling from such a checkpoint, deploy a variant with the old target list and the old sampler image:
+
+```python
+from spindle.configs.qwen35_4b_lora_32k import Config as Parent
+
+
+class Config(Parent):
+    name = "qwen35-4b-lora-32k-attn-only"
+    inference_image = "sglang-v0.5.23-c4182b2"
+    overrides = {
+        **Parent.overrides,
+        "miles_cfg.target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",
+        ],
+    }
+
+
+config = Config()
+```
+
+Use the same pattern for the other recipes by changing the parent and `name`. On a running server, add it with `spindle add`.
+
+A checkpoint always restores on the config that saved it, so `create_training_client_from_state` still sends an old checkpoint to the updated recipe. Load it into the variant instead:
+
+1. Create a training client with `base_model` set to the variant's name, and the same rank as the checkpoint.
+2. Call `load_state` or `load_state_with_optimizer` with the old checkpoint path.
+3. To sample from it, call `save_weights_for_sampler` on that client and use the new sampler path. Sampler paths saved before the change also route to the updated recipe.
+
+To train the linear-attention layers, start a new run on the bundled recipe. An old checkpoint can't be extended with the new adapters.
+
 ## Spec decoding
 
 We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 
 
-The following 32K LoRA recipes enable speculative decoding by default:
+The following LoRA recipes enable speculative decoding by default:
 
 | Recipe | Method | Draft checkpoint |
 | --- | --- | --- |
@@ -76,6 +117,7 @@ The following 32K LoRA recipes enable speculative decoding by default:
 | `qwen35-9b-instruct-lora-32k` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
 | `qwen38-27b-lora-32k` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
 | `glm53-flash-lora-32k` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |
+| `nemotron35-lightning-30b-a3b-lora-64k` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
 
 Deploy a recipe by passing its Python path to `spindle deploy`, for example:
 
@@ -141,7 +183,7 @@ Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, 
 
 ### Images
 
-`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53`, `miles-v0.2.0-15afe21` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2` and `sglang-v0.5.23-c4182b2-glm53` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. Use a `module:attribute` path for an image you define in your own code.
+`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53`, `miles-v0.2.0-15afe21` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2`, `sglang-v0.5.23-c4182b2-glm53` and `sglang-v0.5.23-803bccb` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. Use a `module:attribute` path for an image you define in your own code.
 
 Every bundled config sets both images itself rather than inheriting them, so upgrading SGLang or Miles for one config doesn't change any other. If you leave a field empty in your own config, it uses the backend default (`miles-v0.1.1-fdd808c`, `megatron-2d1fa8d` or `sglang-v0.5.23-c4182b2`), and that default can change in a later Spindle release. Set both fields to keep a config on the images it was tested with.
 
