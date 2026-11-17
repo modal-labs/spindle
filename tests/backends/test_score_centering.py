@@ -118,7 +118,7 @@ def test_packing_context_partition_and_dummy_padding_preserve_support():
     permuted = logits.detach()[order].requires_grad_()
     native_loss(permuted, selected).backward()
     torch.testing.assert_close(permuted.grad, expected[order])
-    (dummy,) = pad_microbatches([], 1, source=batch)
+    (dummy,) = pad_microbatches([], 1, source=batch, dummy_tokens=4)
     dummy_logits = logits.detach().clone().requires_grad_()
     native_loss(dummy_logits, dummy).backward()
     assert torch.count_nonzero(dummy_logits.grad) == 0

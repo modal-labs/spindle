@@ -128,8 +128,7 @@ def _loss_config(loss_name: str, config: dict[str, float]) -> dict[str, float]:
     return values
 
 
-# Length of the no-loss micro-batch a data-parallel rank runs when it has
-# fewer packed micro-batches than its peers.
+# Length of the no-loss micro-batch that pads a rank with fewer micro-batches.
 DUMMY_TOKENS = 128
 
 RL_LOSSES = frozenset(
@@ -412,7 +411,9 @@ def _short_dummy(source: dict[str, Any], tokens: int) -> dict[str, Any]:
         "tokens": torch.zeros(tokens, dtype=source["tokens"].dtype),
         "labels": torch.full((tokens,), -100, dtype=source["labels"].dtype),
         "loss_mask": torch.zeros(tokens, dtype=source["loss_mask"].dtype),
-        "sampling_logprobs": torch.zeros(tokens, dtype=source["sampling_logprobs"].dtype),
+        "sampling_logprobs": torch.zeros(
+            tokens, dtype=source["sampling_logprobs"].dtype
+        ),
         "advantages": torch.zeros(tokens, dtype=source["advantages"].dtype),
         "position_ids": torch.arange(tokens),
         "token_indices": torch.arange(tokens),
@@ -428,24 +429,49 @@ def _short_dummy(source: dict[str, Any], tokens: int) -> dict[str, Any]:
     return dummy
 
 
-def balance_sequences(
-    sequences: list[dict[str, Any]],
+def balance_by_tokens(
+    items: list[dict[str, Any]],
     data_parallel_size: int,
 ) -> list[list[dict[str, Any]]]:
-    """Split sequences across data-parallel ranks with near-equal token counts.
+    """Split items across data-parallel ranks with near-equal token counts.
 
     Longest first, each to the rank with the fewest tokens so far. Every rank
     computes the same split, so no communication is needed.
     """
     groups: list[list[dict[str, Any]]] = [[] for _ in range(data_parallel_size)]
     loads = [0] * data_parallel_size
-    for sequence in sorted(
-        sequences, key=lambda item: int(item["tokens"].numel()), reverse=True
+    for item in sorted(
+        items, key=lambda item: int(item["tokens"].numel()), reverse=True
     ):
         rank = loads.index(min(loads))
-        groups[rank].append(sequence)
-        loads[rank] += int(sequence["tokens"].numel())
+        groups[rank].append(item)
+        loads[rank] += int(item["tokens"].numel())
     return groups
+
+
+def assign_microbatches(
+    sequences: list[dict[str, Any]],
+    data_parallel_size: int,
+    pack,
+) -> list[list[dict[str, Any]]]:
+    """Pack sequences into each data-parallel rank's micro-batches.
+
+    Balancing sequences before packing evens out ranks best, but can need an
+    extra micro-batch when the batch nearly fills every rank; balancing packed
+    bins never does. Keep whichever plan has the lighter busiest rank.
+    """
+
+    def cost(groups):
+        return (
+            max(sum(int(mb["tokens"].numel()) for mb in group) for group in groups),
+            max(len(group) for group in groups),
+        )
+
+    by_sequence = [
+        pack(group) for group in balance_by_tokens(sequences, data_parallel_size)
+    ]
+    by_bin = balance_by_tokens(pack(sequences), data_parallel_size)
+    return min(by_sequence, by_bin, key=cost)
 
 
 def pad_microbatches(
@@ -453,18 +479,15 @@ def pad_microbatches(
     count: int,
     *,
     source: dict[str, Any],
-    dummy_tokens: int | None = None,
+    dummy_tokens: int,
 ) -> list[dict[str, Any]]:
-    """Pad a rank's micro-batches to ``count`` with dummies that carry no loss.
-
-    With ``dummy_tokens`` a dummy is that many tokens long instead of a full
-    copy of ``source``, so a rank with less work does not repeat a packed batch.
-    """
+    """Pad a rank's micro-batches to ``count`` with dummies that carry no loss."""
     local = list(local)
     while len(local) < count:
-        if dummy_tokens is not None and "sampling_mask_offsets" not in source:
+        if "sampling_mask_offsets" not in source:
             local.append(_short_dummy(source, dummy_tokens))
             continue
+        # Replay losses index the support tensors per token, so copy a real batch.
         dummy = {
             key: value.clone() if torch.is_tensor(value) else value
             for key, value in source.items()
@@ -928,19 +951,17 @@ def prepare_microbatches(
     data_parallel_size = parallel_state.get_data_parallel_world_size(
         with_context_parallel=False,
     )
-    groups = [
-        pack_microbatches(
-            group,
+    groups = assign_microbatches(
+        sequences,
+        data_parallel_size,
+        lambda items: pack_microbatches(
+            items,
             max_tokens=token_capacity,
             pad_to_multiple=pad_to_multiple,
             total_pad_to_multiple=config.sequence_padding_multiple(),
-        )
-        if group
-        else []
-        for group in balance_sequences(sequences, data_parallel_size)
-    ]
+        ),
+    )
     packed = [microbatch for group in groups for microbatch in group]
-    dummy_unit = math.lcm(pad_to_multiple, config.sequence_padding_multiple())
     packing_metrics = log_packing(
         batch,
         packed,
@@ -949,15 +970,14 @@ def prepare_microbatches(
         token_capacity=token_capacity,
         rank=rank,
     )
-    local = groups[
-        parallel_state.get_data_parallel_rank(with_context_parallel=False)
-    ]
+    unit = config.sequence_padding_multiple()
+    local = groups[parallel_state.get_data_parallel_rank(with_context_parallel=False)]
     return (
         pad_microbatches(
             local,
             max(len(group) for group in groups),
             source=packed[0],
-            dummy_tokens=dummy_unit * math.ceil(DUMMY_TOKENS / dummy_unit),
+            dummy_tokens=unit * math.ceil(DUMMY_TOKENS / unit),
         ),
         packing_metrics,
     )
