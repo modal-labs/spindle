@@ -3,6 +3,8 @@ from spindle.configs.qwen38_27b_lora_16k_b200 import Config as Parent
 
 class Config(Parent):
     name = "qwen38-27b-lora-32k"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
     max_context_length = 32768
     inference_gpus_per_node = 2
     inference_cpu = 64

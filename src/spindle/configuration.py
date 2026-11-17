@@ -54,7 +54,7 @@ class BaseConfig:
     trainer_env = {}
     # A built-in trainer image name or module:attribute; empty uses the default.
     trainer_image = ""
-    # Optional module:attribute for a model-specific sampler image.
+    # A built-in sampler image name or module:attribute; empty uses the default.
     inference_image = ""
     sampler_persistence_concurrency = 8
 

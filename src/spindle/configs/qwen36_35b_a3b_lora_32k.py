@@ -3,6 +3,8 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "qwen36-35b-a3b-lora-32k"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "Qwen/Qwen3.6-35B-A3B"
     max_context_length = 32768
     trainer_gpu = ["H200", "B300", "B200"]

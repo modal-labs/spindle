@@ -3,6 +3,8 @@ from spindle.configs.nemotron3_nano_30b_a3b_lora_64k import Config as Parent
 
 class Config(Parent):
     name = "nemotron3-ultra-550b-a55b-lora-64k"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
     trainer_gpu = "B300"
     trainer_nodes = 2

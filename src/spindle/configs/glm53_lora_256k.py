@@ -3,6 +3,8 @@ from spindle.configs.deepseek_v31_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "glm53-lora-256k"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "zai-org/GLM-5.3"
     max_context_length = 262144
     trainer_gpu = "B300"
