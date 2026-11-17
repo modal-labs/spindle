@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 
+SGLANG_ENV = {"SGLANG_RETURN_ORIGINAL_LOGPROB": "1"}
+
 
 def start_sglang(
     model_path: str,

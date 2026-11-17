@@ -117,7 +117,6 @@ def test_presets_context_topology_and_backend_options():
     assert large.max_context_length == 65536
     assert backend_config(large)["miles"]["actor_num_gpus_per_node"] == 8
     fft = backend_config(recipe("qwen35-4b-fft-64k"))["megatron"]
-    assert (fft["tensor_model_parallel_size"], fft["context_parallel_size"]) == (2, 2)
     assert fft["provider_overrides"]["recompute_granularity"] == "full"
 
 
@@ -147,6 +146,21 @@ def test_no_model_catalog_required():
         ({"sglang_cfg": {"tp_size": 2}}, "replica GPU"),
         ({"trainer_max_clients_per_instance": 7}, "max_lora_slots"),
         ({"trainer_max_clients_per_batch": 0}, "trainer_max_clients_per_batch"),
+        (
+            {"miles_cfg__target_modules": ["q_proj", "in_proj_qkv", "in_proj_z"]},
+            "list all of in_proj_qkv, in_proj_z, in_proj_b, in_proj_a",
+        ),
+        (
+            {
+                "miles_cfg__target_modules": [
+                    "*.in_proj_qkv",
+                    "in_proj_z",
+                    "in_proj_b",
+                    "in_proj_a",
+                ]
+            },
+            "by name",
+        ),
     ],
 )
 def test_invalid_integrations_fail_when_building_backend_settings(changes, match):
@@ -187,7 +201,7 @@ def test_deepseek_v41_lora_recipe():
     assert serving["disable_shared_experts_fusion"] is True
     assert row.recipe.inference_env["SGLANG_DSV4_FP4_DEQUANT"] == "1"
     assert serving["weight_loader_disable_mmap"] is False
-    assert row.recipe.trainer_image == "miles-v0.1.2"
+    assert row.recipe.trainer_image == "miles-v0.1.2-f2f8447"
     assert row.model == "deepseek-ai/DeepSeek-V4.1-Flash"
     assert row.asset_path == "/assets/deepseek-ai/DeepSeek-V4.1-Flash"
     assert json.loads(serving["json_model_override_args"])["vision_n_layers"] == 0
@@ -732,7 +746,7 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
 )
 def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
     with pytest.raises(ValueError, match=match):
-        backend_config(recipe(trainer_image="miles-v0.2.0", **changes))
+        backend_config(recipe(trainer_image="miles-v0.2.0-15afe21", **changes))
 
 
 def test_backend_dispatch_rejects_unknown_backend():

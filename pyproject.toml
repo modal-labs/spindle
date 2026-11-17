@@ -35,6 +35,9 @@ spindle = ["skills/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: waits on real retry backoffs or timeouts; skipped on pull requests, run on main and nightly",
+]
 
 [tool.setuptools.data-files]
 "share/spindle/router" = ["rust/router/Cargo.toml", "rust/router/Cargo.lock", "rust/router/pyproject.toml"]
@@ -324,12 +327,22 @@ not-subscriptable = "ignore"
 redundant-condition = "ignore"
 unsupported-operator = "ignore"
 
+# These ignores apply only once torch or the pinned Miles is installed.
+[[tool.ty.overrides]]
+include = [
+    "src/spindle/backends/miles_runtime/actor.py",
+    "src/spindle/backends/miles_runtime/targets.py",
+    "src/spindle/backends/score_centering.py",
+]
+rules = { unused-ignore-comment = "ignore" }
+
 [dependency-groups]
 dev = [
     "matplotlib>=3.10",
     "jinja2>=3.1.6",
     "pre-commit>=4.5.1",
     "pytest>=9.1.1",
+    "pytest-xdist>=3.8",
     "ruff==0.16.6",
     "ty==0.0.100",
 ]

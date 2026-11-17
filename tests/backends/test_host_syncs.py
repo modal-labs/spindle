@@ -207,6 +207,9 @@ def _fake_layers():
             self.alpha_values[idx] = 0
             self.rank_values[idx] = RANK
 
+        def forward(self, x):
+            raise NotImplementedError
+
     class MultiLoRAGroupedExpertLinear(MultiLoRALinear):
         pass
 

@@ -3,16 +3,18 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "qwen36-27b-fft-64k"
+    trainer_image = "megatron-2d1fa8d"
+    inference_image = "sglang-v0.5.23-c4182b2"
     parameterization = "full"
     model = "Qwen/Qwen3.6-27B"
     max_context_length = 65536
-    trainer_gpu = "H200"
+    trainer_gpu = "B300"
     trainer_gpus_per_node = 8
     backend = "megatron"
     megatron_cfg = {
-        "tensor_model_parallel_size": 4,
+        "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 1,
-        "context_parallel_size": 2,
+        "context_parallel_size": 1,
         "sequence_parallel": True,
         "micro_batch_size": 1,
         "max_tokens_per_microbatch": 65536,

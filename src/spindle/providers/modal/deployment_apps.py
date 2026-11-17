@@ -20,6 +20,7 @@ from modal.config import config
 
 from spindle.deployments import DeploymentConfig
 from spindle.inference.serving import (
+    SGLANG_ENV,
     sglang_busy,
     start_fft_sidecar,
     start_lora_sidecar,
@@ -31,9 +32,12 @@ from spindle.startup_timing import SAMPLER_COMPONENT, TRAINER_COMPONENT, timelin
 from spindle.usage import ContainerUsage, poll_busy
 
 from .app_tags import app_tags
+from .deepseek_v41_image import inference_image as deepseek_v41_sampler_image
 from .deployment import trainer_deployment_env
 from .fft_pool import FFTPoolSpec
 from .fft_pool import deploy_pool as deploy_fft
+from .glm53_image import inference_image as glm53_sampler_image
+from .glm53_trainer_image import image as glm53_trainer_image
 from .image_dependencies import (
     CORE_PACKAGES,
     STITCH_PACKAGE,
@@ -53,29 +57,48 @@ from .miles_v012_image import image as miles_v012_image
 from .miles_v020_image import image as miles_v020_image
 from .miles_image import image as miles_image
 from .ray_cluster import start_trainer_cluster
+from .rollout_image import gdn_lora_image as gdn_lora_sampler_image
 from .rollout_image import image as rollout_image
 from .serve import run_engine_with_backend
 from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
-
-TRAINER_IMAGES = {"miles-v0.1.2": miles_v012_image, "miles-v0.2.0": miles_v020_image}
+# Named images are frozen: add a new name instead of editing one. See docs/deployment-configs.md#images.
+TRAINER_IMAGES = {
+    "miles-v0.1.1-fdd808c": miles_image,
+    "miles-v0.1.2-f2f8447": miles_v012_image,
+    "miles-v0.1.2-464efc9-glm53": glm53_trainer_image,
+    "miles-v0.2.0-15afe21": miles_v020_image,
+    "megatron-2d1fa8d": megatron_image,
+}
+SAMPLER_IMAGES = {
+    "sglang-v0.5.21-a3e0e17": deepseek_v41_sampler_image,
+    "sglang-v0.5.23-c4182b2": rollout_image,
+    "sglang-v0.5.23-c4182b2-glm53": glm53_sampler_image,
+    "sglang-v0.5.23-803bccb": gdn_lora_sampler_image,
+}
+# Used only by configs that leave trainer_image or inference_image empty.
+DEFAULT_IMAGES = {
+    "miles": "miles-v0.1.1-fdd808c",
+    "megatron": "megatron-2d1fa8d",
+    "sglang": "sglang-v0.5.23-c4182b2",
+}
 
 
 def image_for(backend, name=""):
     if not modal.is_local():
         return modal.Image.debian_slim()
-    if name:
-        if ":" in name:
-            module, attribute = name.rsplit(":", 1)
-            return getattr(importlib.import_module(module), attribute)
-        if name not in TRAINER_IMAGES:
-            raise ValueError(
-                f"unknown trainer image {name!r}; choose from {sorted(TRAINER_IMAGES)}"
-            )
-        return TRAINER_IMAGES[name]
-    return {"miles": miles_image, "megatron": megatron_image, "sglang": rollout_image}[
-        backend
-    ]
+    if ":" in name:
+        module, attribute = name.rsplit(":", 1)
+        return getattr(importlib.import_module(module), attribute)
+    kind, images = (
+        ("sampler", SAMPLER_IMAGES)
+        if backend == "sglang"
+        else ("trainer", TRAINER_IMAGES)
+    )
+    name = name or DEFAULT_IMAGES[backend]
+    if name not in images:
+        raise ValueError(f"unknown {kind} image {name!r}; choose from {sorted(images)}")
+    return images[name]
 
 
 def build_sampler_image(frontend, environment, images=("",)):
@@ -331,8 +354,9 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         volumes=volumes_for(platform),
         secrets=secrets_for(platform),
         env=deployment_env(
+            SGLANG_ENV
             # Split-K speeds up decode-sized LoRA batches on H200 and B200.
-            ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
+            | ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
             | recipe.inference_env
             | (
                 {

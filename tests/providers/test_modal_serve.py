@@ -11,6 +11,7 @@ from spindle.engine.backend_http import HttpBackendClient
 from spindle.providers.modal import serve
 
 
+@pytest.mark.slow
 def test_backend_socket_serves_commands_and_is_removed_on_exit(monkeypatch):
     paths = []
     popen = serve.subprocess.Popen
@@ -44,6 +45,7 @@ def test_backend_socket_serves_commands_and_is_removed_on_exit(monkeypatch):
     assert not paths[0].exists()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("error_type", [httpx.ReadError, httpx.ReadTimeout])
 def test_backend_transport_failure_terminates_ranks_and_exits_engine(
     monkeypatch, error_type

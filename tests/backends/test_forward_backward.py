@@ -8,14 +8,18 @@ from tinker import Datum, ModelInput
 torch = pytest.importorskip("torch")
 
 from spindle.backends import ForwardBatch, ForwardItem, LossFn  # noqa: E402
+from spindle.backends.megatron_runtime.common.config import EngineModelConfig  # noqa: E402
 from spindle.backends.megatron_runtime.common.forward_backward import (  # noqa: E402
     _loss,
     _loss_config,
     _packed_seq_idx,
     _vocab_parallel_logprobs,
+    assign_microbatches,
+    balance_by_tokens,
     log_packing,
     pack_microbatches,
-    shard_microbatches,
+    pad_microbatches,
+    prepare_microbatches,
 )
 from spindle.backends.megatron_runtime.common.forward_backward import (  # noqa: E402
     build_sequence_batches as build_microbatches,
@@ -421,7 +425,7 @@ def test_pack_microbatches_tracks_short_cp_sequences(length: int) -> None:
         ]
 
 
-def test_shard_microbatches_marks_packed_padding_dummy() -> None:
+def test_pad_microbatches_marks_packed_padding_dummy() -> None:
     packed = pack_microbatches(
         build_microbatches(
             packed_batch(3, 2),
@@ -433,15 +437,77 @@ def test_shard_microbatches_marks_packed_padding_dummy() -> None:
         pad_to_multiple=1,
     )
 
-    local = shard_microbatches(
-        packed,
-        data_parallel_rank=1,
-        data_parallel_size=2,
-    )
+    (short,) = pad_microbatches([], 1, source=packed[0], dummy_tokens=4)
+    assert short["is_dummy"] == (True,)
+    assert short["tokens"].numel() == 4
+    assert short["cu_seqlens"].tolist() == [0, 4]
+    assert short["loss_mask"].count_nonzero().item() == 0
+    assert short["adapter_token_counts"].sum().item() == 4
 
-    assert local[0]["output_indices"] == (-1, -1)
-    assert local[0]["is_dummy"] == (True, True)
-    assert local[0]["loss_mask"].count_nonzero().item() == 0
+
+def test_balance_by_tokens_evens_tokens_across_ranks() -> None:
+    sequences = [{"tokens": torch.zeros(n)} for n in (40, 30, 30, 20, 10, 10)]
+    groups = balance_by_tokens(sequences, 2)
+    assert [sum(int(s["tokens"].numel()) for s in g) for g in groups] == [70, 70]
+    assert balance_by_tokens(sequences[:1], 3)[1:] == [[], []]
+
+
+def test_assign_microbatches_keeps_bin_plan_when_batch_nearly_fills_ranks() -> None:
+    # Balancing sequences gives 190 tokens per rank but three micro-batches on one.
+    sequences = build_microbatches(
+        packed_batch(100, 80, 80, 70, 30, 20),
+        {"model-a": 0},
+        max_slots=1,
+        max_seq_length=100,
+    )
+    groups = assign_microbatches(
+        sequences,
+        2,
+        lambda items: pack_microbatches(items, max_tokens=100, pad_to_multiple=1),
+    )
+    assert [len(group) for group in groups] == [2, 2]
+
+
+def test_prepare_microbatches_splits_work_across_context_parallel_ranks(
+    monkeypatch,
+) -> None:
+    config = EngineModelConfig(
+        hf_checkpoint="model",
+        tensor_model_parallel_size=2,
+        context_parallel_size=2,
+        sequence_parallel=True,
+        max_tokens_per_microbatch=64,
+        seq_length=64,
+    )
+    batch = packed_batch(50, 50, 50, 50, 37, 21, 9, 3)
+    state = SimpleNamespace(
+        get_context_parallel_world_size=lambda: 2,
+        get_data_parallel_world_size=lambda with_context_parallel: 4,
+    )
+    core = ModuleType("megatron.core")
+    core.parallel_state = state
+    monkeypatch.setitem(sys.modules, "megatron", ModuleType("megatron"))
+    monkeypatch.setitem(sys.modules, "megatron.core", core)
+
+    owners = {}
+    counts = set()
+    dummies = 0
+    for rank in range(4):
+        state.get_data_parallel_rank = lambda with_context_parallel, rank=rank: rank
+        local, _ = prepare_microbatches(batch, None, config=config, rank=rank)
+        counts.add(len(local))
+        for microbatch in local:
+            assert (
+                microbatch["tokens"].numel() % config.sequence_padding_multiple() == 0
+            )
+            dummies += all(microbatch["is_dummy"])
+            for job, index in zip(microbatch["job_ids"], microbatch["output_indices"]):
+                if index >= 0:
+                    assert (job, index) not in owners
+                    owners[job, index] = rank
+    assert counts == {2}
+    assert dummies == 2
+    assert sorted(owners) == [(0, index) for index in range(8)]
 
 
 @pytest.mark.parametrize(

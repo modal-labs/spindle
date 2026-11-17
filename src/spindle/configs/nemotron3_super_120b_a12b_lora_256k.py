@@ -3,6 +3,8 @@ from spindle.configs.nemotron3_super_120b_a12b_lora_64k_b300 import Config as Pa
 
 class Config(Parent):
     name = "nemotron3-super-120b-a12b-lora-256k"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
     max_context_length = 262144
     trainer_gpu = "H200"
     trainer_nodes = 2
