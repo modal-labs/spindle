@@ -385,7 +385,7 @@ def test_default_unembed_request_is_frozen_without_an_unembed_target(tmp_path) -
         parameterization="lora",
         lora_config=LoraConfig(rank=8, train_mlp=False),
     )
-    with pytest.raises(ValueError, match="must match the deployment"):
+    with pytest.raises(ValueError, match="create the model with matching settings"):
         backend.accept_model("model-b", no_mlp)
 
 

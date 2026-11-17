@@ -179,8 +179,7 @@ def run_case(tp, cp, tp_rank, cp_rank, dtype, final_only, widths):
     native_loss.backward()
     torch.testing.assert_close(loss, native_loss, rtol=2e-5, atol=2e-4)
     # Shared-softmax scoring keeps FP32 gradients; the native per-column path rounds to BF16.
-    labels = {width for width in widths if width is not None}
-    joint = len(labels) == 1 and (cp == 1 or None not in widths)
+    joint = cp == 1 or None not in widths
     tight, loose = {"rtol": 2e-5, "atol": 2e-6}, {"rtol": 0.02, "atol": 0.008}
     fp32 = dtype == torch.float32
     torch.testing.assert_close(
@@ -237,6 +236,7 @@ def main():
                 (True, (5, None, 1)),
                 (False, (5, None, 1)),
                 (False, (5, 5, 5)),
+                (False, (5, 3, 1)),
                 (False, (5, None, 5)),
             ):
                 result = run_case(
