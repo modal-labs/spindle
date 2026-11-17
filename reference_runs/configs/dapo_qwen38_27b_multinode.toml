@@ -7,8 +7,8 @@ revision = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
 
 [config_overrides]
 name = "dapo-math-qwen38-27b-multinode"
-trainer_gpu = "H200!"
+trainer_gpu = "H200"
 trainer_max_instances = 1
 trainer_max_clients_per_instance = 1
 "miles_cfg.max_lora_slots" = 1
-inference_gpu = "H200!"
+inference_gpu = "H200"
