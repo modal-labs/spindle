@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 
-from spindle.errors import BackendFailed
+from spindle.errors import BackendFailed, TrainerOutOfMemory
 from spindle.request_timing import mark
 from spindle.startup_timing import BACKEND_COMPONENT, StartupTimeline, timeline
 from spindle.telemetry import backend as telemetry
@@ -119,6 +119,8 @@ def create_backend_app(
             response = respond({"error": str(exc)}, status=503)
             response.headers["x-spindle-backend-failed"] = "1"
             return response
+        except TrainerOutOfMemory as exc:
+            return respond({"error": str(exc), "out_of_memory": True}, status=500)
         except Exception as exc:  # noqa: BLE001 - executor errors cross the HTTP boundary
             return respond({"error": str(exc)}, status=500)
 
@@ -376,11 +378,11 @@ class HttpBackendClient:
             if isinstance(evidence, dict):
                 telemetry.received.set(evidence)
         if not response.is_success:
-            message = (
-                body.get("error", response.text)
-                if isinstance(body, dict)
-                else response.text
-            )
+            if not isinstance(body, dict):
+                raise RuntimeError(response.text)
+            message = body.get("error", response.text)
+            if body.get("out_of_memory"):
+                raise TrainerOutOfMemory(message)
             raise RuntimeError(message)
         result = body["result"]
         mark(
