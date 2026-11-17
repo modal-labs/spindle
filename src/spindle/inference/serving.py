@@ -11,6 +11,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Sequence
 
+from .routing_state import RoutingSource
+
 
 def start_sglang(
     model_path: str,
@@ -194,7 +196,7 @@ def start_lora_sidecar(
     sglang_port: int,
     bulletin_root: str,
     bulletin_volume: str,
-    routing_source: str = "hook",
+    routing_source: RoutingSource = "hook",
 ) -> subprocess.Popen:
     command = [
         sys.executable,

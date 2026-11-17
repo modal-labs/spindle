@@ -1,16 +1,17 @@
 import asyncio
 import json
 import time
-from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from stitch.types import VersionRef
 
-import spindle.inference.lora_sidecar as sidecar
+import spindle.inference.routing_state as routing_state
 from spindle.inference.bulletin import SnapshotBulletin
+from spindle.inference.kv_events import KVSnapshot
 from spindle.inference.lora_sidecar import create_app
+from spindle.inference.routing_state import RoutingState
 
 
 @pytest.mark.parametrize(
@@ -33,7 +34,7 @@ def test_routing_source_preserves_user_cache_salt(tmp_path, source):
         routing_source=source,
     )
     with TestClient(app) as client:
-        assert (app.state.kv_events is None) is (source == "hook")
+        assert (app.state.routing_state.subscriber is None) is (source == "hook")
         response = client.post(
             "/generate",
             json={
@@ -69,7 +70,7 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
             }
         )
     )
-    monkeypatch.setattr(sidecar, "ROUTING_CATALOG_PATH", catalog)
+    monkeypatch.setattr(routing_state, "ROUTING_CATALOG_PATH", catalog)
     app = create_app(
         SnapshotBulletin(tmp_path / "bulletin"),
         "http://sglang",
@@ -78,19 +79,22 @@ def test_routing_state_has_router_work_shape_and_compare_summary(
     )
     with TestClient(app) as client:
         if source != "hook":
-            subscriber = app.state.kv_events
-            subscriber.snapshot = (True, time.monotonic(), ("02" * 16, "03" * 16))
-            app.state.loads = {
+            state = app.state.routing_state
+            subscriber = state.subscriber
+            subscriber.snapshot = KVSnapshot(
+                True, time.monotonic(), ("02" * 16, "03" * 16)
+            )
+            state.loads = {
                 "timestamp": time.time(),
                 "num_running_reqs": 3,
                 "num_waiting_reqs": 0,
                 "num_used_tokens": 40,
                 "max_total_num_tokens": 100,
             }
-            app.state.loads_at = time.monotonic()
+            state.loads_at = time.monotonic()
         state = client.get("/routing-state").json()
         if source == "kv_events":
-            assert app.state.routing_read_at == 0.0
+            assert app.state.routing_state.read_at == 0.0
             assert state["work"]["prefixes"] == ["02" * 16, "03" * 16]
         else:
             assert state["work"]["prefixes"] == ["01" * 16, "02" * 16]
@@ -125,11 +129,11 @@ def test_malformed_loads_response_keeps_last_good_snapshot():
                 lambda request: httpx.Response(200, json={"loads": None})
             ),
         )
-        state = SimpleNamespace(
-            client=client, loads={"timestamp": 1}, loads_task=object()
-        )
+        state = RoutingState(client, "kv_events", None, {}, {}, {})
+        state.loads = {"timestamp": 1}
+        state.loads_task = object()
         try:
-            await sidecar.refresh_loads(SimpleNamespace(state=state))
+            await state.refresh_loads()
             assert state.loads == {"timestamp": 1}
             assert state.loads_task is None
         finally:

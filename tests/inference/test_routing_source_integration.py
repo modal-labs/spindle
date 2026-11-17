@@ -21,7 +21,7 @@ import pytest
 import uvicorn
 import xxhash
 
-from spindle.inference import lora_sidecar
+from spindle.inference import lora_sidecar, routing_state
 from spindle.inference.kv_events import KVEventSubscriber
 
 pytest.importorskip("spindle_router")
@@ -88,7 +88,7 @@ def wait_for(check, timeout=5):
 
 def serve_sidecar(replica, port, upstream, source, catalog, endpoint, replay_endpoint):
     os.environ["MODAL_TASK_ID"] = replica
-    lora_sidecar.ROUTING_CATALOG_PATH = Path(catalog)
+    routing_state.ROUTING_CATALOG_PATH = Path(catalog)
     app = lora_sidecar.create_app(
         None,
         upstream,
