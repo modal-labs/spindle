@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 
+import argparse
 import json
 import math
 import os
@@ -21,7 +22,7 @@ def timed[T](label: str, call: Callable[[], T]) -> T:
     return result
 
 
-def main() -> None:
+def main(rank: int, context_length: int) -> None:
     headers = {
         "Modal-Key": os.environ["MODAL_PROXY_TOKEN_ID"],
         "Modal-Secret": os.environ["MODAL_PROXY_TOKEN_SECRET"],
@@ -36,7 +37,7 @@ def main() -> None:
             f"create_adapter_{seed}",
             lambda seed=seed: service.create_lora_training_client(
                 base_model="thinkingmachines/Inkling-2-Small",
-                rank=8,
+                rank=rank,
                 seed=seed,
                 train_mlp=False,
                 train_attn=True,
@@ -104,12 +105,15 @@ def main() -> None:
     assert abs(before_b - after_b) < 1e-5, (before_b, after_b)
     publish_and_sample(a, "inkling-a-trained")
     saved_loss = timed("adapter_a_saved_forward", lambda: loss(a))
+    assert abs(saved_loss - before_b) > 1e-6, (saved_loss, before_b)
     checkpoint = timed("save_state", lambda: a.save_state("inkling-a-state").result())
     timed("adapter_a_mutate_backward", lambda: loss(a, True))
     timed(
         "adapter_a_mutate_step",
         lambda: a.optim_step(types.AdamParams(learning_rate=1e-4)).result(),
     )
+    mutated_loss = timed("adapter_a_mutated_forward", lambda: loss(a))
+    assert abs(mutated_loss - saved_loss) > 1e-6, (mutated_loss, saved_loss)
     timed(
         "restore_state_and_optimizer",
         lambda: a.load_state_with_optimizer(checkpoint.path).result(),
@@ -122,8 +126,43 @@ def main() -> None:
         lambda: b.optim_step(types.AdamParams(learning_rate=1e-4)).result(),
     )
     publish_and_sample(b, "inkling-b-trained")
+    if context_length:
+        long_tokens = (tokens * ((context_length + 1) // len(tokens) + 1))[
+            : context_length + 1
+        ]
+        long_datum = types.Datum(
+            model_input=types.ModelInput.from_ints(long_tokens[:-1]),
+            loss_fn_inputs={
+                "target_tokens": long_tokens[1:],
+                "weights": [1.0] * context_length,
+            },
+        )
+        result = timed(
+            "full_context_backward",
+            lambda: a.forward_backward([long_datum], "cross_entropy").result(),
+        )
+        assert math.isfinite(result.metrics["loss:sum"])
+        timed(
+            "full_context_step",
+            lambda: a.optim_step(types.AdamParams(learning_rate=1e-4)).result(),
+        )
+        sampler = publish_and_sample(a, "inkling-a-full-context")
+        result = timed(
+            "full_context_sample",
+            lambda: sampler.sample(
+                prompt=types.ModelInput.from_ints(long_tokens[: context_length - 1]),
+                num_samples=1,
+                sampling_params=types.SamplingParams(max_tokens=1, temperature=0),
+            ).result(),
+        )
+        assert result.sequences[0].tokens and result.sequences[0].logprobs
+        assert all(math.isfinite(x) for x in result.sequences[0].logprobs)
     print(json.dumps({"status": "passed", "checkpoint": checkpoint.path}), flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--rank", type=int, default=8)
+    parser.add_argument("--context-length", type=int, default=0)
+    args = parser.parse_args()
+    main(args.rank, args.context_length)

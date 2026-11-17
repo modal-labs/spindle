@@ -24,6 +24,9 @@ def test_all_packaged_recipes_validate_offline(path):
     serving_options(spec)
     if spec.parameterization == "lora":
         resolved = DeploymentConfig.create(spec)
+        if resolved.recipe.inference_lora_routing == "cache_wait":
+            assert resolved.inference_settings["max_running_requests"] > 0
+            assert resolved.inference_settings["max_queued_requests"] > 0
         # Legacy Megatron selectors also match vision layers in current Bridge.
         # Samplers match the path after a wildcard as a module-name suffix, and
         # serve the Qwen3.5 linear-attention input projections fused.

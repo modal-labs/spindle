@@ -75,6 +75,7 @@ class Config(BaseConfig):
         "page_size": 128,
         "mem_fraction_static": 0.6,
         "max_running_requests": 16,
+        "max_queued_requests": 16,
         "max_loaded_loras": 4,
         "max_loras_per_batch": 1,
         "lora_backend": "triton",
