@@ -23,6 +23,7 @@ class GroupedTinkerTokenCompleter:
         self.temperature = temperature
         self.context_window = context_window
         self.group_size = group_size
+        self._tasks: set[asyncio.Task[None]] = set()
         self._pending: dict[
             tuple[tuple[int, ...], str, int],
             list[asyncio.Future[TokensWithLogprobs]],
@@ -61,7 +62,7 @@ class GroupedTinkerTokenCompleter:
         waiters = self._pending.setdefault(key, [])
         waiters.append(future)
         if len(waiters) == 1:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._flush(
                     key,
                     model_input,
@@ -69,6 +70,8 @@ class GroupedTinkerTokenCompleter:
                     effective_max_tokens,
                 )
             )
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
         return await future
 
     async def _flush(

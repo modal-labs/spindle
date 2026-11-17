@@ -34,7 +34,7 @@ class Config(BaseConfig):
 config = Config()
 ```
 
-See the [9B LoRA recipe](../src/spindle/configs/qwen35_9b_lora_16k.py) and [4B FFT recipe](../src/spindle/configs/qwen35_4b_fft_64k.py) for complete examples. Weights are downloaded to `/assets/<model id>`.
+See the [9B LoRA recipe](../src/spindle/configs/qwen35_9b_lora_16k.py) and [4B FFT recipe](../src/spindle/configs/qwen35_4b_fft_64k.py) for complete examples. `spindle deploy` downloads weights to `/assets/<model id>` in the background; requests that arrive before the download finishes wait for it.
 
 ## Variants
 
@@ -55,7 +55,112 @@ config = Config()
 
 Each parent's settings and overrides apply before its child's. Constructor fields and overrides apply last: `Config(trainer_gpu="H200", overrides={"sglang_cfg.max_running_requests": 16})`. Assigning a dictionary or list replaces that value; `trainer_env = {}` clears inherited environment settings. Instances own independent copies of mutable values and can also be edited directly.
 
-`trainer_gpu` and `inference_gpu` take one GPU type or a list in preference order, such as `["H200", "B300"]`. Modal schedules the first type with capacity. GPU counts and parallelism settings apply to every entry, so list only types with at least as much memory as the first.
+`trainer_gpu` and `inference_gpu` take one GPU type or a list in preference order, such as `["H200", "B300"]`. Modal schedules the first type with capacity. GPU counts and parallelism settings apply to every entry, so list only types the recipe fits on.
+
+When several clients share a trainer, it trains all of their queued batches together by default, and each client waits for the whole step to finish. For RL, where clients sample at different times, set `trainer_max_clients_per_batch = 1`. The trainer then runs one client at a time, so each client can go back to sampling as soon as its own step is done.
+
+Sampler replicas scale between `inference_min_replicas` and `inference_max_replicas`. Each sampled sequence counts as one request, so `num_samples=4` counts four times. By default another replica starts once every replica holds `sglang_cfg.max_running_requests` requests. Set `inference_target_concurrency` lower to scale out earlier. Idle replicas stop after `inference_scaledown_window_s`, so replicas added in one sampling round stay up for the next.
+
+`inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
+
+### Older Qwen3.5 LoRA checkpoints
+
+The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers. A checkpoint saved by these recipes before that change has no adapters for those layers, so loading it fails with `checkpoint LoRA target_modules do not match the deployment`.
+
+To keep training or sampling from such a checkpoint, deploy a variant with the old target list and the old sampler image:
+
+```python
+from spindle.configs.qwen35_4b_lora_32k import Config as Parent
+
+
+class Config(Parent):
+    name = "qwen35-4b-lora-32k-attn-only"
+    inference_image = "sglang-v0.5.23-c4182b2"
+    overrides = {
+        **Parent.overrides,
+        "miles_cfg.target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",
+        ],
+    }
+
+
+config = Config()
+```
+
+Use the same pattern for the other recipes by changing the parent and `name`. On a running server, add it with `spindle add`.
+
+A checkpoint always restores on the config that saved it, so `create_training_client_from_state` still sends an old checkpoint to the updated recipe. Load it into the variant instead:
+
+1. Create a training client with `base_model` set to the variant's name, and the same rank as the checkpoint.
+2. Call `load_state` or `load_state_with_optimizer` with the old checkpoint path.
+3. To sample from it, call `save_weights_for_sampler` on that client and use the new sampler path. Sampler paths saved before the change also route to the updated recipe.
+
+To train the linear-attention layers, start a new run on the bundled recipe. An old checkpoint can't be extended with the new adapters.
+
+## Spec decoding
+
+We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 
+
+The following LoRA recipes enable speculative decoding by default:
+
+| Recipe | Method | Draft checkpoint |
+| --- | --- | --- |
+| `qwen35-4b-lora-32k` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
+| `qwen3-8b-lora-32k` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
+| `qwen35-9b-instruct-lora-32k` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
+| `qwen38-27b-lora-32k` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
+| `glm53-flash-lora-32k` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |
+| `nemotron35-lightning-30b-a3b-lora-64k` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
+
+Deploy a recipe by passing its Python path to `spindle deploy`, for example:
+
+```sh
+spindle deploy src/spindle/configs/qwen35_4b_lora_32k.py
+```
+
+For a separate drafter, set `inference_draft_model` and
+`inference_draft_model_revision`, and select the algorithm in `sglang_cfg`.
+Spindle downloads the draft alongside the target and supplies its local path to
+SGLang. With `NEXTN` and no separate draft, Spindle supplies the resolved target
+checkpoint instead. The GLM recipe retains its parent's BF16 target weights and
+eight inference GPUs. Reference runs and benchmark artifacts are maintained
+separately from these deployment recipes.
+
+## Recommended configuration for eval jobs
+
+The defaults suit training loops. An eval sends one short batch, and any replica it starts takes a few minutes to load, so it arrives after the work is done and then sits idle. For eval-only configs:
+
+- Give one replica more slots, so it can take the whole batch.
+- Wait 120 seconds before adding a replica.
+- Cap replicas at 1 or 2.
+- Stop idle replicas after 60 seconds.
+
+```python
+from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
+
+
+class Config(Parent):
+    name = "qwen35-9b-eval"
+    inference_max_replicas = 2
+    inference_scaleup_window_s = 120
+    inference_scaledown_window_s = 60
+    overrides = {
+        "sglang_cfg.max_running_requests": 128,
+        "sglang_cfg.max_queued_requests": 128,
+    }
+
+
+config = Config()
+```
+
+On a running server, add this as its own config with `spindle add` and pass its name as `base_model`.
 
 ## Backend options
 
@@ -75,6 +180,26 @@ Miles argument conversion lives in [miles_arguments.py](../src/spindle/backends/
 ### Miles options
 
 Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, the default, or `raw`: the converter Miles uses to export weights, for models without a Megatron-Bridge mapping) and `dynamic_batch_size`.
+
+### Images
+
+`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53`, `miles-v0.2.0-15afe21` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2`, `sglang-v0.5.23-c4182b2-glm53` and `sglang-v0.5.23-803bccb` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. Use a `module:attribute` path for an image you define in your own code.
+
+Every bundled config sets both images itself rather than inheriting them, so upgrading SGLang or Miles for one config doesn't change any other. If you leave a field empty in your own config, it uses the backend default (`miles-v0.1.1-fdd808c`, `megatron-2d1fa8d` or `sglang-v0.5.23-c4182b2`), and that default can change in a later Spindle release. Set both fields to keep a config on the images it was tested with.
+
+#### Changing an image
+
+Never change a named image in place. That includes its fork commit, base image, packages and build steps. Configs that use the name were validated on its exact contents, and an edit would change them all at once without a test.
+
+To change an image:
+
+1. Add a new image under a new name, in a new module if the build differs. Name it after the release and the fork commit it installs, such as `sglang-v0.5.24-<commit>`. If only the build steps change, add a short suffix that says what changed.
+2. Move configs to the new name one at a time. Record a reference run for each config you move.
+3. Once no bundled config, default or reference run uses the old name, remove it and the module that builds it.
+
+`miles-v0.2.0-15afe21` supports single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying it with more than one trainer node or with `raw` is rejected. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
+
+A checkpoint restores only on a trainer with the same Miles revision as the one that saved it, so keep the original image to restore older checkpoints after switching images.
 
 ## Prepare and launch
 
@@ -123,7 +248,7 @@ The checked-in [deploy_models.sh](../scripts/deploy_models.sh) lists the complet
 ./scripts/deploy_models.sh --refresh-inference qwen35-9b-lora-16k
 ~~~
 
-Frontend, region, environment, secret names, and volume names default in `BaseConfig.platform`. `platform.modal.region` defaults to `None`, which leaves GPU placement unpinned (Modal schedules trainers and inference pools in any region); set it only to restrict placement. Set them in the same Python config using dotted overrides:
+Frontend, region, environment, secret names, and volume names default in `BaseConfig.platform`. `platform.modal.region` defaults to `None`, which leaves GPU placement unpinned (Modal schedules trainers and inference pools in any region); set it only to restrict placement. The frontend server, which runs on CPU, is placed in that region, or in `us-east` when it is unset; this never affects where GPUs are scheduled. Set them in the same Python config using dotted overrides:
 
 ```python
 from spindle.configs.gpt_oss_20b_lora_32k import Config as Parent
@@ -142,22 +267,103 @@ class Config(Parent):
 config = Config()
 ```
 
+Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Modal accepts the option only on clustered functions, so other trainers and inference pools are unaffected.
+
+The frontend's URL is `https://<workspace>-<environment>--<frontend>-server.modal.run`. To choose the part after `--`, set `"platform.url_label"`; for example `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. Changing the label changes the URL clients use.
+
+Set `"platform.requires_proxy_auth": True` when the environment blocks unauthenticated URLs, or to keep the server off the open internet. Modal then rejects any request without a [proxy token](https://modal.com/docs/guide/webhook-proxy-auth) allowed for the environment, before it reaches Spindle. Clients send the token as headers next to their Tinker API key:
+
+```python
+service = tinker.ServiceClient(
+    default_headers_overrides={"Modal-Key": token_id, "Modal-Secret": token_secret}
+)
+```
+
+Tinker SDKs older than 0.36 call this argument `default_headers`. Scripts that create their own `ServiceClient`, such as tinker-cookbook's, can run through [`with_proxy_auth.py`](../examples/shared-server/with_proxy_auth.py), which adds the headers to every client the script creates.
+
 All configs deployed together must share platform settings. Use a shared parent config when deploying several models. Explicit `--app`, `--env`, and `--region` flags override the corresponding recipe settings for that invocation. Credentials remain in Modal secrets; recipes contain their names.
 
-One frontend serves all models through Tinker’s `base_model`. When recipes share a model, the first matching recipe in the `spindle deploy` argument list is used. Training also matches the requested LoRA/FFT mode; base sampling uses the first recipe regardless of training mode. To select a specific recipe, pass its name from `/api/v1/spindle/deployments` as `base_model`. The frontend lists the current config set only.
+One frontend serves all models through Tinker’s `base_model`. If several recipes serve the same model, requests by model name go to the one with the longest context. To use a specific recipe, pass its name as `base_model`. `get_server_capabilities` lists every recipe and its context length.
+
+`GET /api/v1/spindle/queues` describes each recipe's training queue. Each trainer holds up to `trainer_max_clients_per_instance` training clients, and a recipe runs at most `trainer_max_instances` trainers. When every slot is in use, a new client waits in line instead of failing. The client that has waited longest gets the next free slot. It keeps waiting until a slot frees, with no time limit.
+
+```json
+{"name": "qwen35_2b_lora_32k", "base_model": "Qwen/Qwen3.5-2B", "parameterization": "lora",
+ "backlog": {"count": 1, "oldest_age_s": 42.0},
+ "slots": {"used": 6, "free": 0, "per_trainer": 6},
+ "trainers": {"running": 1, "starting": 1, "max": 4},
+ "recent": {"window_s": 3600.0, "added": 4, "placed": 3, "released": 2,
+            "wait_s": {"p50": 12.0, "p95": 80.0, "max": 95.0}}}
+```
+
+- `backlog` counts training clients waiting for a slot, and how long the oldest has waited.
+- `slots` counts clients on running trainers and the open slots left on them.
+- `trainers` counts trainers that are running, trainers that are still booting, and the most the recipe allows.
+- `recent` covers the last `window_s` seconds. `added` counts clients that asked for a slot, `placed` counts clients that got one, and `released` counts slots that opened up. A slot opens when a client unloads its model or its session closes or goes idle. Models lost when a trainer stops are not counted, since no slot opens for anyone else. `wait_s` gives the median, 95th percentile and longest wait of the clients placed in the window, or `null` if none were placed.
+
+A client can start right away when `slots.free` is greater than `backlog.count`. Otherwise it waits for a trainer to boot, or for another client to finish or go idle for `session_idle_timeout_s`. While it waits, the Tinker SDK shows its place in line, such as `all trainer slots for Qwen/Qwen3.5-2B are in use; waiting for one to free up (2nd in line, 1m 10s so far)`. A client that stops waiting, for example because its script exited, loses its place within 30 seconds. The queue response and each frontend's view of the line can be a few seconds old, so a new client can occasionally take a slot just as it frees up.
+
+When no slot is free and no trainer is booting, `recent.released` shows how fast slots open up. For example, 4 slots released in the last hour means a slot opens about every 15 minutes. `backlog.count` shows how many other clients are waiting for those slots.
+
+## The frontend registry
+
+Every recipe a frontend serves is one `<app_id>/<recipe>.json` config file in the shared `spindle-deployments` Modal Volume, under a folder named after the frontend's app ID. `spindle deploy` deploys the trainer and inference apps that are missing or changed, then writes the listed configs to the registry and publishes the frontend with only its platform and lifecycle settings. The frontend reads the registry, so recipes not listed in a deploy keep serving. A deploy that changes platform settings must list every recipe the frontend serves, since unlisted ones would keep apps built for the old settings.
+
+Upgrading a frontend that still ships a configs file needs no extra step: `spindle deploy` on the new version writes every recipe the old frontend serves to the registry before the swap, so nothing drops out and unchanged apps are not deployed again.
+
+## Add or remove a config on a running frontend
+
+Anyone with the frontend's API key can add and remove configs. There are two ways to add configurations: SDK or REST API.
+
+### SDK
+
+~~~bash
+uv run spindle add qwen35-9b-lora-16k-h200 --base qwen35-9b-lora-16k \
+  --trainer_gpu=H200 --miles_cfg.max_tokens_per_gpu=8192
+~~~
+
+`spindle add` waits until the config's apps are ready. To remove a config:
+
+~~~bash
+uv run spindle remove qwen35-9b-lora-16k-h200
+~~~
+
+If models still train on it, `spindle remove` lists them and prompts the user first; `--force` skips the interactive prompt.
+
+### REST API
+
+`POST /api/v1/spindle/deployments` writes a config into a running frontend's registry and deploys its trainer and inference apps in the background, without redeploying the frontend. Send a new `name` with either the deployed config to start from as `base` plus the settings to change as `overrides` (the same dotted keys as a config's `overrides`), or a full `recipe`:
+
+~~~bash
+curl -sS -i -X POST "$TINKER_BASE_URL/api/v1/spindle/deployments" \
+  -H "X-API-Key: $TINKER_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "qwen35-9b-lora-16k-h200",
+       "base": "qwen35-9b-lora-16k",
+       "overrides": {"trainer_gpu": "H200", "miles_cfg.max_tokens_per_gpu": 8192}}'
+~~~
+
+`DELETE /api/v1/spindle/deployments/{name}` removes a config and stops its trainer and inference apps, and `GET /api/v1/spindle/deployments` lists them. If models still train on the config, `DELETE` returns HTTP 409 listing them; add `?force=true` to remove it anyway, which ends their training.
+
+Configs deployed before this API are already registered and listed. To move a config kept in a Python file onto the API, send its fields as `recipe` (`vars(config)`).
+
+Each listed config reports `apps` as `"deploying"`, `"ready"`, `"failed"` (with `apps_error`) or `"missing"`. Sending the same config again retries a failed deploy.
+
+If you find a config that clearly beats the current baselines, please upstream it to Spindle as a bundled config.
 
 ## Update isolation
 
-Trainer apps are named `spindle-trainer-{name}` and inference apps `spindle-inference-{name}`. An inference-only change reuses the trainer app. A trainer-only change reuses the inference app. Source-only upgrades use `--refresh-trainer` / `--refresh-inference`. Updating inference settings also redeploys existing pools for that recipe before publishing the new frontend configuration. An interrupted pool update can be retried with the same command. Changes to region, storage, or secrets refresh both worker apps.
+Trainer apps are named `{frontend}-trainer-{name}` and inference apps `{frontend}-inference-{name}`, where `{frontend}` is the frontend app name (`spindle` by default, or the `--app` value). An inference-only change reuses the trainer app. A trainer-only change reuses the inference app. Source-only upgrades use `--refresh-trainer` / `--refresh-inference`. Updating inference settings also redeploys existing pools for that recipe before publishing the new frontend configuration. An interrupted pool update can be retried with the same command. Changes to region, storage, or secrets refresh both worker apps.
 
-Recipe names must be unique across frontends in the same Modal environment, since worker and pool names include the recipe name. Drain jobs before removing a recipe or making incompatible model, context, or adapter changes.
+Every app a deployment creates starts with its frontend name, so two deployments with different `--app` values can share one Modal environment and the same recipe names. Drain jobs before removing a recipe or making incompatible model, context, or adapter changes.
 
 Trainers receive the frontend App ID at launch and use its shared registry for engine state and reconciliation. A startup failure pauses new starts for five minutes; the failure then expires, allowing subsequent requests and reconciliation to retry. `spindle deployment retry` clears it immediately.
 
-The frontend carries the current configs and exposes them through `deployed_configs`. The CLI reads that function to compare settings, and checks trainer and inference app existence directly with Modal. There is no retained history of earlier configs. Run deploy commands sequentially.
+The CLI reads the current configs straight from the frontend's registry folder to compare settings, and checks trainer and inference app existence directly with Modal. There is no retained history of earlier configs. Run deploy commands sequentially.
 
 `--app`, `--env`, `--region`, secrets, and storage names are frontend/platform settings. They are not copied onto each recipe.
 
-LoRA pools are named `spindle-lora-{name}`. FFT pools retain the existing `spindle-fft-{session_digest}-latest` or `spindle-fft-{session_digest}-v{version}` names to fit Modal’s 63-character limit. The digest identifies the recipe/client pair; it is not a config revision.
+LoRA pools are named `{frontend}-lora-{name}`. FFT pools are named `{frontend}-fft-{session_digest}-latest` or `{frontend}-fft-{session_digest}-v{version}` to fit Modal’s 63-character limit. The digest identifies the recipe/client pair; it is not a config revision.
+
+`spindle stop --app my-spindle --env dev` stops the frontend and every app whose name starts with `my-spindle-trainer-`, `my-spindle-inference-`, `my-spindle-lora-`, or `my-spindle-fft-`, ending any runs on them. Deployments made with `--app` on Spindle 0.1.5 or older named their worker and pool apps `spindle-...`; stop those with `modal app stop` after upgrading. It also deletes the stopped frontend's folder from the registry Volume, leaving other frontends' folders alone: the next `spindle deploy` under that name creates a new frontend app with an empty registry, so it serves only the configs it lists.
 
 See [validation results](deployment-validation.md) for CPU coverage, live GPU checks, and their limits.

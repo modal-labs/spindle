@@ -58,9 +58,16 @@ def sample_request(sampling_session_id: str, seq_id: int = 0) -> dict:
     }
 
 
-def test_sampling_sessions_and_submissions_are_idempotent() -> None:
+@pytest.mark.parametrize("future_runner", [False, True])
+def test_sampling_sessions_and_submissions_are_idempotent(future_runner) -> None:
     async def run() -> None:
-        plane, tasks, session_id, sampling_session_id = await sampling_plane()
+        sampler = TinkerStubSampler()
+        runner = (
+            (lambda task: asyncio.ensure_future(sampler(task)))
+            if future_runner
+            else sampler
+        )
+        plane, tasks, session_id, sampling_session_id = await sampling_plane(runner)
         duplicate = await plane.create_sampling_session(
             session_id=session_id,
             sampling_session_seq_id=0,
@@ -327,5 +334,30 @@ def test_slow_samples_explain_startup_until_the_pool_completes_one() -> None:
         assert idle.reason.startswith(f"starting a sampler for {BASE_MODEL}")
         for gate in gates.values():
             gate.set()
+
+    asyncio.run(run())
+
+
+def test_base_model_samples_report_the_weight_download() -> None:
+    async def run() -> None:
+        released = asyncio.Event()
+
+        async def blocked(task: SamplingTask) -> object:
+            await released.wait()
+            return {"type": "sample", "sequences": []}
+
+        async def downloading(definition_id: str) -> float | None:
+            assert definition_id == DEFINITION
+            return plane.clock() - 5
+
+        plane, _, _, sampling_session_id = await sampling_plane(blocked)
+        plane.downloading_weights = downloading
+        request_id = await plane.submit_sample(sample_request(sampling_session_id))
+        resolution = await plane.retrieve(request_id)
+        assert resolution.status == FutureResolutionStatus.PENDING
+        assert resolution.reason.startswith(
+            f"downloading weights for {BASE_MODEL} (5s so far)"
+        )
+        released.set()
 
     asyncio.run(run())

@@ -40,7 +40,9 @@ def test_retired_sampler_410_is_terminal_without_content_length():
             self.wfile.write(json.dumps(body).encode())
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs=dict(poll_interval=0.01), daemon=True
+    )
     thread.start()
     try:
         service = tinker.ServiceClient(

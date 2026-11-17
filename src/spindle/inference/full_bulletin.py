@@ -126,7 +126,7 @@ class FFTSnapshotBulletin:
 
     def advance(self, ref: VersionRef) -> bool:
         with self._lock:
-            current = self.read_latest(ref.run_id)
+            current = self.read_latest(ref.run_id)  # ty: ignore[invalid-argument-type]
             if current == ref:
                 return False
             decide_pointer_move(current, ref)
@@ -151,7 +151,7 @@ class FFTSnapshotBulletin:
         try:
             valid = (
                 manifest.get("ref") == ref.identity
-                and int((index.get("metadata") or {}).get("version")) == ref.version
+                and int((index.get("metadata") or {}).get("version")) == ref.version  # ty: ignore[invalid-argument-type]
                 and expected.issubset(names)
                 and all(_safe_relative_path(name) for name in names)
                 and all(_file_manifest(target / name) == files[name] for name in names)

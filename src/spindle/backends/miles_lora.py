@@ -8,7 +8,7 @@ import shutil
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,7 @@ from .contract import (
     SamplerPublication,
 )
 from .miles_config import (
+    GDN_INPUT_PROJECTIONS,
     MilesBackendConfig,
     lora_target_flags,
     parse_backend_config,
@@ -62,7 +63,6 @@ class MilesCommandBackend(Backend):
         base_model: str,
         runtime: Any | None = None,
     ) -> None:
-        config.validate()
         self.config = config
         self.base_model = base_model
         self.checkpoint_dir = checkpoint_dir
@@ -75,6 +75,7 @@ class MilesCommandBackend(Backend):
         self.slot_to_job: dict[int, str] = {}
         # A volume refresh must not race checkpoint writes on the persistence lane.
         self._checkpoint_io_lock = threading.RLock()
+        self._native = self.runtime.checkpoint_format == "miles_adapter_state"
         self._checkpoint_captures: dict[str, dict[str, Any]] = {}
         self._sampler_captures: dict[str, dict[str, Any]] = {}
         self._timer = StepPhaseTimer()
@@ -119,6 +120,7 @@ class MilesCommandBackend(Backend):
             train_mlp=bool(lora.train_mlp),
             train_unembed=bool(lora.train_unembed),
         )
+        state = self._freeze_untargeted_unembed(model_id, state)
         self._validate_job(state)
         if model_id in self.jobs:
             current = self.jobs[model_id]
@@ -150,7 +152,7 @@ class MilesCommandBackend(Backend):
         self.job_to_slot[model_id] = slot
         self.slot_to_job[slot] = model_id
         try:
-            self.runtime.load_slot(slot, state.rank, state.alpha)
+            self.runtime.load_slot(slot, state.rank, state.alpha, seed=state.seed)
         except BaseException:
             self._release(model_id, slot)
             self.jobs.pop(model_id, None)
@@ -191,7 +193,10 @@ class MilesCommandBackend(Backend):
                     raise ValueError(
                         "router replay is required for every datum in a batch"
                     )
-                if "--use-rollout-routing-replay" not in self.config.extra_args:
+                if not self.config.cli_options.get(
+                    "use_rollout_routing_replay",
+                    "--use-rollout-routing-replay" in self.config.extra_args,
+                ):
                     raise ValueError(
                         "router replay requires --use-rollout-routing-replay in the Miles configuration"
                     )
@@ -313,7 +318,7 @@ class MilesCommandBackend(Backend):
             )
         metadata = {
             "schema_version": 1,
-            "checkpoint_format": "miles_torch_dist",
+            "checkpoint_format": self.runtime.checkpoint_format,
             "backend": "miles",
             "miles_revision": self.runtime.revision,
             "base_model": self.base_model,
@@ -326,6 +331,7 @@ class MilesCommandBackend(Backend):
                 "train_attn": state.train_attn,
                 "train_mlp": state.train_mlp,
                 "train_unembed": state.train_unembed,
+                "target_modules": list(self.config.target_modules),
             },
             "optimizer_step": state.optimizer_step,
             "has_optimizer": include_optimizer,
@@ -373,12 +379,15 @@ class MilesCommandBackend(Backend):
                     ),
                     self._record("spindle/persist_checkpoint"),
                 ):
-                    _install_capture(
-                        capture["path"],
-                        target,
-                        overwrite=overwrite,
-                        world_size=self.config.world_size,
-                    )
+                    if self._native:
+                        _install_directory(capture["path"], target, overwrite=overwrite)
+                    else:
+                        _install_capture(
+                            capture["path"],
+                            target,
+                            overwrite=overwrite,
+                            world_size=self.config.world_size,
+                        )
                     _commit_volume(os.environ.get("SPINDLE_CHECKPOINT_VOLUME"))
                 return str(target)
             finally:
@@ -588,13 +597,31 @@ class MilesCommandBackend(Backend):
                 flush=True,
             )
 
+    def _freeze_untargeted_unembed(
+        self, model_id: str, state: MilesJobState
+    ) -> MilesJobState:
+        """Tinker clients train the unembedding by default; a deployment
+        without an unembedding target keeps it frozen instead of refusing."""
+        _, _, unembed = lora_target_flags(self.config.target_modules)
+        if not state.train_unembed or unembed:
+            return state
+        print(
+            f"spindle_lora_unembed model={model_id} requested=true "
+            "applied=false reason=not_a_deployment_target",
+            flush=True,
+        )
+        return replace(state, train_unembed=False)
+
     def _validate_job(self, state: MilesJobState) -> None:
         if not 0 < state.rank <= self.config.max_lora_rank:
             raise ValueError(
                 f"LoRA rank must be between 1 and {self.config.max_lora_rank}"
             )
-        if state.seed is not None:
-            raise ValueError("Miles multi-LoRA does not support per-model seeds")
+        if state.seed is not None and not self.runtime.supports_seed:
+            raise ValueError(
+                "per-model seeds require Miles load_slot(seed=...); "
+                "update Miles and redeploy the trainer"
+            )
         configured = lora_target_flags(self.config.target_modules)
         requested = (state.train_attn, state.train_mlp, state.train_unembed)
         if requested != configured:
@@ -627,7 +654,7 @@ class MilesCommandBackend(Backend):
             raise ValueError("checkpoint was not created by the Miles backend")
         if metadata.get("miles_revision") != self.runtime.revision:
             raise ValueError("checkpoint Miles revision does not match the deployment")
-        if metadata.get("checkpoint_format") != "miles_torch_dist":
+        if metadata.get("checkpoint_format") != self.runtime.checkpoint_format:
             raise ValueError("unsupported Miles checkpoint format")
         if metadata.get("base_model") != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")
@@ -644,6 +671,23 @@ class MilesCommandBackend(Backend):
         }
         if any(lora.get(name) != value for name, value in expected_targets.items()):
             raise ValueError("checkpoint LoRA targets do not match the model")
+        saved_modules = lora.get("target_modules")
+        modules = list(self.config.target_modules)
+        # Legacy checkpoints lack the field and never trained linear-attention adapters.
+        legacy = (
+            saved_modules is None
+            and not self._native
+            and not set(modules) & set(GDN_INPUT_PROJECTIONS)
+        )
+        # Checked here because a target mismatch found by Miles disables the whole trainer.
+        if not legacy and set(saved_modules or ()) != set(modules):
+            raise ValueError(
+                "checkpoint LoRA target_modules do not match the deployment: "
+                f"saved {saved_modules or 'none recorded'}, deployment {modules}. "
+                "Load it into a config whose miles_cfg.target_modules match the "
+                "saved list; see 'Older Qwen3.5 LoRA checkpoints' in "
+                "docs/deployment-configs.md"
+            )
         expected_topology = {
             "world_size": self.config.world_size,
             "data_parallel_size": self.config.data_parallel_size,

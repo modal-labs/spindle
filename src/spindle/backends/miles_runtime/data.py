@@ -4,13 +4,20 @@ from dataclasses import dataclass
 from math import prod
 from typing import Any
 
+import numpy as np
 from tinker import ForwardBackwardOutput, TensorData
 
 from spindle.backends.contract import ForwardBatch
+from spindle.backends.score_centering import (
+    REPLAY_LOSSES,
+    validate_loss_config,
+    validate_support,
+)
 from .replay_data import replay_row
 
-SUPPORTED_LOSSES = frozenset(
-    {"cross_entropy", "importance_sampling", "ppo", "cispo", "dro"}
+SUPPORTED_LOSSES = (
+    frozenset({"cross_entropy", "importance_sampling", "ppo", "cispo", "dro"})
+    | REPLAY_LOSSES
 )
 _RL_LOSSES = SUPPORTED_LOSSES - {"cross_entropy"}
 
@@ -35,12 +42,9 @@ def pad_slot_rows(
         "target_len": 1,
         "target_tokens": last["tokens"][1:2],
     }
-    if "weights" in last:
-        pad["weights"] = [0.0]
-    if "advantages" in last:
-        pad["advantages"] = [0.0]
-    if "sampling_logprobs" in last:
-        pad["sampling_logprobs"] = [0.0]
+    for key in ("weights", "advantages", "sampling_logprobs"):
+        if key in last:
+            pad[key] = np.zeros(1, dtype=np.float32)
     if "routed_experts" in last:
         route = last["routed_experts"]
         width = route["shape"][1] * route["shape"][2]
@@ -51,6 +55,8 @@ def pad_slot_rows(
     if "sampling_mask_ids" in last:
         pad["sampling_mask_ids"] = []
         pad["sampling_mask_offsets"] = [0, 0]
+    if "sampling_mask_logprobs" in last:
+        pad["sampling_mask_logprobs"] = []
     n_pad = -len(slot_rows) % multiple
     return (*slot_rows, *((slot, dict(pad)) for _ in range(n_pad)))
 
@@ -62,6 +68,8 @@ def prepare_batch(
 ) -> PreparedBatch:
     if batch.loss_fn not in SUPPORTED_LOSSES:
         raise ValueError(f"Miles does not support loss {batch.loss_fn!r}")
+    if batch.loss_fn in REPLAY_LOSSES:
+        validate_loss_config(batch.loss_fn, dict(batch.loss_fn_config))
     if sequence_alignment < 1:
         raise ValueError("sequence_alignment must be at least 1")
     entries: list[tuple[int, int, int, dict[str, Any], int]] = []
@@ -96,28 +104,30 @@ def _align_row(row: dict[str, Any], multiple: int) -> None:
     if pad == 0:
         return
     filler = row["tokens"][-1]
-    row["tokens"] = [*row["tokens"], *([filler] * pad)]
-    width = (
-        len(row["target_tokens"][0])
-        if isinstance(row["target_tokens"][0], list)
-        else None
+    row["tokens"] = np.concatenate([row["tokens"], np.full(pad, filler)])
+    targets = row["target_tokens"]
+    row["target_tokens"] = np.concatenate(
+        [targets, np.full((pad, *targets.shape[1:]), filler, dtype=targets.dtype)]
     )
-    target_filler = [filler] * width if width is not None else filler
-    row["target_tokens"] = [*row["target_tokens"], *([target_filler] * pad)]
     row["target_len"] = len(row["target_tokens"])
     for key in ("weights", "advantages", "sampling_logprobs"):
         values = row.get(key)
         if values is not None:
-            zero = [0.0] * width if width is not None else 0.0
-            row[key] = [*values, *([zero] * pad)]
+            row[key] = np.concatenate(
+                [values, np.zeros((pad, *values.shape[1:]), dtype=values.dtype)]
+            )
     if "routed_experts" in row:
         route = row["routed_experts"]
         width = route["shape"][1] * route["shape"][2]
-        route["values"] = [*route["values"], *([-1] * pad * width)]
+        route["values"] = np.concatenate(
+            [route["values"], np.full(pad * width, -1, dtype=np.int32)]
+        )
         route["shape"][0] += pad
     if "sampling_mask_offsets" in row:
         offsets = row["sampling_mask_offsets"]
-        row["sampling_mask_offsets"] = [*offsets, *([offsets[-1]] * pad)]
+        row["sampling_mask_offsets"] = np.concatenate(
+            [offsets, np.full(pad, offsets[-1], dtype=np.int64)]
+        )
 
 
 def build_outputs(
@@ -144,16 +154,12 @@ def build_outputs(
             .shape
             or [target_length]
         )
-        values = output["logprobs"][:target_length]
-        logprobs = (
-            [float(value) for row in values for value in row]
-            if len(shape) == 2
-            else [float(value) for value in values]
-        )
+        values = np.asarray(output["logprobs"], dtype=np.float32)[:target_length]
         grouped[item_index][datum_index] = {
             "loss": float(output["loss"]),
-            "logprobs": logprobs,
+            "logprobs": values.reshape(-1),
             "shape": shape,
+            "diagnostics": output.get("metrics"),
         }
 
     results = []
@@ -181,22 +187,35 @@ def build_outputs(
                     }
                     for record in complete
                 ],
-                metrics={
-                    "loss:sum": loss,
-                    "loss:mean": loss / max(tokens, 1),
-                    "tokens:sum": float(tokens),
-                    "n_sequences:sum": float(len(complete)),
-                    "response_length:mean": tokens / max(len(complete), 1),
-                },
+                metrics=_metrics(complete, loss, tokens),
             )
         )
     return tuple(results)
 
 
+def _metrics(complete, loss, tokens):
+    metrics = {
+        "loss:sum": loss,
+        "loss:mean": loss / max(tokens, 1),
+        "tokens:sum": float(tokens),
+        "n_sequences:sum": float(len(complete)),
+        "response_length:mean": tokens / max(len(complete), 1),
+    }
+    diagnostics = [record["diagnostics"] for record in complete]
+    if diagnostics and all(row is not None for row in diagnostics):
+        trained = sum(row["tokens"] for row in diagnostics)
+        metrics["tokens:sum"] = float(trained)
+        for key in diagnostics[0].keys() - {"tokens"}:
+            total = sum(row[key] for row in diagnostics)
+            metrics[f"{key}:sum"] = total
+            metrics[f"{key}:mean"] = total / max(trained, 1)
+    return metrics
+
+
 def _datum_row(datum, loss_fn: str, datum_index: int) -> dict[str, Any]:
     inputs = datum.loss_fn_inputs
-    input_tokens = [int(token) for token in datum.model_input.to_ints()]
-    if not input_tokens:
+    input_tokens = np.asarray(datum.model_input.to_ints(), dtype=np.int64)
+    if not input_tokens.size:
         raise ValueError(f"datum {datum_index}: model_input cannot be empty")
     target = inputs.get("target_tokens")
     if target is None:
@@ -211,31 +230,37 @@ def _datum_row(datum, loss_fn: str, datum_index: int) -> dict[str, Any]:
             f"datum {datum_index}: target_tokens length {shape[0]} "
             f"does not match model_input length {len(input_tokens)}"
         )
-    targets = _shaped_values(target, shape, int, datum_index, "target_tokens")
+    targets = _shaped_values(target, shape, np.int64, datum_index, "target_tokens")
     # The final token is a placeholder after the last input position. Labels
     # are gathered separately and must never replace the actual model inputs.
-    final_target = targets[-1][0] if len(shape) == 2 else targets[-1]
+    final_target = targets[-1, 0] if len(shape) == 2 else targets[-1]
     row: dict[str, Any] = {
-        "tokens": [*input_tokens, final_target],
+        "tokens": np.append(input_tokens, final_target),
         "target_len": shape[0],
         "target_tokens": targets,
     }
     # Miles derives batch fields from its first datum. Forward only the fields
     # consumed by this loss so optional, unrelated inputs on one client cannot
     # cause missing-key failures when its rows are combined with another client.
-    fields = (
-        (("weights", "weights"),)
-        if loss_fn == "cross_entropy"
-        else (("advantages", "advantages"), ("logprobs", "sampling_logprobs"))
-    )
+    if loss_fn == "cross_entropy":
+        fields = (("weights", "weights"),)
+    elif loss_fn in REPLAY_LOSSES:
+        fields = (
+            ("weights", "weights"),
+            ("advantages", "advantages"),
+            ("logprobs", "sampling_logprobs"),
+        )
+    else:
+        fields = (("advantages", "advantages"), ("logprobs", "sampling_logprobs"))
     for source, destination in fields:
         value = inputs.get(source)
         if value is not None:
-            row[destination] = _shaped_values(value, shape, float, datum_index, source)
+            row[destination] = _shaped_values(
+                value, shape, np.float32, datum_index, source
+            )
 
     if loss_fn == "cross_entropy":
-        default_weight = [1.0] * shape[1] if len(shape) == 2 else 1.0
-        row.setdefault("weights", [default_weight for _ in range(shape[0])])
+        row.setdefault("weights", np.ones(shape, dtype=np.float32))
     elif loss_fn in _RL_LOSSES:
         missing = [
             name for name in ("advantages", "sampling_logprobs") if name not in row
@@ -244,32 +269,45 @@ def _datum_row(datum, loss_fn: str, datum_index: int) -> dict[str, Any]:
             raise ValueError(
                 f"datum {datum_index}: {', '.join(missing)} required for {loss_fn}"
             )
+    if loss_fn in REPLAY_LOSSES:
+        if len(shape) != 1:
+            raise ValueError(
+                f"datum {datum_index}: {loss_fn} requires one target per position"
+            )
+        if "weights" not in row:
+            row["weights"] = (
+                (row["sampling_logprobs"] != 0) | (row["advantages"] != 0)
+            ).astype(np.float32)
+        validate_support(
+            inputs,
+            targets,
+            row["weights"],
+            centered=loss_fn != "mis",
+        )
     row.update(replay_row(inputs, targets))
     return row
 
 
-def _shaped_values(tensor, shape, cast, datum_index, name):
-    values = [cast(value) for value in _tensor_values(tensor)]
-    actual_shape = list(tensor.shape or [len(values)])
-    if actual_shape != shape or len(values) != prod(shape):
+def _shaped_values(tensor, shape, dtype, datum_index, name) -> np.ndarray:
+    values = _tensor_values(tensor)
+    actual_shape = list(tensor.shape or [values.size])
+    if actual_shape != shape or values.size != prod(shape):
         raise ValueError(
             f"datum {datum_index}: {name} must have shape {shape} with matching data"
         )
-    if len(shape) == 2:
-        width = shape[1]
-        return [values[start : start + width] for start in range(0, len(values), width)]
-    return values
+    return values.astype(dtype).reshape(shape)
 
 
-def _tensor_values(tensor) -> list[Any]:
+def _tensor_values(tensor) -> np.ndarray:
     """Return row-major values; the SDK sends mostly-zero 2-D tensors as CSR."""
-    values = tensor.data
     crow = tensor.sparse_crow_indices
     if crow is None:
-        return values
+        return np.asarray(tensor.to_numpy()).reshape(-1)
+    values = np.asarray(tensor.data)
     shape = list(tensor.shape or [])
     columns = tensor.sparse_col_indices
     rows, width = (1, shape[0]) if len(shape) == 1 else (shape + [None, None])[:2]
+    crow = np.asarray(crow, dtype=np.int64)
     if (
         len(shape) not in (1, 2)
         or columns is None
@@ -277,16 +315,16 @@ def _tensor_values(tensor) -> list[Any]:
         or crow[0] != 0
         or crow[-1] != len(values)
         or len(columns) != len(values)
-        or any(start > end for start, end in zip(crow, crow[1:], strict=False))
+        or (np.diff(crow) < 0).any()
     ):
         raise ValueError(
             "CSR TensorData must have shape [sequence] or [sequence, choices] "
             "with row pointers covering its values"
         )
-    if any(column < 0 or column >= width for column in columns):
+    columns = np.asarray(columns, dtype=np.int64)
+    if ((columns < 0) | (columns >= width)).any():
         raise ValueError("CSR TensorData column indices must be within the row width")
-    dense: list[Any] = [0] * (rows * width)
-    for row, (start, end) in enumerate(zip(crow, crow[1:], strict=False)):
-        for column, value in zip(columns[start:end], values[start:end], strict=True):
-            dense[row * width + int(column)] += value
+    dense = np.zeros(rows * width, dtype=values.dtype)
+    row_ids = np.repeat(np.arange(rows), np.diff(crow))
+    np.add.at(dense, row_ids * width + columns, values)
     return dense

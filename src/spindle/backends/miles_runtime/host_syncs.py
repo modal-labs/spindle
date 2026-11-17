@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-import json
 import os
 from functools import wraps
-from importlib.metadata import PackageNotFoundError, distribution
 
 import torch
 import torch.nn.functional as F
 
+from spindle.patching import same_signature
+
 ENV_FLAG = "SPINDLE_HOST_SYNC_PATCHES"
 BRIDGE_COMMIT = "8cd3466d14d2337c8492827b3712482c2b3e4866"
+# Complete multi_lora_layers.py at BRIDGE_COMMIT; independent of wheel/editable
+# installation metadata and of whether a Git checkout exists at runtime.
+MULTI_LORA_SOURCE_SHA256 = (
+    "7f3f7d621cbfe40c0adb32a998d83ac3851bf2f550fe3a220304aaaf348fb5aa"
+)
 GEGLU_SOURCE_SHA256 = "7a23f78fb6827f0e2fe3157c679fa735727373c81f3555f950650930c0824727"
 _INSTALLED = "_spindle_host_sync_free"
 
@@ -25,13 +30,15 @@ def install() -> dict[str, bool]:
 
 
 def bridge_commit() -> str | None:
+    """Return the compatible source revision, identified by the patched module."""
     try:
-        direct_url = distribution("megatron-bridge").read_text("direct_url.json")
-    except PackageNotFoundError:
+        from megatron.bridge.peft import multi_lora_layers
+
+        source = inspect.getsource(multi_lora_layers)
+    except (ImportError, OSError, TypeError):
         return None
-    if not direct_url:
-        return None
-    return json.loads(direct_url).get("vcs_info", {}).get("commit_id")
+    digest = hashlib.sha256(source.encode()).hexdigest()
+    return BRIDGE_COMMIT if digest == MULTI_LORA_SOURCE_SHA256 else None
 
 
 def install_multi_lora(layers=None) -> bool:
@@ -52,12 +59,14 @@ def install_multi_lora(layers=None) -> bool:
     dense, expert = layers.MultiLoRALinear, layers.MultiLoRAGroupedExpertLinear
     init_slot, clear_slot = dense.init_adapter_slot, dense.clear_adapter_slot
 
+    @same_signature(init_slot)
     @wraps(init_slot)
     def init_adapter_slot(self, idx, rank, alpha):
         init_slot(self, idx, rank, alpha)
         scaling = self.alpha_values[idx] / self.rank_values[idx]
         _unit_scaling(self)[idx] = bool(scaling.item() == 1.0)
 
+    @same_signature(clear_slot)
     @wraps(clear_slot)
     def clear_adapter_slot(self, idx):
         clear_slot(self, idx)
@@ -65,10 +74,12 @@ def install_multi_lora(layers=None) -> bool:
 
     dense.init_adapter_slot = init_adapter_slot
     dense.clear_adapter_slot = clear_adapter_slot
-    dense.forward = _dense_forward(layers)
-    expert.forward = _expert_forward()
+    dense.forward = same_signature(dense.forward)(_dense_forward(layers))
+    expert.forward = same_signature(expert.forward)(_expert_forward())
     # install_moe_slot_routing looks this up when the model is built.
-    layers._make_slot_routing_hook = _routing_hook_factory(layers)
+    layers._make_slot_routing_hook = same_signature(layers._make_slot_routing_hook)(
+        _routing_hook_factory(layers)
+    )
     setattr(layers, _INSTALLED, True)
     _log("installed", patch="multi_lora", bridge=BRIDGE_COMMIT[:8])
     return True
@@ -90,7 +101,7 @@ def install_geglu(fused=None, experts=None) -> bool:
     if digest != GEGLU_SOURCE_SHA256:
         _log("skipped", patch="geglu", reason=f"source sha256 {digest[:12]} differs")
         return False
-    patched = _geglu(fused)
+    patched = same_signature(original)(_geglu(fused))
     fused.weighted_bias_quick_geglu_impl = patched
     if (
         experts is not None

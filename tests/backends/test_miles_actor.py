@@ -4,6 +4,7 @@ import sys
 import threading
 import types
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -102,9 +103,22 @@ def _distributed_actor(monkeypatch, identities: list[str], via_task_id: bool = T
 
 def _load_actor(monkeypatch):
     importlib.import_module("spindle.backends.miles_runtime")
+    # These need real torch; import them before torch is stubbed below.
+    importlib.import_module("spindle.backends.miles_runtime.replay_data")
+    importlib.import_module("spindle.backends.score_centering")
+    importlib.import_module("spindle.backends.miles_runtime.moe_permute")
+    monkeypatch.delitem(
+        sys.modules, "spindle.backends.miles_runtime.actor_shared", raising=False
+    )
     _module(monkeypatch, "modal")
     torch = _module(monkeypatch, "torch")
     _module(monkeypatch, "torch.distributed")
+    _module(monkeypatch, "torch.distributed.constants").default_pg_timeout = timedelta(
+        minutes=30
+    )
+    train_actor = _module(monkeypatch, "miles.ray.train_actor")
+    train_actor.init_gloo_group = lambda: None
+    _module(monkeypatch, "miles.utils.distributed_utils").GLOO_GROUP = None
     megatron_bridge = _module(monkeypatch, "megatron.bridge")
     megatron_bridge.AutoBridge = type("AutoBridge", (), {})
     _module(monkeypatch, "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model")
@@ -117,8 +131,12 @@ def _load_actor(monkeypatch):
     fsdp_actor = _module(monkeypatch, "miles.backends.fsdp_utils.actor")
     megatron_actor = _module(monkeypatch, "miles.backends.megatron_utils.actor")
     megatron_model = _module(monkeypatch, "miles.backends.megatron_utils.model")
+    megatron_model.get_batch = lambda *args, **kwargs: {}
+    megatron_model.get_packed_seq_params = lambda *args, **kwargs: None
     checkpoint = _module(monkeypatch, "miles.backends.megatron_utils.lora.checkpoint")
-    _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
+    _module(
+        monkeypatch, "miles.backends.megatron_utils.lora.model"
+    ).run_forward_backward = lambda *args, **kwargs: None
     _module(
         monkeypatch, "miles.backends.training_utils.replay_data"
     ).fill_replay_data = lambda **kwargs: None
@@ -150,6 +168,15 @@ def _load_actor(monkeypatch):
     loss_hub.tinker_losses = _module(
         monkeypatch, "miles.backends.training_utils.loss_hub.tinker_losses"
     )
+    loss_hub.tinker_losses.TINKER_LOSS_FUNCTIONS = {}
+
+    def response_chunks(logits, *, include_response_indices, **kwargs):
+        return iter(())
+
+    loss_hub.logit_processors._iter_response_chunks = response_chunks
+    loss_hub.logit_processors.get_parallel_state = lambda: None
+    conversion = _module(monkeypatch, "miles.ray.rollout.train_data_conversion")
+    conversion._package_shards = lambda args, data, partitions: []
     for module in (training_loss, loss_hub.tinker_losses, megatron_actor, fsdp_actor):
         module.get_log_probs_and_entropy = (
             loss_hub.logit_processors.get_log_probs_and_entropy
@@ -228,6 +255,26 @@ class _FakeVolume:
         self.events.append(("copy", tuple(src_paths), dst_path, recursive))
 
 
+def test_training_passes_keep_earlier_gradients(monkeypatch) -> None:
+    _load_actor(monkeypatch)
+    run = sys.modules["miles.backends.megatron_utils.lora.model"].run_forward_backward
+    assert run.__spindle_gradient_accumulation__
+
+
+@pytest.mark.parametrize("minutes, expected", [(120, 120), (10, 30)])
+def test_gloo_group_waits_as_long_as_the_distributed_timeout(
+    monkeypatch, minutes, expected
+) -> None:
+    actor = _load_actor(monkeypatch)
+    groups = []
+    sys.modules["torch.distributed"].new_group = lambda **kwargs: (
+        groups.append(kwargs) or "gloo"
+    )
+    actor._use_distributed_timeout_for_gloo(minutes)
+    assert sys.modules["miles.ray.train_actor"].init_gloo_group() == "gloo"
+    assert groups == [{"backend": "gloo", "timeout": timedelta(minutes=expected)}]
+
+
 def test_checkpoint_is_published_from_committed_state(monkeypatch, tmp_path) -> None:
     """Only the committed state holds every node's shards, so publish from there."""
     actor = _load_actor(monkeypatch)
@@ -237,8 +284,8 @@ def test_checkpoint_is_published_from_committed_state(monkeypatch, tmp_path) -> 
     actor.volumes.modal.Volume = types.SimpleNamespace(
         from_name=lambda name: _FakeVolume(events)
     )
-    actor.dist.is_available = lambda: False
-    actor.dist.is_initialized = lambda: False
+    sys.modules["torch.distributed"].is_available = lambda: False
+    sys.modules["torch.distributed"].is_initialized = lambda: False
 
     def original(path, write_shards, *args, **kwargs):
         raise AssertionError("miles' rank-0 rename cannot see other nodes' shards")
@@ -281,8 +328,8 @@ def test_publishing_leaves_rank_zero_its_own_files(monkeypatch, tmp_path) -> Non
     actor.volumes.modal.Volume = types.SimpleNamespace(
         from_name=lambda name: _FakeVolume(events, extra=("rank00000",))
     )
-    actor.dist.is_available = lambda: False
-    actor.dist.is_initialized = lambda: False
+    sys.modules["torch.distributed"].is_available = lambda: False
+    sys.modules["torch.distributed"].is_initialized = lambda: False
     actor.checkpoint_io.write_checkpoint_dir = lambda *args, **kwargs: None
     actor._publish_checkpoints_across_nodes()
     monkeypatch.setattr(actor.volumes, "sync_checkpoint_volume", lambda action: None)
@@ -323,8 +370,8 @@ def test_a_checkpoint_missing_a_peer_shard_is_not_published(
     actor.volumes.modal.Volume = types.SimpleNamespace(
         from_name=lambda name: _FakeVolume([])
     )
-    actor.dist.is_available = lambda: False
-    actor.dist.is_initialized = lambda: False
+    sys.modules["torch.distributed"].is_available = lambda: False
+    sys.modules["torch.distributed"].is_initialized = lambda: False
     actor.checkpoint_io.write_checkpoint_dir = lambda *args, **kwargs: None
     actor._publish_checkpoints_across_nodes()
     monkeypatch.setattr(actor.volumes, "sync_checkpoint_volume", lambda action: None)
@@ -337,7 +384,7 @@ def test_a_checkpoint_missing_a_peer_shard_is_not_published(
         _FakeVolume, "listdir", lambda self, path: []
     )  # the peer's commit never landed
 
-    with pytest.raises(RuntimeError, match="__8_0.distcp"):
+    with pytest.raises(RuntimeError, match=r"__8_0\.distcp"):
         actor.checkpoint_io.write_checkpoint_dir(
             tmp_path / "000000" / "miles",
             lambda directory: (directory / "__0_0.distcp").write_text("shard"),

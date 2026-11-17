@@ -3,29 +3,33 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "qwen35-35b-a3b-fft-64k"
+    trainer_image = "megatron-2d1fa8d"
+    inference_image = "sglang-v0.5.23-c4182b2"
     parameterization = "full"
     model = "Qwen/Qwen3.5-35B-A3B"
     max_context_length = 65536
-    trainer_gpu = "H200"
+    trainer_gpu = ["B300", "B200"]
     trainer_gpus_per_node = 8
     backend = "megatron"
     megatron_cfg = {
-        "tensor_model_parallel_size": 4,
+        "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
-        "context_parallel_size": 2,
+        "context_parallel_size": 1,
         "expert_model_parallel_size": 8,
         "expert_tensor_parallel_size": 1,
-        "sequence_parallel": True,
+        "sequence_parallel": False,
         "micro_batch_size": 1,
         "max_tokens_per_microbatch": 65536,
+        "logprob_chunk_tokens": 8192,
         "bf16": True,
         "fp16": False,
         "gpu_memory_fraction": 0.9,
         "use_distributed_optimizer": True,
         "provider_overrides": {
             "mtp_num_layers": 0,
-            "recompute_granularity": "selective",
-            "moe_layer_recompute": True,
+            "recompute_granularity": "full",
+            "recompute_method": "uniform",
+            "recompute_num_layers": 1,
             "moe_token_dispatcher_type": "alltoall",
             "moe_router_fusion": True,
             "moe_permute_fusion": True,
@@ -48,7 +52,7 @@ class Config(BaseConfig):
         "mem_fraction_static": 0.9,
         "max_running_requests": 32,
         "max_queued_requests": 4,
-        "weight_update_max_compile_group_gb": 32,
+        "weight_update_max_compile_group_gb": 4,
         "dp_size": 4,
         "enable_dp_attention": True,
     }

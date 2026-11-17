@@ -25,6 +25,23 @@ Clients using the same definition may share an engine depending on available slo
 
 From the perspective of the Tinker client, the usage of multi-lora engines is completely identical to Tinker. Below, we detail some considerations for extracting maximum performance from our multi-lora system. 
 
+Pass `seed` to the stock Tinker SDK to reproduce an adapter's initial weights:
+
+```python
+training = service.create_lora_training_client(
+    base_model="Qwen/Qwen3.5-9B-Base", rank=16, seed=42,
+)
+```
+
+With the same model, rank, targets, and parallelism, the same seed reproduces
+initial adapter weights across slots and slot reuse. Seeded initialization
+preserves the trainer's random streams for other clients. Omitting `seed` keeps
+the default initialization behavior. This controls initialization only; sampling
+uses `tinker.SamplingParams(seed=...)`, and training order can still vary.
+
+Full training reproducibility also requires deterministic kernels and fixed input
+and batching order. A seed alone does not guarantee identical training outputs.
+
 ## Submit training work
 
 When multiple clients hit the same training engine, the engine will try and batch these clients' requests when possible. The intended use of multi-tenancy to maximize trainer utilization is thus to maintain a steady stream of incoming forward_backward data. The engine's current scheduling logic will interleave client batches when large enough, and multi-lora batch when multiple can fit within a single forward pass. The batching is done wrt "compatibility": in particular, fb requests which share the same `loss_fn` and `loss_fn_config`. This includes consecutive compatible requests from one client (see deterministic training section for ensuring gradient accumulation order). 
@@ -155,9 +172,12 @@ that shape. Dense tensors and the sparse CSR encoding produced by the Tinker
 SDK are supported. The `megatron_lora` and `megatron_fft` backends do not support
 2D targets.
 
-The transformer evaluates each input sequence once. Each candidate column then
-runs vocabulary scoring separately on the shared logits, so vocabulary-scoring
-work and saved logits-sized backward activations grow with `num_choices`.
+The transformer evaluates each input sequence once. When every 2D datum in a
+batch has the same number of candidate columns, the trainer takes one softmax
+over the vocabulary per position and reads every candidate from it, so scoring
+time and memory do not grow with `num_choices`. Batches that mix widths score
+each column separately, and their vocabulary work and memory grow with
+`num_choices`.
 
 # Deterministic Training (Experimental) 
 

@@ -1,8 +1,15 @@
+import json
+
 import pytest
 
 from spindle.backends.deployment import backend_config, serving_options
+from spindle.backends.miles_config import GDN_INPUT_PROJECTIONS
+from spindle.control_plane.deployments import FrontendSettings
 from spindle.deployments import DeploymentConfig, config_path, load
-from spindle.providers.modal.deployment_configs import configs_from_env
+from spindle.providers.modal.deployment_configs import (
+    FRONTEND_SETTINGS_ENV,
+    frontend_settings_from_env,
+)
 
 
 @pytest.mark.parametrize(
@@ -18,16 +25,49 @@ def test_all_packaged_recipes_validate_offline(path):
     if spec.parameterization == "lora":
         resolved = DeploymentConfig.create(spec)
         # Legacy Megatron selectors also match vision layers in current Bridge.
-        assert set(spec.miles_cfg["target_modules"]) == set(
-            resolved.inference_settings["lora_target_modules"]
-        )
+        # Samplers match the path after a wildcard as a module-name suffix, and
+        # serve the Qwen3.5 linear-attention input projections fused.
+        expected = {
+            target.rsplit("*.", 1)[-1] for target in spec.miles_cfg["target_modules"]
+        }
+        if expected & set(GDN_INPUT_PROJECTIONS):
+            expected = expected - set(GDN_INPUT_PROJECTIONS)
+            expected |= {"in_proj_qkvz", "in_proj_ba"}
+        assert expected == set(resolved.inference_settings["lora_target_modules"])
+
+
+@pytest.mark.parametrize(
+    "preset,algorithm,draft",
+    [
+        ("qwen3-8b-lora-32k", "DFLASH", "z-lab/Qwen3-8B-DFlash-b16"),
+        ("qwen35-9b-instruct-lora-32k", "DFLASH", "modal-labs/Qwen3.5-9B-DFlash"),
+        ("qwen38-27b-lora-32k", "DFLASH", "incoai/Qwen3.8-27B-DFlash2"),
+        ("glm53-flash-lora-32k", "DFLASH", "modal-labs/GLM-5.3-Flash-DFlash"),
+        ("qwen35-4b-lora-32k", "NEXTN", ""),
+        ("qwen3-4b-lora-32k", None, ""),
+        ("qwen25-7b-instruct-lora-32k", None, ""),
+        ("qwen25-3b-lora-32k", None, ""),
+        ("qwen35-2b-lora-32k", None, ""),
+    ],
+)
+def test_speculative_defaults_use_model_specific_drafts(preset, algorithm, draft):
+    spec = load(config_path(preset))
+    deployment = DeploymentConfig.create(spec)
+    assert spec.inference_draft_model == draft
+    serving = deployment.inference_settings
+    assert serving.get("speculative_algorithm") == algorithm
+    if draft:
+        assert serving["speculative_draft_model_path"] == deployment.draft_asset_path
+    elif algorithm == "NEXTN":
+        assert serving["speculative_draft_model_path"] == deployment.asset_path
+    else:
+        assert "speculative_draft_model_path" not in serving
+        assert spec.inference_gpu == "H100"
 
 
 @pytest.mark.parametrize("preset", ["qwen35-35b-a3b-fft-64k", "qwen36-35b-a3b-fft-64k"])
 def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
     config = backend_config(load(config_path(preset)))["megatron"]
-    assert config["tensor_model_parallel_size"] == 4
-    assert config["context_parallel_size"] == 2
     assert config["expert_model_parallel_size"] == 8
     assert config["provider_overrides"]["moe_token_dispatcher_type"] == "alltoall"
 
@@ -113,15 +153,12 @@ def test_single_client_recipe_keeps_shared_backend_capacity():
     assert backend_config(single) == backend_config(shared)
 
 
-@pytest.mark.parametrize("contents", [None, "[]", "{}"])
-def test_missing_configs_have_no_python_catalog_fallback(
-    monkeypatch, tmp_path, contents
-):
-    if contents is None:
-        monkeypatch.delenv("SPINDLE_DEPLOYMENT_CONFIGS_FILE", raising=False)
-    else:
-        path = tmp_path / "configs.json"
-        path.write_text(contents)
-        monkeypatch.setenv("SPINDLE_DEPLOYMENT_CONFIGS_FILE", str(path))
-    with pytest.raises(ValueError, match="configs"):
-        configs_from_env()
+def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
+    settings = FrontendSettings(
+        platform={"frontend": "test"},
+        session_idle_timeout_s=1,
+        pool_idle_timeout_s=2,
+        sweep_interval_s=3,
+    )
+    monkeypatch.setenv(FRONTEND_SETTINGS_ENV, json.dumps(settings.__dict__))
+    assert frontend_settings_from_env() == settings

@@ -29,7 +29,9 @@ from spindle.providers.modal.checkpoint_storage import ModalCheckpointStorage
 
 
 class FakeMilesRuntime:
+    supports_seed = True
     revision = "a" * 40
+    checkpoint_format = "miles_torch_dist"
 
     def __init__(self) -> None:
         self.calls = []
@@ -43,7 +45,9 @@ class FakeMilesRuntime:
         *,
         checkpoint=None,
         restore_optimizer=True,
+        seed=None,
     ):
+        self.last_seed = seed
         self.calls.append(
             ("load_slot", slot, rank, alpha, checkpoint, restore_optimizer)
         )
@@ -59,7 +63,16 @@ class FakeMilesRuntime:
         loss_fn_config,
         forward_only,
     ):
-        self.last_slot_rows = tuple((slot, dict(row)) for slot, row in slot_rows)
+        self.last_slot_rows = tuple(
+            (
+                slot,
+                {
+                    key: getattr(value, "tolist", lambda value=value: value)()
+                    for key, value in row.items()
+                },
+            )
+            for slot, row in slot_rows
+        )
         self.calls.append(
             (
                 "forward_backward",
@@ -147,9 +160,9 @@ def _datum(tokens, final_token) -> Datum:
     )
 
 
-def _backend(tmp_path, runtime=None) -> MilesCommandBackend:
+def _backend(tmp_path, runtime=None, **overrides) -> MilesCommandBackend:
     return MilesCommandBackend(
-        _config(),
+        _config(**overrides),
         checkpoint_dir=tmp_path / "checkpoints",
         capture_dir=tmp_path / "captures",
         base_model="Qwen/Qwen3-4B",
@@ -213,13 +226,39 @@ def test_config_points_reference_load_at_the_hf_checkpoint() -> None:
 
 def test_config_exports_lora_through_the_raw_converter() -> None:
     config = _config(megatron_to_hf_mode="raw")
-    config.validate()
 
     arguments = config.miles_arguments()
     assert arguments[arguments.index("--megatron-to-hf-mode") + 1] == "raw"
     assert "--multi-lora-n-adapters" in arguments
-    with pytest.raises(ValueError, match="bridge or raw"):
-        _config(megatron_to_hf_mode="direct").validate()
+    assert arguments[arguments.index("--lora-type") + 1] == "lora"
+    with pytest.raises(ValueError, match="megatron_to_hf_mode"):
+        _config(megatron_to_hf_mode="direct")
+
+
+def test_config_wildcard_targets_serve_by_module_suffix() -> None:
+    targets = (
+        "layers.*.attn.wq_a",
+        "layers.*.attn.wkv",
+        "layers.*.attn.wq_b",
+        "layers.*.attn.wo_b",
+        "layers.*.ffn.shared_experts.w1",
+        "layers.*.ffn.shared_experts.w2",
+        "layers.*.ffn.shared_experts.w3",
+    )
+    config = _config(target_modules=targets)
+
+    assert config.peft_target_modules == (
+        "attn.wq_a",
+        "attn.wkv",
+        "attn.wq_b",
+        "attn.wo_b",
+        "ffn.shared_experts.w1",
+        "ffn.shared_experts.w2",
+        "ffn.shared_experts.w3",
+    )
+    arguments = config.miles_arguments()
+    assert arguments[arguments.index("--target-modules") + 1] == ",".join(targets)
+    assert lora_target_flags(targets) == (True, True, False)
 
 
 def test_config_context_parallel_topology() -> None:
@@ -249,46 +288,105 @@ def test_config_multi_node_topology() -> None:
     assert arguments[arguments.index("--actor-num-gpus-per-node") + 1] == "8"
 
 
-def test_config_rejects_tensor_parallel_spanning_nodes() -> None:
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {
+                "actor_num_nodes": 2,
+                "actor_num_gpus_per_node": 8,
+                "tensor_model_parallel_size": 16,
+            },
+            "must evenly divide",
+        ),
+        (
+            {
+                "actor_num_nodes": 3,
+                "actor_num_gpus_per_node": 8,
+                "tensor_model_parallel_size": 6,
+                "context_parallel_size": 2,
+            },
+            "must evenly divide",
+        ),
+        (
+            {
+                "actor_num_gpus_per_node": 8,
+                "tensor_model_parallel_size": 4,
+                "context_parallel_size": 4,
+            },
+            "must be a multiple",
+        ),
+        (
+            {"actor_num_gpus_per_node": 4, "tensor_model_parallel_size": 3},
+            "must be a multiple",
+        ),
+        ({"actor_num_gpus_per_node": True}, "actor_num_gpus_per_node"),
+        ({"actor_num_nodes": "2"}, "actor_num_nodes"),
+        ({"max_lora_slots": 0}, "max_lora_slots"),
+        ({"hf_checkpoint": ""}, "hf_checkpoint"),
+        ({"model_type": ""}, "native architecture options"),
+        ({"target_modules": []}, "target_modules"),
+        ({"target_modules": [""]}, "target_modules"),
+        ({"default_lora_alpha": 1.5}, "positive integer"),
+        ({"default_lora_alpha": 0}, "default_lora_alpha"),
+        ({"lora_dropout": -0.1}, "lora_dropout"),
+        ({"lora_dropout": 1}, "lora_dropout"),
+        ({"unknown_option": True}, "unknown_option"),
+    ],
+)
+def test_config_rejects_invalid_settings_at_construction(overrides, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        _config(**overrides)
+
+
+def test_config_json_round_trip() -> None:
     config = _config(
-        actor_num_gpus_per_node=8,
-        actor_num_nodes=2,
-        tensor_model_parallel_size=16,
+        model_type="",
+        cli_options={"num_layers": 4},
+        target_modules=["linear_qkv", "linear_proj"],
+        extra_args=["--seq-length", "4096"],
+        default_lora_alpha=32.0,
+    )
+    parsed, _, _ = parse_backend_config(
+        json.loads(json.dumps({"miles": config.model_dump()}))
     )
 
-    with pytest.raises(ValueError, match="must evenly divide"):
-        config.validate()
+    assert parsed == config
+    assert parsed.miles_arguments() == config.miles_arguments()
+    with pytest.raises(ValueError, match="frozen"):
+        parsed.max_lora_rank = 64
 
-    config = _config(
-        actor_num_gpus_per_node=8,
-        actor_num_nodes=3,
-        tensor_model_parallel_size=6,
-        context_parallel_size=2,
+
+def test_default_unembed_request_is_frozen_without_an_unembed_target(tmp_path) -> None:
+    backend = MilesCommandBackend(
+        _config(
+            target_modules=("linear_qkv", "linear_proj", "linear_fc1", "linear_fc2")
+        ),
+        checkpoint_dir=tmp_path / "checkpoints",
+        capture_dir=tmp_path / "captures",
+        base_model="Qwen/Qwen3-4B",
+        runtime=FakeMilesRuntime(),
     )
-
-    with pytest.raises(ValueError, match="must evenly divide"):
-        config.validate()
-
-
-def test_config_rejects_non_divisible_context_parallel_topology() -> None:
-    config = _config(
-        actor_num_gpus_per_node=8,
-        tensor_model_parallel_size=4,
-        context_parallel_size=4,
+    stock = ModelSpec(
+        base_model="Qwen/Qwen3-4B",
+        parameterization="lora",
+        lora_config=LoraConfig(rank=8, train_unembed=True),
     )
+    backend.accept_model("model-a", stock)
+    assert backend.jobs["model-a"].train_unembed is False
+    backend.accept_model("model-a", stock)
 
-    with pytest.raises(ValueError, match="must be a multiple"):
-        config.validate()
+    targeted = _backend(tmp_path)
+    targeted.accept_model("model-a", stock)
+    assert targeted.jobs["model-a"].train_unembed is True
 
-
-def test_config_rejects_non_divisible_data_parallel_topology() -> None:
-    config = _config(
-        actor_num_gpus_per_node=4,
-        tensor_model_parallel_size=3,
+    no_mlp = ModelSpec(
+        base_model="Qwen/Qwen3-4B",
+        parameterization="lora",
+        lora_config=LoraConfig(rank=8, train_mlp=False),
     )
-
-    with pytest.raises(ValueError, match="must be a multiple"):
-        config.validate()
+    with pytest.raises(ValueError, match="must match the deployment"):
+        backend.accept_model("model-b", no_mlp)
 
 
 def test_backend_routes_batches_and_preserves_per_model_state(tmp_path) -> None:
@@ -491,6 +589,56 @@ def test_checkpoint_restore_rejects_different_lora_targets(
         backend.load_checkpoint("model-a", str(uri))
 
 
+GDN_TARGETS = (
+    "linear_qkv",
+    "linear_proj",
+    "linear_fc1",
+    "linear_fc2",
+    "output_layer",
+    "in_proj_qkv",
+    "in_proj_z",
+    "in_proj_b",
+    "in_proj_a",
+    "out_proj",
+)
+
+
+@pytest.mark.parametrize(
+    "saved_modules, deployment_modules, accepted",
+    [
+        (None, None, True),
+        (None, GDN_TARGETS, False),
+        (list(GDN_TARGETS), None, False),
+        (list(reversed(GDN_TARGETS)), GDN_TARGETS, True),
+    ],
+)
+def test_checkpoint_restore_checks_target_modules(
+    tmp_path, saved_modules, deployment_modules, accepted
+) -> None:
+    source = _backend(tmp_path / "source")
+    source.accept_model("model-a", _spec())
+    source.capture_checkpoint(
+        "model-a", "capture-a", destination="step-1", include_optimizer=False
+    )
+    uri = Path(source.persist_checkpoint("capture-a", "step-1"))
+    metadata = json.loads((uri / "metadata.json").read_text())
+    if saved_modules is None:
+        del metadata["lora_config"]["target_modules"]
+    else:
+        metadata["lora_config"]["target_modules"] = saved_modules
+    overrides = (
+        {} if deployment_modules is None else {"target_modules": deployment_modules}
+    )
+    target = _backend(tmp_path / "target", **overrides)
+    target.accept_model("model-a", _spec())
+
+    if accepted:
+        target._validate_checkpoint(metadata, target.jobs["model-a"], False)
+    else:
+        with pytest.raises(ValueError, match="target_modules do not match"):
+            target._validate_checkpoint(metadata, target.jobs["model-a"], False)
+
+
 def test_checkpoint_topology_defaults_legacy_data_parallel_size(tmp_path) -> None:
     backend = _backend(tmp_path)
     backend.accept_model("model-a", _spec())
@@ -592,15 +740,26 @@ def test_sampler_snapshots_persist_concurrently_without_crossing_adapters(
     assert not backend._sampler_captures
 
 
-def test_backend_rejects_unsupported_per_model_miles_options(tmp_path) -> None:
-    backend = _backend(tmp_path)
-    with pytest.raises(ValueError, match="per-model seeds"):
+@pytest.mark.parametrize("seed", [None, 0, 7])
+def test_backend_accepts_per_model_seed(tmp_path, seed) -> None:
+    runtime = FakeMilesRuntime()
+    backend = _backend(tmp_path, runtime)
+    spec = ModelSpec(
+        base_model="Qwen/Qwen3-4B",
+        parameterization="lora",
+        lora_config=LoraConfig(rank=8, seed=seed),
+    )
+    backend.accept_model("model-a", spec)
+    backend.accept_model("model-a", spec)
+    assert backend.jobs["model-a"].seed == runtime.last_seed == seed
+    assert len(runtime.calls) == 1
+    with pytest.raises(ValueError, match="different specification"):
         backend.accept_model(
             "model-a",
             ModelSpec(
-                base_model="Qwen/Qwen3-4B",
+                base_model=spec.base_model,
                 parameterization="lora",
-                lora_config=LoraConfig(rank=8, seed=7),
+                lora_config=LoraConfig(rank=8, seed=42),
             ),
         )
 
@@ -651,8 +810,8 @@ def test_nonfinite_optimizer_skip_does_not_advance_policy(tmp_path):
 
 def test_datum_preserves_explicit_targets_for_upstream():
     row = _datum_row(_datum([1, 2, 3], 4), "cross_entropy", 0)
-    assert row["tokens"] == [1, 2, 3, 4]
-    assert row["target_tokens"] == [2, 3, 4]
+    assert row["tokens"].tolist() == [1, 2, 3, 4]
+    assert row["target_tokens"].tolist() == [2, 3, 4]
 
 
 def test_weights_only_capture_excludes_optimizer(tmp_path):
@@ -904,3 +1063,47 @@ def test_a_capture_short_of_a_nodes_shards_is_refused(monkeypatch, tmp_path):
 )
 def test_hf_targets_match_tinker_training_flags(targets, expected):
     assert lora_target_flags(targets) == expected
+
+
+@pytest.mark.parametrize("changed", ["checkpoint_format", "target_modules"])
+def test_native_checkpoint_rejects_incompatible_adapter_before_slot_load(
+    tmp_path, changed
+):
+    runtime = FakeMilesRuntime()
+    runtime.checkpoint_format = "miles_adapter_state"
+    backend = _backend(tmp_path, runtime)
+    backend.accept_model("model-a", _spec())
+    backend.capture_checkpoint(
+        "model-a", "capture", destination="step", include_optimizer=True
+    )
+    checkpoint = Path(backend.persist_checkpoint("capture", "step"))
+    metadata_path = checkpoint / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    if changed == "checkpoint_format":
+        metadata[changed] = "miles_torch_dist"
+    else:
+        metadata["lora_config"][changed] = ["different_target"]
+    metadata_path.write_text(json.dumps(metadata))
+    previous = list(runtime.calls)
+    with pytest.raises(ValueError):
+        backend.load_checkpoint("model-a", str(checkpoint), restore_optimizer=True)
+    assert runtime.calls == previous
+
+
+def test_seed_on_older_image_is_rejected_without_touching_live_slots(tmp_path):
+    runtime = FakeMilesRuntime()
+    runtime.supports_seed = False
+    backend = _backend(tmp_path, runtime)
+    backend.accept_model("existing", _spec())
+    previous = list(runtime.calls)
+    with pytest.raises(ValueError, match=r"Miles load_slot\(seed="):
+        backend.accept_model(
+            "seeded",
+            ModelSpec(
+                base_model="Qwen/Qwen3-4B",
+                parameterization="lora",
+                lora_config=LoraConfig(rank=8, seed=0),
+            ),
+        )
+    assert runtime.calls == previous
+    assert set(backend.jobs) == {"existing"}

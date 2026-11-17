@@ -3,6 +3,8 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "qwen38-27b-lora-16k"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "Qwen/Qwen3.8-27B"
     max_context_length = 16384
     trainer_gpu = ["H200", "B300", "B200"]
@@ -38,7 +40,8 @@ class Config(BaseConfig):
     sglang_cfg = {
         "tp_size": 1,
         "ep_size": 1,
-        "mem_fraction_static": 0.8,
+        "mem_fraction_static": 0.9,
+        "mamba_full_memory_ratio": 0.6,
         "max_running_requests": 32,
         "max_queued_requests": 8,
         "max_loaded_loras": 256,

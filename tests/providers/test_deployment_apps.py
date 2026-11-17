@@ -15,6 +15,7 @@ import spindle
 import spindle.backends.deployment as backend
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.local import InMemoryKeyValueStore
+from tests.support import RoutedTestStore
 from spindle.providers.modal import (
     deployment_apps,
     deployment_configs,
@@ -29,12 +30,6 @@ LINUX_ENV_VALUE_LIMIT = 131_072
 
 def deployment(preset="qwen35-9b-lora-16k"):
     return DeploymentConfig.create(load(config_path(preset)))
-
-
-def write_configs(tmp_path, rows):
-    path = tmp_path / "deployment_configs.json"
-    path.write_text(json.dumps([row.model_dump(mode="json") for row in rows]))
-    return str(path)
 
 
 class App:
@@ -67,23 +62,24 @@ def builders(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "preset,backend,clients,nproc",
+    "preset,backend,clients,nproc,gpu",
     [
-        ("qwen35-9b-lora-16k", "miles_lora", 6, 1),
-        ("qwen35-4b-fft-64k", "megatron_fft", 1, 4),
+        ("qwen35-9b-lora-16k", "miles_lora", 6, 1, "H100:4"),
+        ("qwen35-4b-fft-64k", "megatron_fft", 1, 4, ["B300:4", "B200:4"]),
     ],
 )
 def test_trainer_declaration_and_executor_configuration(
-    builders, monkeypatch, preset, backend, clients, nproc
+    builders, monkeypatch, preset, backend, clients, nproc, gpu
 ):
     row = deployment(preset)
+    monkeypatch.setattr(modal, "clustered", lambda **_: lambda fn: fn)
     platform = row.recipe.platform
     platform["storage"]["checkpoints"] = "test-custom-checkpoints"
     image = object()
     app, trainer = deployment_apps.build_trainer_app(row, platform, image=image)
     assert app.tags["spindle_role"] == "trainer"
     declaration, _ = app.functions["trainer"]
-    assert declaration["gpu"] == "H100:4"
+    assert declaration["gpu"] == gpu
     assert declaration["ephemeral_disk"] is None
     assert declaration["region"] is None
     assert declaration["max_containers"] is None
@@ -141,12 +137,11 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     )
     settings, _ = app.servers["Server"]
     assert app.name == pool.app_name
-    assert (
-        settings["gpu"]
-        == f"{row.recipe.inference_gpu}:{row.recipe.inference_gpus_per_node}"
-    )
+    assert settings["gpu"] == (["B200:1", "H200:1"] if kind == "lora" else "H100:1")
     assert settings["min_containers"] == 0
-    assert settings["target_concurrency"] == 16
+    assert settings["target_concurrency"] == (128 if kind == "lora" else 32)
+    assert settings["env"]["SGLANG_RETURN_ORIGINAL_LOGPROB"] == "1"
+    assert settings.get("scaleup_window") is None
     assert "compute_region" not in settings
     assert "routing_region" not in settings
 
@@ -187,6 +182,9 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
             "up_proj",
             "down_proj",
             "lm_head",
+            "in_proj_qkvz",
+            "in_proj_ba",
+            "out_proj",
         ]
     else:
         assert native["weight_update_staging"] == "cpu"
@@ -198,13 +196,21 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     assert stops == [process, process]
 
 
-def test_pool_lookup_uses_definition_name(monkeypatch, tmp_path):
+def test_pool_lookup_uses_definition_name(monkeypatch):
     row = deployment()
-    monkeypatch.setenv(
-        deployment_configs.CONFIGS_FILE_ENV, write_configs(tmp_path, [row])
+    added = deployment("qwen3-8b-lora-32k")
+    monkeypatch.setattr(
+        deployment_configs,
+        "deployment_kv",
+        lambda: SimpleNamespace(
+            read={item.name: item.model_dump(mode="json") for item in (row, added)}.get
+        ),
     )
     saved = deployment_configs.pool_config(row.definition_id)
     assert saved.definition_id == row.definition_id
+    assert deployment_configs.pool_config(added.definition_id).model_dump(
+        mode="json"
+    ) == added.model_dump(mode="json")
     assert deployment_configs.pool_config("missing") is None
 
 
@@ -212,7 +218,7 @@ def test_startup_failure_is_visible_and_blocks_new_spawns(monkeypatch):
     app = importlib.import_module("spindle.providers.modal.app")
     store = InMemoryKeyValueStore()
     row = deployment()
-    monkeypatch.setattr(app, "shared_kv", lambda: store)
+    monkeypatch.setattr(app, "shared_kv", lambda: RoutedTestStore(store))
 
     async def run():
         await store.put(
@@ -223,32 +229,29 @@ def test_startup_failure_is_visible_and_blocks_new_spawns(monkeypatch):
                 "failed_at": app.time.time(),
             },
         )
-        with pytest.raises(ValueError, match="Trainer startup failed.*failed-instance"):
+        with pytest.raises(
+            ValueError, match=r"Trainer startup failed.*failed-instance"
+        ):
             await app._spawn_engine(row.definition_id, "new-instance")
         assert await app.deployment_error("legacy") is None
 
     asyncio.run(run())
 
 
-def test_real_modal_app_constructs_from_configs_without_legacy_catalog(tmp_path):
-    row = deployment()
-    env = {
-        **os.environ,
-        deployment_configs.CONFIGS_FILE_ENV: write_configs(tmp_path, [row]),
-    }
+def test_real_modal_app_constructs_from_frontend_settings_without_static_configs():
+    env = os.environ.copy()
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             """
-import importlib, sys, modal
+import asyncio, importlib, sys, modal
 from spindle.providers.modal import deployment_apps, deployment_configs
-deployment_apps.image_for = lambda backend: modal.Image.debian_slim()
+deployment_apps.image_for = lambda backend, name="": modal.Image.debian_slim()
 app = importlib.import_module('spindle.providers.modal.app')
-assert len(app.DEFINITIONS) == 1
 assert app.APP_NAME == 'spindle'
-assert app.deployed_configs.local() == [d.model_dump(mode='json') for d in app.configs_from_env()]
-assert app.DEFINITIONS[0].trainer_app_name
+assert deployment_configs.FRONTEND_SETTINGS_ENV in app.TRAINER_DEPLOYMENT_ENV
+assert not hasattr(app.DEPLOYMENTS, 'base')
 assert not any(name.startswith('spindle.providers.modal.definitions.') for name in sys.modules)
 print('constructed')
 """,
@@ -262,17 +265,8 @@ print('constructed')
     assert "constructed" in result.stdout
 
 
-def test_frontend_with_every_bundled_config_keeps_env_values_under_linux_limit(
-    tmp_path,
-):
-    rows = [
-        DeploymentConfig.create(load(path))
-        for path in sorted(config_path("qwen35-9b-lora-16k").parent.glob("[!_]*.py"))
-    ]
-    env = {
-        **os.environ,
-        deployment_configs.CONFIGS_FILE_ENV: write_configs(tmp_path, rows),
-    }
+def test_frontend_settings_keep_env_values_under_linux_limit():
+    env = os.environ.copy()
     result = subprocess.run(
         [
             sys.executable,
@@ -282,7 +276,7 @@ import importlib, modal
 from spindle.providers.modal import deployment_apps
 deployment_apps.image_for = lambda backend: modal.Image.debian_slim()
 app = importlib.import_module('spindle.providers.modal.app')
-print(len(app.DEFINITIONS), max(len(value) for value in app.TRAINER_DEPLOYMENT_ENV.values()))
+print(max(len(value) for value in app.TRAINER_DEPLOYMENT_ENV.values()))
 """,
         ],
         env=env,
@@ -291,8 +285,7 @@ print(len(app.DEFINITIONS), max(len(value) for value in app.TRAINER_DEPLOYMENT_E
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
-    definitions, longest = map(int, result.stdout.split())
-    assert definitions == len(rows)
+    (longest,) = map(int, result.stdout.split())
     assert longest < LINUX_ENV_VALUE_LIMIT
 
 
@@ -316,11 +309,8 @@ def test_admission_changes_preserve_serialized_trainer(builders):
 
 
 @pytest.mark.parametrize("kind", ["lora", "full"])
-def test_pool_launch_uses_only_generic_deployment_app(monkeypatch, tmp_path, kind):
+def test_pool_launch_uses_only_generic_deployment_app(monkeypatch, kind):
     row = deployment("qwen35-9b-lora-16k" if kind == "lora" else "qwen35-4b-fft-64k")
-    monkeypatch.setenv(
-        deployment_configs.CONFIGS_FILE_ENV, write_configs(tmp_path, [row])
-    )
     module = lora_pool if kind == "lora" else fft_pool
     spec = (
         LoraPoolSpec(row.definition_id)
@@ -359,10 +349,12 @@ def test_pool_launch_uses_only_generic_deployment_app(monkeypatch, tmp_path, kin
 
 
 @pytest.mark.parametrize("kind", ["lora", "full"])
-def test_missing_pool_uses_saved_provisioner(monkeypatch, tmp_path, kind):
+def test_missing_pool_uses_saved_provisioner(monkeypatch, kind):
     row = deployment("qwen35-9b-lora-16k" if kind == "lora" else "qwen35-4b-fft-64k")
-    monkeypatch.setenv(
-        deployment_configs.CONFIGS_FILE_ENV, write_configs(tmp_path, [row])
+    monkeypatch.setattr(
+        deployment_configs,
+        "deployment_kv",
+        lambda: SimpleNamespace(read={row.name: row.model_dump(mode="json")}.get),
     )
     module = lora_pool if kind == "lora" else fft_pool
     spec = (
@@ -455,7 +447,11 @@ def test_spawn_passes_job_configuration_to_saved_trainer(monkeypatch):
 
     monkeypatch.setattr(app, "deployment_error", no_error)
     monkeypatch.setattr(app, "current_app_id", lambda: "ap-frontend")
-    monkeypatch.setattr(app, "module_for", lambda _: row)
+
+    async def module_for(_):
+        return row
+
+    monkeypatch.setattr(app, "module_for", module_for)
     monkeypatch.setattr(
         modal.Function,
         "from_name",
@@ -495,6 +491,51 @@ def test_declared_compute_settings_reach_modal(builders):
     )
     assert (server["min_containers"], server["max_containers"]) == (1, 3)
     assert server["ephemeral_disk"] == 550_000
+
+
+def test_recipes_select_trainer_images(builders, monkeypatch):
+    image_for = deployment_apps.image_for
+    assert image_for("miles") is deployment_apps.miles_image
+    assert image_for("megatron") is deployment_apps.megatron_image
+    assert image_for("sglang") is deployment_apps.rollout_image
+    assert (
+        image_for("sglang", "sglang-v0.5.23-c4182b2") is deployment_apps.rollout_image
+    )
+    with pytest.raises(ValueError, match="unknown trainer image"):
+        image_for("miles", "missing")
+    with pytest.raises(ValueError, match="unknown sampler image"):
+        image_for("sglang", "miles-v0.1.1-fdd808c")
+
+    trainer_image = object()
+    monkeypatch.setitem(deployment_apps.TRAINER_IMAGES, "trainer-x", trainer_image)
+    spec = deepcopy(deployment().recipe)
+    spec.trainer_image = "trainer-x"
+    row = DeploymentConfig.create(spec)
+    trainer_app, _ = deployment_apps.build_trainer_app(row)
+    trainer, _ = trainer_app.functions["trainer"]
+    assert trainer["image"] is trainer_image
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(config_path("qwen35-9b-lora-16k").parent.glob("[!_]*.py")),
+    ids=lambda path: path.stem,
+)
+def test_bundled_configs_pin_their_own_images(path, monkeypatch):
+    recipe = load(path)
+    declared = vars(type(recipe))
+    # A pin inherited from a parent config would move whenever the parent is upgraded.
+    assert declared.get("trainer_image") and declared.get("inference_image")
+    monkeypatch.setattr(deployment_apps.modal, "is_local", lambda: True)
+    deployment_apps.image_for(recipe.backend, recipe.trainer_image)
+    deployment_apps.image_for("sglang", recipe.inference_image)
+
+
+def test_deepseek_v41_lora_trainer_image_is_registered():
+    assert (
+        deployment_apps.image_for("miles", "miles-v0.1.2-f2f8447")
+        is deployment_apps.miles_v012_image
+    )
 
 
 def test_gpu_type_lists_become_modal_fallbacks(builders):
@@ -553,19 +594,52 @@ def test_scheduled_gpus_are_logged(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.parametrize("rdma", [False, True])
+def test_single_node_trainer_rdma_allocation(builders, monkeypatch, rdma):
+    row = deployment()
+    row.recipe.trainer_rdma = rdma
+    clusters = []
+
+    def clustered(*, size, rdma):
+        clusters.append((size, rdma))
+        return lambda fn: fn
+
+    monkeypatch.setattr(modal, "clustered", clustered)
+    app, _ = deployment_apps.build_trainer_app(row, image="test")
+    settings, _ = app.functions["trainer"]
+    assert clusters == ([(1, True)] if rdma else [])
+    assert settings["experimental_options"] == ({"efa_enabled": True} if rdma else {})
+    restored = DeploymentConfig.model_validate_json(row.model_dump_json())
+    assert restored.recipe.trainer_rdma == rdma
+    assert restored.trainer_identity() == row.trainer_identity()
+
+
+@pytest.mark.parametrize("rdma", [False, True])
+def test_trainer_can_exclude_reserved_capacity(builders, monkeypatch, rdma):
+    row = deployment()
+    row.recipe.trainer_rdma = rdma
+    monkeypatch.setitem(row.recipe.platform["modal"], "exclude_reserved_capacity", True)
+    monkeypatch.setattr(modal, "clustered", lambda **_: lambda fn: fn)
+    app, _ = deployment_apps.build_trainer_app(row, image="test")
+    settings, _ = app.functions["trainer"]
+    assert settings["experimental_options"] == (
+        {"efa_enabled": True, "exclude_reserved_capacity": True} if rdma else {}
+    )
+
+
 def test_multinode_trainer_uses_cluster_launcher(builders, monkeypatch):
     row = deployment("qwen38-27b-lora-256k")
     clusters = []
 
-    def clustered(nodes, *, rdma):
-        clusters.append((nodes, rdma))
+    def clustered(*, size, rdma):
+        clusters.append((size, rdma))
 
         def decorate(fn):
             return fn
 
         return decorate
 
-    monkeypatch.setattr(modal.experimental, "clustered", clustered)
+    monkeypatch.setattr(modal, "clustered", clustered)
     app, _ = deployment_apps.build_trainer_app(row, image="test")
     settings, _ = app.functions["trainer"]
     assert clusters == [(2, True)]
@@ -613,6 +687,20 @@ def test_multinode_trainer_uses_cluster_launcher(builders, monkeypatch):
     deployment_apps.run_trainer(row, "worker")
     assert len(calls) == 1
     assert len(warmed) == 1
+
+
+def test_samplers_keep_sglang_caches_local_unless_the_recipe_moves_them(builders):
+    row = deployment()
+    app, _ = deployment_apps.build_rollout_app(
+        row, LoraPoolSpec(row.definition_id), image="test"
+    )
+    assert "SGLANG_CACHE_DIR" not in app.servers["Server"][0]["env"]
+
+    row.recipe.inference_env = {"SGLANG_CACHE_DIR": "/tmp/sglang"}
+    app, _ = deployment_apps.build_rollout_app(
+        row, LoraPoolSpec(row.definition_id), image="test"
+    )
+    assert app.servers["Server"][0]["env"]["SGLANG_CACHE_DIR"] == "/tmp/sglang"
 
 
 def test_launchers_do_not_reparse_backend_config(builders, monkeypatch):

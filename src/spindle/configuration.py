@@ -41,13 +41,21 @@ class BaseConfig:
     trainer_gpu = "H100"
     trainer_gpus_per_node = 1
     trainer_nodes = 1
+    # Request an RDMA allocation even for a single trainer node.
+    trainer_rdma = False
     trainer_cpu = 8
     trainer_memory_mib = 32768
     trainer_disk_mib = 0
     trainer_max_instances = 1
     trainer_max_clients_per_instance = 1
+    # Clients whose forward_backward requests may share one trainer call; None packs all.
+    trainer_max_clients_per_batch = None
     trainer_timeout_s = 86400
     trainer_env = {}
+    # A built-in trainer image name or module:attribute; empty uses the default.
+    trainer_image = ""
+    # A built-in sampler image name or module:attribute; empty uses the default.
+    inference_image = ""
     sampler_persistence_concurrency = 8
 
     inference_gpu = "H100"
@@ -57,10 +65,27 @@ class BaseConfig:
     inference_disk_mib = 0
     inference_min_replicas = 0
     inference_max_replicas = 8
-    inference_target_concurrency = 16
+    # None scales out when a replica's max_running_requests slots are full.
+    inference_target_concurrency = None
+    # None measures the rate from the pool's own prefills.
+    inference_routing_prefill_tokens_per_second = None
+    # None allows a gap of 40% of max_running_requests, at least 4.
+    inference_routing_balance_absolute = None
+    inference_routing_balance_relative = 1.25
+    inference_routing_cache_threshold = 0.5
+    # None picks cache_wait for LoRA pools with one SGLang data-parallel rank,
+    # and affinity otherwise.
+    inference_lora_routing = None
+    # None uses Modal's default, which adds replicas as soon as load passes the target.
+    inference_scaleup_window_s = None
     inference_scaledown_window_s = 300
     inference_startup_timeout_s = 1200
     inference_env = {}
+    # Optional Hugging Face checkpoint used by SGLang speculative decoding.
+    # It is downloaded alongside the base model and passed as a local path.
+    # NEXTN without a separate draft reuses the target checkpoint.
+    inference_draft_model = ""
+    inference_draft_model_revision = ""
 
     miles_cfg = {}
     megatron_cfg = {}

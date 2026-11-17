@@ -14,8 +14,17 @@ from tinker.types.forward_backward_input import ForwardBackwardInput
 from spindle.encoding import fingerprint
 from spindle.errors import EngineSaturated, RecordNotFound, SequenceConflict
 from spindle.request_timing import mark
+from spindle.usage import ContainerUsage
+from spindle.usage.meter import WINDOW_S
 
-from .api import Command, Executor, FutureState, FutureStatus, OperationKind
+from .api import (
+    BATCHED_OPERATIONS,
+    Command,
+    Executor,
+    FutureState,
+    FutureStatus,
+    OperationKind,
+)
 from .ingress import decode_forward_backward, decode_json_operation
 from .operations import (
     LoadCheckpointPayload,
@@ -26,6 +35,13 @@ from .operations import (
 from .training_transport import encode_payload
 
 PERSISTED_OPERATIONS = {
+    OperationKind.SAVE_WEIGHTS,
+    OperationKind.SAVE_WEIGHTS_FOR_SAMPLER,
+}
+# Quick operations that send a client back to sampling. They run ahead of other queued work.
+# Saves only take a snapshot here; writing it out happens in the background.
+SHORT_OPERATIONS = {
+    OperationKind.OPTIM_STEP,
     OperationKind.SAVE_WEIGHTS,
     OperationKind.SAVE_WEIGHTS_FOR_SAMPLER,
 }
@@ -62,7 +78,7 @@ class Observer(Protocol):
 
 
 def _failure(exc: BaseException, what: str) -> str:
-    logging.getLogger(__name__).exception("engine %s failed", what)
+    logging.getLogger(__name__).error("engine %s failed", what, exc_info=exc)
     return f"{type(exc).__name__}: {exc}"
 
 
@@ -74,6 +90,7 @@ class Operation:
     kind: OperationKind
     payload: OperationPayload
     encoded_payload: bytes | None = field(default=None, compare=False, repr=False)
+    queued_at: float = field(default_factory=time.monotonic, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -123,6 +140,8 @@ class Engine:
         observer: Observer | None = None,
         sampler_persistence_concurrency: int = 1,
         max_forward_backward_batch: int | None = None,
+        max_forward_backward_models: int | None = None,
+        usage: ContainerUsage | None = None,
     ) -> None:
         if sampler_persistence_concurrency < 1:
             raise ValueError("sampler_persistence_concurrency must be positive")
@@ -130,8 +149,11 @@ class Engine:
             raise ValueError("result_retention_s must not be negative")
         if max_forward_backward_batch is not None and max_forward_backward_batch < 1:
             raise ValueError("max_forward_backward_batch must be positive")
+        if max_forward_backward_models is not None and max_forward_backward_models < 1:
+            raise ValueError("max_forward_backward_models must be positive")
         self.executor = executor
         self.observer = observer
+        self.usage = usage
         self._persistence_active: dict[str, int] = {}
         self.max_models = max_models
         self.max_buffered = max_buffered
@@ -139,6 +161,7 @@ class Engine:
         self.result_retention_s = result_retention_s
         self.sampler_persistence_concurrency = sampler_persistence_concurrency
         self.max_forward_backward_batch = max_forward_backward_batch
+        self.max_forward_backward_models = max_forward_backward_models
         self._sampler_inflight: set[str] = set()
         self._serial_persistence_inflight: set[OperationKind] = set()
         self.draining = False
@@ -174,7 +197,7 @@ class Engine:
                 return False
             else:
                 registration = model.registration
-        return await asyncio.shield(registration)
+        return await asyncio.shield(registration)  # ty: ignore[invalid-argument-type]
 
     async def model_ids(self) -> tuple[str, ...]:
         async with self._lock:
@@ -320,7 +343,7 @@ class Engine:
                         self._work.notify_all()
                         self._completed.notify_all()
             if ready is None:
-                await asyncio.shield(done)
+                await asyncio.shield(done)  # ty: ignore[invalid-argument-type]
                 return
             await ready.wait()
 
@@ -437,17 +460,33 @@ class Engine:
 
     async def _run_loop(self) -> None:
         busy = False
+        working_since: float | None = None
         while True:
             async with self._lock:
+                waiting_since = time.monotonic()
+                if working_since is not None and self.usage is not None:
+                    self.usage.busy(waiting_since - working_since)
                 if busy and (self._closing or self._ready_batch() is None):
                     self._observe_state(tuple(self._models), "idle")
                     busy = False
                 while not self._closing and (operations := self._ready_batch()) is None:
-                    await self._work.wait()
+                    try:
+                        await asyncio.wait_for(
+                            self._work.wait(),
+                            None if self.usage is None else WINDOW_S,
+                        )
+                    except TimeoutError:
+                        now = time.monotonic()
+                        if self.usage is not None:
+                            self.usage.idle(now - waiting_since)
+                        waiting_since = now
+                if self.usage is not None:
+                    self.usage.idle(time.monotonic() - waiting_since)
                 if self._closing:
                     return
-                self._consume_ready(operations)
+                self._consume_ready(operations)  # ty: ignore[invalid-argument-type]
             busy = True
+            working_since = time.monotonic()
             operation = operations[0]
             if isinstance(operation, _AcceptOperation):
                 await self._run_accept(operation)
@@ -477,20 +516,8 @@ class Engine:
             )
             started = time.time()
             try:
-                if operation.kind == OperationKind.FORWARD_BACKWARD:
-                    results = await self.executor.execute_forward_backward_batch(
-                        tuple(
-                            Command(
-                                item.model_id,
-                                item.kind,
-                                item.payload,
-                                item.encoded_payload,
-                            )
-                            for item in operations
-                        )
-                    )
-                    if len(results) != len(operations):
-                        raise RuntimeError("executor returned the wrong result count")
+                if operation.kind in BATCHED_OPERATIONS:
+                    results = await self._execute_batch(operations)  # ty: ignore[invalid-argument-type]
                 else:
                     results = (
                         await self.executor.execute(
@@ -510,10 +537,18 @@ class Engine:
                     ok=True,
                 )
             except Exception as exc:  # noqa: BLE001
-                error = _failure(exc, f"{operation.kind.value} x{len(operations)}")
-                states = tuple(
-                    FutureState(FutureStatus.FAILED, error=error) for _ in operations
-                )
+                error = _failure(exc, f"{operation.kind.value} x{len(operations)}")  # ty: ignore[invalid-argument-type]
+                if operation.kind == OperationKind.FORWARD and len(operations) > 1:  # ty: ignore[invalid-argument-type]
+                    # Forwards change no state: retry alone so one client's bad
+                    # input does not fail the others it was batched with.
+                    states = tuple(
+                        [await self._execute_alone(item) for item in operations]  # ty: ignore[invalid-argument-type]
+                    )
+                else:
+                    states = tuple(
+                        FutureState(FutureStatus.FAILED, error=error)
+                        for _ in operations
+                    )
                 mark(
                     "engine.op.exec_end",
                     kind=operation.kind.value,
@@ -526,17 +561,37 @@ class Engine:
                 "gpu",
                 started,
                 seq_ids=[item.seq_id for item in operations],
-                n=len(operations),
+                n=len(operations),  # ty: ignore[invalid-argument-type]
                 ok=all(state.status == FutureStatus.COMPLETE for state in states),
             )
             async with self._lock:
-                for item, state in zip(operations, states, strict=True):
-                    self._finish(item, state)
+                for item, state in zip(operations, states, strict=True):  # ty: ignore[invalid-argument-type]
+                    self._finish(item, state)  # ty: ignore[invalid-argument-type]
             mark(
                 "engine.op.finished",
                 kind=operation.kind.value,
                 request_ids=[item.request_id for item in operations],
             )
+
+    async def _execute_batch(self, operations: tuple[Operation, ...]) -> tuple:
+        results = await self.executor.execute_forward_backward_batch(
+            tuple(
+                Command(item.model_id, item.kind, item.payload, item.encoded_payload)
+                for item in operations
+            )
+        )
+        if len(results) != len(operations):
+            raise RuntimeError("executor returned the wrong result count")
+        return results
+
+    async def _execute_alone(self, operation: Operation) -> FutureState:
+        try:
+            (result,) = await self._execute_batch((operation,))
+        except Exception as exc:  # noqa: BLE001
+            return FutureState(
+                FutureStatus.FAILED, error=_failure(exc, operation.kind.value)
+            )
+        return FutureState(FutureStatus.COMPLETE, result=result)
 
     async def _run_accept(self, operation: _AcceptOperation) -> None:
         error = None
@@ -716,6 +771,13 @@ class Engine:
     def _finish(self, operation: Operation, state: FutureState) -> None:
         if self.observer is not None:
             self.observer.finish(operation, state)
+        if (
+            self.usage is not None
+            and state.status == FutureStatus.COMPLETE
+            and operation.kind
+            in (OperationKind.FORWARD, OperationKind.FORWARD_BACKWARD)
+        ):
+            self.usage.trained(operation.model_id, operation.payload)
         model = self._models.get(operation.model_id)
         if model is not None and model.unload is None:
             self._futures[operation.request_id] = state
@@ -774,16 +836,25 @@ class Engine:
                 ready.append(operation)
         if not ready:
             return None
+        ready.sort(
+            key=lambda operation: (
+                operation.kind not in SHORT_OPERATIONS,
+                operation.queued_at,
+            )
+        )
 
         selected = [ready[0]]
-        if ready[0].kind == OperationKind.FORWARD_BACKWARD:
+        if ready[0].kind in BATCHED_OPERATIONS:
             limit = self.max_forward_backward_batch
+            models = self.max_forward_backward_models
             key = self._forward_backward_batch_key(ready[0])
             for operation in ready[1:]:
                 if limit is not None and len(selected) >= limit:
                     break
+                if models is not None and len(selected) >= models:
+                    break
                 if (
-                    operation.kind == OperationKind.FORWARD_BACKWARD
+                    operation.kind in BATCHED_OPERATIONS
                     and self._forward_backward_batch_key(operation) == key
                 ):
                     selected.append(operation)
@@ -793,7 +864,7 @@ class Engine:
                 while (
                     (limit is None or len(selected) < limit)
                     and (queued := buffered.get(seq_id)) is not None
-                    and queued.kind == OperationKind.FORWARD_BACKWARD
+                    and queued.kind in BATCHED_OPERATIONS
                     and self._forward_backward_batch_key(queued) == key
                 ):
                     selected.append(queued)

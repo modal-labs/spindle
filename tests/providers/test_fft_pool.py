@@ -69,6 +69,10 @@ def test_pool_spec_round_trips_sizing_through_dict_and_env() -> None:
             "version": 3,
         }
     ) == fft_pool.FFTPoolSpec("definition", "model", False, 3)
+    named = fft_pool.FFTPoolSpec.base("definition", "my-spindle")
+    assert named.app_name.startswith("my-spindle-fft-")
+    assert fft_pool.FFTPoolSpec.from_dict(named.as_dict()) == named
+    assert fft_pool.FFTPoolSpec.base("definition").app_name.startswith("spindle-fft-")
     env = spec.env()
     assert env["SPINDLE_FFT_POOL_APP_NAME"] == spec.app_name
     assert env["SPINDLE_FFT_POOL_LATEST"] == "1"

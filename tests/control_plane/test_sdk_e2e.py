@@ -1,5 +1,4 @@
 import asyncio
-import dataclasses
 import importlib
 import itertools
 import json
@@ -121,11 +120,19 @@ def test_real_sdk_training_loop(base_url: str) -> None:
     service = tinker.ServiceClient(base_url=base_url, api_key=API_KEY)
 
     capabilities = service.get_server_capabilities()
-    assert [
-        (m.model_name, m.max_context_length) for m in capabilities.supported_models
-    ] == [(BASE_MODEL, MAX_CONTEXT_LENGTH)]
+    # Every field the SDK parses, so a new SDK field shows up here when CI tests it.
+    assert [m.model_dump() for m in capabilities.supported_models] == [
+        {
+            "model_name": BASE_MODEL,
+            "max_context_length": MAX_CONTEXT_LENGTH,
+            "trainable": True,
+            "sampleable": True,
+        }
+    ]
 
-    training = service.create_lora_training_client(base_model=BASE_MODEL, rank=32)
+    training = service.create_lora_training_client(
+        base_model=BASE_MODEL, rank=32, seed=42
+    )
 
     datum = types.Datum(
         model_input=types.ModelInput.from_ints([1, 2, 3]),
@@ -202,11 +209,6 @@ def test_real_sdk_sampling_loop(base_url: str) -> None:
 
 
 def test_real_sdk_sequences_carry_distinct_sequence_ids(base_url: str) -> None:
-    sequence_fields = {
-        field.name for field in dataclasses.fields(types.SampledSequence)
-    }
-    if "sequence_id" not in sequence_fields:
-        pytest.skip("Tinker SDK before 0.26 has no SampledSequence.sequence_id")
     service = tinker.ServiceClient(base_url=base_url, api_key=API_KEY)
     sampling = service.create_sampling_client(base_model=BASE_MODEL)
 
@@ -438,20 +440,22 @@ def test_real_sdk_lists_and_deletes_checkpoints(tmp_path, monkeypatch) -> None:
         training.load_state(newest.tinker_path).result(timeout=30)
         assert loaded[-1] == str(second)
 
-        with pytest.raises(tinker.APIStatusError) as archive:
-            rest.get_checkpoint_archive_url_from_tinker_path(newest.tinker_path).result(
-                timeout=30
+        # Tinker 0.36 removed checkpoint archive URLs from the SDK.
+        if hasattr(rest, "get_checkpoint_archive_url_from_tinker_path"):
+            with pytest.raises(tinker.APIStatusError) as archive:
+                rest.get_checkpoint_archive_url_from_tinker_path(
+                    newest.tinker_path
+                ).result(timeout=30)
+            assert archive.value.status_code == 405
+            assert archive.value.body["error"] == "unsupported"
+            assert (
+                f"modal volume get spindle-checkpoints /{second.relative_to(root)}"
+                in archive.value.body["message"]
             )
-        assert archive.value.status_code == 405
-        assert archive.value.body["error"] == "unsupported"
-        assert (
-            f"modal volume get spindle-checkpoints /{second.relative_to(root)}"
-            in archive.value.body["message"]
-        )
-        with pytest.raises(tinker.NotFoundError):
-            rest.get_checkpoint_archive_url_from_tinker_path(
-                f"tinker://{training.model_id}/weights/missing"
-            ).result(timeout=30)
+            with pytest.raises(tinker.NotFoundError):
+                rest.get_checkpoint_archive_url_from_tinker_path(
+                    f"tinker://{training.model_id}/weights/missing"
+                ).result(timeout=30)
 
         rest.delete_checkpoint_from_tinker_path(newest.tinker_path).result(timeout=30)
         remaining = rest.list_checkpoints(training.model_id).result(timeout=30)
@@ -476,6 +480,7 @@ def test_real_sdk_lost_model_fails_fast(tmp_path, monkeypatch) -> None:
     with serve(app) as url:
         service = tinker.ServiceClient(base_url=url, api_key=API_KEY)
         training = service.create_lora_training_client(base_model=BASE_MODEL, rank=32)
+        training.get_info()  # the model exists once this returns
         [instance] = asyncio.run(plane.engines.list_instances())
         asyncio.run(plane.engines.mark_dead(instance.instance_id))
 
@@ -575,6 +580,22 @@ def test_real_sdk_forward_only(base_url: str) -> None:
     result = training.forward([datum], "cross_entropy").result(timeout=30)
     assert result.metrics["loss:sum"] == 1.25
     assert len(result.loss_fn_outputs) == 1
+
+
+def test_finished_session_is_closed(base_url: str) -> None:
+    headers = {"x-api-key": API_KEY}
+    with httpx.Client(base_url=base_url, headers=headers) as client:
+        session_id = client.post("/api/v1/create_session", json={}).json()["session_id"]
+        finish = {"reason": {"type": "success"}, "detail": None}
+        url = f"/api/v1/sessions/{session_id}/finish"
+        assert client.post(url, json=finish).status_code == 200
+        assert client.post(url, json=finish).status_code == 200
+        heartbeat = {"session_id": session_id}
+        assert (
+            client.post("/api/v1/session_heartbeat", json=heartbeat).status_code == 409
+        )
+        missing = client.post("/api/v1/sessions/missing/finish", json=finish)
+        assert missing.status_code == 404
 
 
 def test_dynamic_config_requires_api_key(base_url: str) -> None:

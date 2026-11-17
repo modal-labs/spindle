@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -18,12 +20,12 @@ from rich.table import Table
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig, load
+from spindle.providers.modal.deployment_configs import deployed_configs
 
 CONFIG_DIR = Path(__file__).with_name("configs")
 SERVED_TIMEOUT_S = 20
 CONTEXT_CHOICES = (2_048, 16_384, 32_768, 65_536, 131_072, 262_144)
 DEFAULT_CONTEXT = 32_768
-DEFAULT_MODEL = "Qwen/Qwen3.6-35B-A3B"
 PROVIDER_ORDER = ("Qwen", "openai", "nvidia", "deepseek-ai", "zai-org", "moonshotai")
 MODE_LABELS = {"lora": "LoRA", "full": "Full fine-tune"}
 
@@ -200,9 +202,9 @@ def check_setup(console: Console, environment: str | None) -> None:
     fixes = []
     with console.status("Checking your Modal secrets..."):
         for secret in REQUIRED_SECRETS:
-            name = names[secret.platform_key]
+            name = names[secret.platform_key]  # ty: ignore[invalid-argument-type]
             label = f"{name} · {', '.join(secret.keys)}"
-            problem = secret_problem(name, secret.keys, environment)
+            problem = secret_problem(name, secret.keys, environment)  # ty: ignore[invalid-argument-type]
             if problem is None:
                 table.add_row("[green]✓[/green]", label, secret.purpose)
             else:
@@ -227,26 +229,28 @@ def ask(question):
     return answer
 
 
-def check_served(frontend: str, environment: str | None):
-    try:
-        return modal.Function.from_name(
-            frontend, "deployed_configs", environment_name=environment
-        ).spawn()
-    except modal.exception.NotFoundError:
-        return None
+def check_served(frontend: str, environment: str | None) -> Future:
+    """Start reading what the frontend serves while the user picks models."""
+    future = Future()
+
+    def run():
+        try:
+            future.set_result(deployed_configs(frontend, environment))
+        except BaseException as exc:
+            future.set_exception(exc)
+
+    threading.Thread(target=run, daemon=True).start()
+    return future
 
 
-def served_configs(console: Console, call) -> list[str] | None:
-    """Names the current frontend serves, or None if it doesn't answer in time."""
-    if call is None:
-        return []
+def served_configs(console: Console, served: Future) -> list[str] | None:
+    """Names the current frontend serves, or None if they can't be read in time."""
     with console.status("Checking what's already deployed..."):
         try:
-            rows = call.get(timeout=SERVED_TIMEOUT_S)
-        except (TimeoutError, modal.exception.TimeoutError):
-            call.cancel()
+            rows = served.result(timeout=SERVED_TIMEOUT_S)
+        except (TimeoutError, ValueError):
             return None
-    return [DeploymentConfig.model_validate(row).name for row in rows]
+    return [DeploymentConfig.from_registry(row).name for row in rows]
 
 
 def choose(console: Console, frontend: str, environment: str | None) -> list[Preset]:
@@ -267,11 +271,7 @@ def choose(console: Console, frontend: str, environment: str | None) -> list[Pre
         if index == 0 or provider(model) != provider(models[index - 1]):
             choices.append(questionary.Separator(f"── {provider(model)} ──"))
         choices.append(
-            questionary.Choice(
-                model_title(presets, model, width),
-                value=model,
-                checked=model == DEFAULT_MODEL,
-            )
+            questionary.Choice(model_title(presets, model, width), value=model)
         )
     selected = ask(
         questionary.checkbox(
@@ -313,7 +313,7 @@ def choose(console: Console, frontend: str, environment: str | None) -> list[Pre
                 questionary.Choice(f"{format_context(tokens)} tokens", value=tokens)
                 for tokens in CONTEXT_CHOICES
             ],
-            default=DEFAULT_CONTEXT,
+            default=DEFAULT_CONTEXT,  # ty: ignore[invalid-argument-type]
             instruction="(not sure? 32K covers most RL and SFT runs)",
         )
     )
@@ -346,7 +346,9 @@ def deploy_command(chosen: list[Preset]) -> str:
 
 
 def stop_command(frontend: str, environment: str | None) -> str:
-    return f"modal app stop {frontend}" + (f" -e {environment}" if environment else "")
+    return f"spindle stop --app {frontend}" + (
+        f" --env {environment}" if environment else ""
+    )
 
 
 def show_plan(
@@ -377,11 +379,12 @@ def show_plan(
             f"If it's broken, stop it with `{stop}`, then run spindle deploy again.[/yellow]"
         )
         served = []
-    dropped = sorted(set(served) - {preset.name for preset in chosen})
-    if dropped:
+    kept = sorted(set(served) - {preset.name for preset in chosen})
+    if kept:
         console.print(
-            f"[yellow]This replaces the current deployment: {len(dropped)} config(s) "
-            "not picked here will stop being served.[/yellow]"
+            f"Already deployed and kept serving: {', '.join(kept)}. "
+            "Stop the whole deployment with "
+            f"`{stop}` to remove them.\n"
         )
     console.print(
         f"Skip these prompts next time with:\n  [bold]{deploy_command(chosen)}[/bold]\n"
@@ -391,7 +394,7 @@ def show_plan(
 def deploy_with_progress(
     console: Console, steps, background=(), *, retry_command: str
 ) -> None:
-    """One row per step, in order; `background` (label, future) rows finish last and only warn."""
+    """One row per step, in order, with any note it returns; `background` (label, future) rows finish last and only warn."""
     console.print(
         "[dim]The first deploy in a workspace builds container images, which can take several minutes.[/dim]"
     )
@@ -404,7 +407,7 @@ def deploy_with_progress(
 
     def run(task, label, call):
         try:
-            call()
+            note = call()
         except Exception as exc:
             progress.update(task, description=f"[red]{label} failed[/red]")
             output = getattr(exc, "stderr", None) or getattr(exc, "stdout", None)
@@ -414,6 +417,8 @@ def deploy_with_progress(
                 f"Rerun with full Modal logs:\n  [bold]{retry_command}[/bold]"
             )
             raise
+        if note:
+            progress.update(task, description=f"{label} [dim]{escape(note)}[/dim]")
         progress.update(task, completed=1)
 
     def mark_done(task, future):

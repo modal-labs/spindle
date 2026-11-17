@@ -60,6 +60,7 @@ def install_replay_hooks(
     tinker_losses,
     fill_replay_data,
     manager,
+    math_utils=None,
 ) -> None:
     # The GPU actor imports Miles; this module also serves CPU-side mask tests.
     global _replayed_run
@@ -80,7 +81,11 @@ def install_replay_hooks(
 
     @wraps(original_batch)
     def get_batch(iterator, keys, *args, **kwargs):
-        for key in ("rollout_sampling_mask_ids", "rollout_sampling_mask_offsets"):
+        for key in (
+            "rollout_sampling_mask_ids",
+            "rollout_sampling_mask_offsets",
+            "rollout_sampling_mask_logprobs",
+        ):
             if key in iterator.rollout_data and key not in keys:
                 keys = [*keys, key]
         return original_batch(iterator, keys, *args, **kwargs)
@@ -132,7 +137,7 @@ def install_replay_hooks(
         )["log_probs"]
 
     tinker_losses._target_logprobs = target_logprobs
-    install_multi_target_hooks(tinker_losses)
+    install_multi_target_hooks(tinker_losses, math_utils)
     original_iterator = lora_model.get_data_iterator
 
     @wraps(original_iterator)
@@ -157,7 +162,8 @@ def install_replay_hooks(
     original_run = lora_model.run_forward_backward
 
     @wraps(original_run)
-    def run(args, batch_id, model, rollout_data, **kwargs):
+    def run(args, batch_id, model, *batch_args, **kwargs):
+        rollout_data = batch_args[-1]
         replay = manager.data_key in rollout_data
         enabled, stage = manager.enabled, manager.stage
         if replay and (not enabled or not manager.replays):
@@ -170,7 +176,7 @@ def install_replay_hooks(
             # Miles switches to replay_forward around each forward; recompute
             # consumes the separate backward cursor after that stage restores.
             manager.stage = "replay_backward"
-            return original_run(args, batch_id, model, rollout_data, **kwargs)
+            return original_run(args, batch_id, model, *batch_args, **kwargs)
         finally:
             manager.clear_all()
             manager.enabled, manager.stage = enabled, stage

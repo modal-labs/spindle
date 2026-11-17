@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
+import json
+import os
+import time
 import uuid
+from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,6 +20,24 @@ from stitch.types import VersionConstraint, VersionRef
 from spindle.startup_timing import timeline
 
 from .bulletin import SnapshotBulletin, SnapshotNotFound
+from .request_replay import RequestReplay
+
+
+ABORT_TIMEOUT_SECONDS = 2.0
+ROUTING_CATALOG_PATH = Path("/tmp/spindle-routing-work.json")
+ROUTING_CATALOG_REFRESH_SECONDS = 0.5
+
+
+def _routing_adapter(payload: dict) -> str:
+    """Exact pins are known before load; other requests use the resolved path."""
+    constraint = VersionConstraint.from_payload(payload)
+    run_id = payload.get("weight_run_id")
+    if run_id is not None and constraint.exact_version is not None:
+        return VersionRef(str(run_id), constraint.exact_version).identity
+    return payload.get("lora_path", "base")
+
+
+FETCH_METRICS_TIMEOUT_SECONDS = 2.0
 
 
 def create_app(
@@ -39,9 +60,15 @@ def create_app(
         app.state.adapter_lock = asyncio.Lock()
         app.state.registered_adapters = {}
         app.state.adapter_resolutions = {}
+        app.state.routing_requests = {}
+        app.state.request_work = {}
+        app.state.routing_catalog = {}
+        app.state.routing_read_at = 0.0
+        app.state.request_replay = RequestReplay()
         try:
             yield
         finally:
+            await app.state.request_replay.aclose()
             pending = list(app.state.adapter_resolutions.values())
             for task in pending:
                 task.cancel()
@@ -49,6 +76,72 @@ def create_app(
             await app.state.client.aclose()
 
     app = FastAPI(lifespan=lifespan)
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        try:
+            response = await app.state.client.get(
+                "/metrics", timeout=FETCH_METRICS_TIMEOUT_SECONDS
+            )
+        except httpx.RequestError:
+            return Response(status_code=503)
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            media_type=response.headers.get("content-type"),
+        )
+
+    @app.get("/routing-state")
+    async def routing_state():
+        now = time.monotonic()
+        if now - app.state.routing_read_at > ROUTING_CATALOG_REFRESH_SECONDS:
+            app.state.routing_read_at = now
+            try:
+                app.state.routing_catalog = json.loads(
+                    await asyncio.to_thread(ROUTING_CATALOG_PATH.read_text)
+                )
+            except (OSError, ValueError):
+                app.state.routing_catalog = {}
+        snapshot = app.state.routing_catalog
+        pending_adapters = sorted(set(app.state.routing_requests.values()))
+        work = None
+        if snapshot:
+            rows = {
+                row["rid"]: row
+                for row in snapshot["requests"]
+                if row["rid"] in app.state.routing_requests
+            }
+            rows.update(
+                (rid, row)
+                for rid, row in app.state.request_work.items()
+                if rid not in rows
+            )
+            work = dict(
+                age_seconds=time.time() - snapshot["timestamp"],
+                prefixes=snapshot["prefixes"],
+                cpu_adapters=snapshot["cpu_adapters"],
+                gpu_adapters=snapshot["gpu_adapters"],
+                request_ids=list(rows),
+                pending_adapters=pending_adapters,
+                prefill_tokens=sum(row["prefill_tokens"] for row in rows.values()),
+                decode_tokens=sum(row["decode_tokens"] for row in rows.values()),
+                snapshot_seconds=snapshot["snapshot_seconds"],
+                cache_kind=snapshot["cache_kind"],
+                running_requests=snapshot["running_requests"],
+                waiting_requests=snapshot["waiting_requests"],
+                kv_used_tokens=snapshot.get("kv_used_tokens", 0),
+                kv_capacity_tokens=snapshot.get("kv_capacity_tokens", 0),
+            )
+        return {
+            "replica": os.environ.get("MODAL_TASK_ID", "local"),
+            "active": len(app.state.routing_requests),
+            "adapters": dict(Counter(app.state.routing_requests.values())),
+            "request_ids": list(app.state.routing_requests),
+            "pending_adapters": pending_adapters,
+            "cpu_adapters": snapshot.get("cpu_adapters", []),
+            "age_seconds": time.time() - snapshot["timestamp"] if snapshot else None,
+            "work": work,
+        }
 
     @app.get("/health")
     async def health() -> Response:
@@ -62,6 +155,51 @@ def create_app(
     @app.post("/generate")
     async def generate(request: Request) -> Response:
         payload = await request.json()
+        rid = payload.setdefault("rid", f"spindle-{uuid.uuid4().hex}")
+        # Deduplicate scalar attempts. Preserve the existing batch-ID path;
+        # its separate engine request IDs do not identify one shared attempt.
+        replay_id = rid if isinstance(rid, str) else object()
+        response = await app.state.request_replay.run(
+            replay_id,
+            await request.body(),
+            lambda: generate_once(payload),
+            request.is_disconnected,
+        )
+        if response is None:
+            response = Response(status_code=499)
+        response.headers["x-spindle-replica"] = os.environ.get("MODAL_TASK_ID", "local")
+        return response
+
+    def remember_request(payload: dict, adapter: str | None = None) -> None:
+        rid = payload.get("rid")
+        if not isinstance(rid, str):
+            return
+        if adapter is None:
+            adapter = _routing_adapter(payload)
+        app.state.routing_requests[rid] = adapter
+        work = app.state.request_work.get(rid)
+        if work is None:
+            sampling = payload.get("sampling_params") or {}
+            app.state.request_work[rid] = dict(
+                rid=rid,
+                adapter=adapter,
+                prefill_tokens=len(payload.get("input_ids", ())),
+                decode_tokens=sampling.get("max_new_tokens", 1),
+            )
+        else:
+            work["adapter"] = adapter
+
+    async def generate_once(payload: dict) -> Response:
+        rid = payload["rid"]
+        remember_request(payload)
+        try:
+            return await generate_response(payload)
+        finally:
+            if isinstance(rid, str):
+                app.state.routing_requests.pop(rid, None)
+                app.state.request_work.pop(rid, None)
+
+    async def generate_response(payload: dict) -> Response:
         run_id = payload.pop("weight_run_id", None)
         constraint = VersionConstraint.from_payload(payload)
         payload.pop("weight_version", None)
@@ -85,9 +223,8 @@ def create_app(
                     status_code=409,
                 )
 
-        response = await _post_generate(app.state.client, request, payload)
-        if response is None:
-            return Response(status_code=499)
+        remember_request(payload, payload.get("lora_path", "base"))
+        response = await _post_generate(app.state.client, payload)
         try:
             body = response.json()
         except ValueError:
@@ -161,7 +298,9 @@ async def _prepare_adapter(
                         "pinned": False,
                     },
                 )
-                if response.is_error:
+                if response.is_error and not await _adapter_is_registered(
+                    app.state.client, resolved.identity, str(path)
+                ):
                     return resolved, response
                 if not app.state.registered_adapters:
                     timeline("sampler-sidecar").mark(
@@ -186,39 +325,44 @@ async def _prepare_adapter(
     return await asyncio.shield(task)
 
 
+async def _adapter_is_registered(
+    client: httpx.AsyncClient, name: str, path: str
+) -> bool:
+    try:
+        response = await client.get("/v1/models", timeout=10.0)
+        response.raise_for_status()
+        models = response.json().get("data", [])
+        return any(
+            model.get("id") == name and model.get("root") == path for model in models
+        )
+    except (httpx.HTTPError, ValueError, AttributeError, TypeError):
+        return False
+
+
 async def _post_generate(
     client: httpx.AsyncClient,
-    request: Request,
     payload: dict,
-) -> httpx.Response | None:
-    rid = payload.setdefault("rid", f"spindle-{uuid.uuid4().hex}")
-    task = asyncio.create_task(client.post("/generate", json=payload))
+) -> httpx.Response:
     try:
-        while not task.done():
-            done, _ = await asyncio.wait((task,), timeout=0.25)
-            if done:
-                break
-            if await request.is_disconnected():
-                await _abort(client, rid)
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-                return None
-        return await task
+        return await client.post("/generate", json=payload)
     except asyncio.CancelledError:
-        await _abort(client, rid)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await _abort(client, payload["rid"])
         raise
 
 
 async def _abort(client: httpx.AsyncClient, rid) -> None:
     rids = rid if isinstance(rid, list) else [rid]
-    await asyncio.gather(
-        *(client.post("/abort_request", json={"rid": str(item)}) for item in rids),
-        return_exceptions=True,
-    )
+    try:
+        async with asyncio.timeout(ABORT_TIMEOUT_SECONDS):
+            await asyncio.gather(
+                *(
+                    client.post("/abort_request", json={"rid": str(item)})
+                    for item in rids
+                ),
+                return_exceptions=True,
+            )
+    except TimeoutError:
+        pass
 
 
 def main() -> None:

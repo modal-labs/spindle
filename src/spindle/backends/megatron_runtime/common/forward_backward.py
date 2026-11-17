@@ -9,10 +9,18 @@ from typing import Any
 import torch
 from tinker import ForwardBackwardOutput, TensorData
 
+from spindle.backends.score_centering import (
+    REPLAY_LOSSES,
+    policy_objective,
+    replay_logprobs,
+    validate_loss_config,
+    validate_support,
+)
 from spindle.replay import REPLAY_FIELDS
 from spindle.telemetry import backend as telemetry
 
 from ...contract import ForwardBatch
+from .chunked_logprobs import chunked_logprobs, materialize_logits
 
 
 def log_packing(
@@ -81,6 +89,10 @@ def _packed_seq_idx(
 
 
 def _loss_config(loss_name: str, config: dict[str, float]) -> dict[str, float]:
+    if loss_name in REPLAY_LOSSES:
+        values = {key: float(value) for key, value in config.items()}
+        validate_loss_config(loss_name, values)
+        return values
     allowed = {
         "cross_entropy": frozenset(),
         "importance_sampling": frozenset(),
@@ -117,7 +129,20 @@ def _loss_config(loss_name: str, config: dict[str, float]) -> dict[str, float]:
     return values
 
 
-RL_LOSSES = frozenset({"importance_sampling", "ppo", "cispo", "dro", "dppo"})
+DUMMY_TOKENS = 128
+
+RL_LOSSES = frozenset(
+    {
+        "importance_sampling",
+        "ppo",
+        "cispo",
+        "dro",
+        "dppo",
+        "mis",
+        "score_centered",
+        "score_centered_mis",
+    }
+)
 
 
 def build_sequence_batches(
@@ -141,9 +166,13 @@ def build_sequence_batches(
         if not item.data:
             raise ValueError(f"forward_backward has no data for job {item.model_id}")
         for output_index, datum in enumerate(item.data):
-            if REPLAY_FIELDS & datum.loss_fn_inputs.keys():
+            replay_fields = REPLAY_FIELDS & datum.loss_fn_inputs.keys()
+            supports_replay = loss_name in REPLAY_LOSSES
+            if replay_fields and (
+                not supports_replay or "routed_experts" in replay_fields
+            ):
                 raise ValueError(
-                    "sampler replay is currently supported only by the Miles LoRA backend"
+                    "sampler replay requires a supported loss; router replay requires the Miles LoRA backend"
                 )
             input_ids = list(datum.model_input.to_ints())
             if not input_ids:
@@ -217,6 +246,15 @@ def build_sequence_batches(
                 "loss_name": loss_name,
                 "loss_config": loss_config,
             }
+            if loss_name in REPLAY_LOSSES:
+                sequence.update(
+                    validate_support(
+                        datum.loss_fn_inputs,
+                        labels,
+                        weights,
+                        centered=loss_name != "mis",
+                    )
+                )
             if slot is not None:
                 adapter_token_counts = [0] * max_slots
                 adapter_token_counts[slot] = len(input_ids)
@@ -341,20 +379,115 @@ def pack_microbatches(
         }
         if adapter_token_counts is not None:
             batch["adapter_token_counts"] = adapter_token_counts
+        if any("sampling_mask_offsets" in item for item in items):
+            if not all("sampling_mask_offsets" in item for item in items):
+                raise ValueError(
+                    "sampling supports must be supplied for every datum in a replay batch"
+                )
+            ids, logq, offsets = [], [], [0]
+            for item, length, padded_length in zip(
+                items, lengths, padded_lengths, strict=True
+            ):
+                ids.append(item["sampling_mask_ids"])
+                logq.append(item["sampling_mask_logprobs"])
+                offset = offsets[-1]
+                offsets.extend((item["sampling_mask_offsets"][1:] + offset).tolist())
+                offsets.extend([offsets[-1]] * (padded_length - length))
+            offsets.extend([offsets[-1]] * total_padding)
+            batch["sampling_mask_ids"] = torch.cat(ids)
+            batch["sampling_mask_logprobs"] = torch.cat(logq)
+            batch["sampling_mask_offsets"] = torch.tensor(offsets, dtype=torch.long)
         packed.append(batch)
     return packed
 
 
-def shard_microbatches(
-    microbatches: list[dict[str, Any]],
-    *,
-    data_parallel_rank: int,
+def _short_dummy(source: dict[str, Any], tokens: int) -> dict[str, Any]:
+    dummy = {
+        "job_ids": source["job_ids"][:1],
+        "output_indices": (-1,),
+        "starts": (0,),
+        "original_lengths": (tokens,),
+        "is_dummy": (True,),
+        "tokens": torch.zeros(tokens, dtype=source["tokens"].dtype),
+        "labels": torch.full((tokens,), -100, dtype=source["labels"].dtype),
+        "loss_mask": torch.zeros(tokens, dtype=source["loss_mask"].dtype),
+        "sampling_logprobs": torch.zeros(
+            tokens, dtype=source["sampling_logprobs"].dtype
+        ),
+        "advantages": torch.zeros(tokens, dtype=source["advantages"].dtype),
+        "position_ids": torch.arange(tokens),
+        "token_indices": torch.arange(tokens),
+        "loss_name": source["loss_name"],
+        "loss_config": source["loss_config"],
+        "cu_seqlens": torch.tensor([0, tokens], dtype=torch.int32),
+        "max_seqlen": tokens,
+    }
+    if "adapter_token_counts" in source:
+        counts = torch.zeros_like(source["adapter_token_counts"])
+        counts[int(source["adapter_token_counts"].argmax())] = tokens
+        dummy["adapter_token_counts"] = counts
+    return dummy
+
+
+def balance_by_tokens(
+    items: list[dict[str, Any]],
     data_parallel_size: int,
+) -> list[list[dict[str, Any]]]:
+    """Split items across data-parallel ranks with near-equal token counts.
+
+    Longest first, each to the rank with the fewest tokens so far. Every rank
+    computes the same split, so no communication is needed.
+    """
+    groups: list[list[dict[str, Any]]] = [[] for _ in range(data_parallel_size)]
+    loads = [0] * data_parallel_size
+    for item in sorted(
+        items, key=lambda item: int(item["tokens"].numel()), reverse=True
+    ):
+        rank = loads.index(min(loads))
+        groups[rank].append(item)
+        loads[rank] += int(item["tokens"].numel())
+    return groups
+
+
+def assign_microbatches(
+    sequences: list[dict[str, Any]],
+    data_parallel_size: int,
+    pack,
+) -> list[list[dict[str, Any]]]:
+    """Pack sequences into each data-parallel rank's micro-batches.
+
+    Balancing sequences before packing evens out tokens best, but can need an
+    extra micro-batch when the batch nearly fills every rank. Keep the plan
+    with fewer micro-batches, then the one with the lighter busiest rank.
+    """
+
+    def cost(groups):
+        return (
+            max(len(group) for group in groups),
+            max(sum(int(mb["tokens"].numel()) for mb in group) for group in groups),
+        )
+
+    by_sequence = [
+        pack(group) for group in balance_by_tokens(sequences, data_parallel_size)
+    ]
+    by_bin = balance_by_tokens(pack(sequences), data_parallel_size)
+    return min(by_sequence, by_bin, key=cost)
+
+
+def pad_microbatches(
+    local: list[dict[str, Any]],
+    count: int,
+    *,
+    source: dict[str, Any],
+    dummy_tokens: int,
 ) -> list[dict[str, Any]]:
-    local = list(microbatches[data_parallel_rank::data_parallel_size])
-    target_count = math.ceil(len(microbatches) / data_parallel_size)
-    while len(local) < target_count:
-        source = microbatches[0]
+    """Pad a rank's micro-batches to ``count`` with dummies that carry no loss."""
+    local = list(local)
+    while len(local) < count:
+        if "sampling_mask_offsets" not in source:
+            local.append(_short_dummy(source, dummy_tokens))
+            continue
+        # Replay losses index the support tensors per token, so copy a real batch.
         dummy = {
             key: value.clone() if torch.is_tensor(value) else value
             for key, value in source.items()
@@ -404,7 +537,18 @@ def _loss(
         sampling_logprobs = batch["sampling_logprobs"].to(logprobs.device).reshape(-1)
         advantages = batch["advantages"].to(logprobs.device).reshape(-1)
         probability_ratio = torch.exp(logprobs - sampling_logprobs)
-        if loss_name == "importance_sampling":
+        if loss_name in REPLAY_LOSSES:
+            objective = (
+                policy_objective(
+                    logprobs,
+                    batch.get("score_correction", 0),
+                    sampling_logprobs,
+                    loss_name,
+                    batch["loss_config"],
+                )
+                * advantages
+            )
+        elif loss_name == "importance_sampling":
             objective = probability_ratio * advantages
         elif loss_name == "dppo":
             threshold = batch["loss_config"].get("tv_threshold", 0.1)
@@ -449,6 +593,9 @@ def make_forward_step(
     *,
     route_adapters: bool = True,
     defer_fp32_logits: bool = False,
+    deferred_output: dict | None = None,
+    logprob_chunk_tokens: int | None = None,
+    fp32_logits: bool = False,
 ):
     from megatron.bridge.training.utils.packed_seq_utils import (
         get_packed_seq_cp_partition_indices,
@@ -478,9 +625,10 @@ def make_forward_step(
                 batch["cu_seqlens"].numel(),
                 device=device,
             ),
-            "max_seqlen": torch.tensor(batch["max_seqlen"], device=device),
         }
         packed_seq_params = get_packed_seq_params(packed_metadata)
+        packed_seq_params.max_seqlen_q = batch["max_seqlen"]
+        packed_seq_params.max_seqlen_kv = batch["max_seqlen"]
 
         context_parallel_size = parallel_state.get_context_parallel_world_size()
         if context_parallel_size > 1:
@@ -520,7 +668,11 @@ def make_forward_step(
             if context_parallel_size > 1:
                 batch["adapter_token_counts"] //= context_parallel_size
             set_tokens_per_adapter_slot(model, batch["adapter_token_counts"])
-        model_kwargs = {"fp32_output": False} if defer_fp32_logits else {}
+        model_kwargs = (
+            {"fp32_output": False}
+            if defer_fp32_logits or deferred_output is not None
+            else {}
+        )
         logits = model(
             input_ids=batch["tokens"].unsqueeze(0),
             position_ids=batch["position_ids"].unsqueeze(0),
@@ -530,7 +682,35 @@ def make_forward_step(
         )
 
         def loss_func(output):
-            logprobs = _vocab_parallel_logprobs(output, batch["labels"])
+            diagnostics = {}
+            temperature = batch["loss_config"].get("sampling_temperature", 1.0)
+            replay = "sampling_mask_offsets" in batch
+            if logprob_chunk_tokens is not None and not replay:
+                logprobs = chunked_logprobs(
+                    output,
+                    deferred_output["weight"],
+                    batch["labels"],
+                    chunk=logprob_chunk_tokens,
+                    fp32=fp32_logits,
+                    temperature=temperature,
+                )
+            elif replay:
+                if deferred_output is not None:
+                    output = materialize_logits(
+                        output, deferred_output["weight"], fp32=fp32_logits
+                    )
+                logprobs, batch["score_correction"], diagnostics = replay_logprobs(
+                    output,
+                    batch,
+                    tp_rank=parallel_state.get_tensor_model_parallel_rank(),
+                    tp_size=parallel_state.get_tensor_model_parallel_world_size(),
+                    tp_group=parallel_state.get_tensor_model_parallel_group(),
+                )
+            else:
+                logprobs = _vocab_parallel_logprobs(
+                    output if temperature == 1.0 else output / temperature,
+                    batch["labels"],
+                )
             loss, token_count = _loss(logprobs, batch)
             positions = batch["token_indices"].reshape(-1)
             for job_id, output_index, start, length, is_dummy in zip(
@@ -557,6 +737,10 @@ def make_forward_step(
                     "sampling_logprobs": batch["sampling_logprobs"][selected],
                     "advantages": batch["advantages"][selected],
                 }
+                if "score_correction" in batch:
+                    sequence_batch["score_correction"] = batch["score_correction"][
+                        selected
+                    ]
                 sequence_loss, sequence_tokens = _loss(
                     logprobs[selected],
                     sequence_batch,
@@ -572,6 +756,10 @@ def make_forward_step(
                 metrics["loss"] += sequence_loss.detach()
                 metrics["tokens"] += sequence_tokens.detach()
                 metrics["sequences"] += 1
+                active = batch["loss_mask"][selected] != 0
+                for name, values in diagnostics.items():
+                    metrics.setdefault(name, torch.zeros((), device=loss.device))
+                    metrics[name] += values[selected][active].sum().detach()
 
             report = torch.stack([token_count.detach().float(), loss.detach().float()])
             return (
@@ -619,8 +807,9 @@ def _merge_payloads(
                 job_id,
                 {"loss": 0.0, "tokens": 0.0, "sequences": 0.0},
             )
-            target["loss"] += metrics["loss"]
-            target["tokens"] += metrics["tokens"]
+            for name, value in metrics.items():
+                if name != "sequences":
+                    target[name] = target.get(name, 0.0) + value
             if context_parallel:
                 target["sequences"] = max(
                     target["sequences"],
@@ -732,6 +921,9 @@ def build_outputs(
                     "cispo": "MegatronCISPOLoss",
                     "dro": "MegatronDROLoss",
                     "dppo": "MegatronDPPOLoss",
+                    "mis": "MegatronMISLoss",
+                    "score_centered": "MegatronScoreCenteredLoss",
+                    "score_centered_mis": "MegatronScoreCenteredMISLoss",
                 }[str(batch.loss_fn)],
                 loss_fn_outputs=loss_outputs,
                 metrics={
@@ -740,6 +932,16 @@ def build_outputs(
                     "tokens:sum": tokens,
                     "n_sequences:sum": sequences,
                     "response_length:mean": tokens / max(sequences, 1.0),
+                    **{
+                        f"{name}:sum": value
+                        for name, value in metrics.items()
+                        if name not in {"loss", "tokens", "sequences"}
+                    },
+                    **{
+                        f"{name}:mean": value / max(tokens, 1.0)
+                        for name, value in metrics.items()
+                        if name not in {"loss", "tokens", "sequences"}
+                    },
                 },
             )
         )
@@ -767,12 +969,21 @@ def prepare_microbatches(
     input_sequences = len(sequences)
     context_parallel_size = parallel_state.get_context_parallel_world_size()
     token_capacity = config.packed_token_capacity()
-    packed = pack_microbatches(
-        sequences,
-        max_tokens=token_capacity,
-        pad_to_multiple=(2 * context_parallel_size if context_parallel_size > 1 else 1),
-        total_pad_to_multiple=config.sequence_padding_multiple(),
+    pad_to_multiple = 2 * context_parallel_size if context_parallel_size > 1 else 1
+    data_parallel_size = parallel_state.get_data_parallel_world_size(
+        with_context_parallel=False,
     )
+    groups = assign_microbatches(
+        sequences,
+        data_parallel_size,
+        lambda items: pack_microbatches(
+            items,
+            max_tokens=token_capacity,
+            pad_to_multiple=pad_to_multiple,
+            total_pad_to_multiple=config.sequence_padding_multiple(),
+        ),
+    )
+    packed = [microbatch for group in groups for microbatch in group]
     packing_metrics = log_packing(
         batch,
         packed,
@@ -781,15 +992,14 @@ def prepare_microbatches(
         token_capacity=token_capacity,
         rank=rank,
     )
+    unit = config.sequence_padding_multiple()
+    local = groups[parallel_state.get_data_parallel_rank(with_context_parallel=False)]
     return (
-        shard_microbatches(
-            packed,
-            data_parallel_rank=parallel_state.get_data_parallel_rank(
-                with_context_parallel=False,
-            ),
-            data_parallel_size=parallel_state.get_data_parallel_world_size(
-                with_context_parallel=False,
-            ),
+        pad_microbatches(
+            local,
+            max(len(group) for group in groups),
+            source=packed[0],
+            dummy_tokens=unit * math.ceil(DUMMY_TOKENS / unit),
         ),
         packing_metrics,
     )
@@ -803,6 +1013,9 @@ def run_megatron_pipeline(
     forward_only: bool,
     route_adapters: bool,
     defer_fp32_logits: bool = False,
+    deferred_output: dict | None = None,
+    logprob_chunk_tokens: int | None = None,
+    fp32_logits: bool = False,
 ) -> tuple[
     dict[str, list[dict[str, torch.Tensor]]],
     dict[str, dict[str, torch.Tensor]],
@@ -817,6 +1030,9 @@ def run_megatron_pipeline(
         metric_collector,
         route_adapters=route_adapters,
         defer_fp32_logits=defer_fp32_logits,
+        deferred_output=deferred_output,
+        logprob_chunk_tokens=logprob_chunk_tokens,
+        fp32_logits=fp32_logits,
     )
     model_config = get_model_config(model[0])
     model_config.grad_scale_func = optimizer.scale_loss

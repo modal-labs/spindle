@@ -21,7 +21,7 @@ from tinker.types.forward_backward_input import ForwardBackwardInput
 from spindle.encoding import canonical_json
 from spindle.proto.responses import EncodedResult, encode_forward_backward_exact
 
-from .api import Command, OperationKind
+from .api import BATCHED_OPERATIONS, Command, OperationKind
 
 TRAINING_BATCH_CONTENT_TYPE = "application/vnd.spindle.training.v1"
 FORWARD_RESULTS_CONTENT_TYPE = "application/vnd.spindle.forward-results.v1"
@@ -172,19 +172,22 @@ def decode_payload(body: bytes | memoryview) -> ForwardBackwardInput:
             Datum.model_construct(model_input=model_input, loss_fn_inputs=inputs)
         )
     return ForwardBackwardInput(
-        data=data,
+        data=data,  # ty: ignore[invalid-argument-type]
         loss_fn=metadata["loss_fn"],
         loss_fn_config=metadata["loss_fn_config"],
     )
 
 
 def encode_batch(commands: tuple[Command, ...]) -> bytes:
-    parts = []
+    if not commands or commands[0].kind not in BATCHED_OPERATIONS:
+        raise ValueError("training batch requires forward or forward_backward commands")
+    kind = commands[0].kind
+    parts = [kind.value.encode()]
     for command in commands:
-        if command.kind != OperationKind.FORWARD_BACKWARD or not isinstance(
+        if command.kind != kind or not isinstance(
             command.payload, ForwardBackwardInput
         ):
-            raise ValueError("training batch requires forward_backward commands")
+            raise ValueError(f"training batch must contain only {kind.value} commands")
         parts.extend(
             (
                 command.model_id.encode(),
@@ -196,15 +199,18 @@ def encode_batch(commands: tuple[Command, ...]) -> bytes:
 
 def decode_batch(body: bytes) -> tuple[Command, ...]:
     parts = _parts(body)
-    if not parts or len(parts) % 2:
+    if not parts or len(parts) % 2 == 0:
         raise ValueError("invalid training batch")
+    kind = OperationKind(bytes(parts[0]).decode())
+    if kind not in BATCHED_OPERATIONS:
+        raise ValueError("invalid training batch kind")
     return tuple(
         Command(
             bytes(parts[i]).decode(),
-            OperationKind.FORWARD_BACKWARD,
+            kind,
             decode_payload(parts[i + 1]),
         )
-        for i in range(0, len(parts), 2)
+        for i in range(1, len(parts), 2)
     )
 
 

@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import httpx
@@ -58,7 +59,9 @@ def http_client(api_key: str | None = "tml-test") -> httpx.AsyncClient:
     )
 
 
-async def created_model(client: httpx.AsyncClient) -> tuple[str, str]:
+async def created_model(
+    client: httpx.AsyncClient, base_model: str = BASE_MODEL
+) -> tuple[str, str]:
     created = await client.post(
         "/api/v1/create_session",
         json={"tags": [], "user_metadata": None, "sdk_version": "0.5.0"},
@@ -69,7 +72,7 @@ async def created_model(client: httpx.AsyncClient) -> tuple[str, str]:
         json={
             "session_id": session_id,
             "model_seq_id": 0,
-            "base_model": BASE_MODEL,
+            "base_model": base_model,
             "lora_config": {"rank": 32},
         },
     )
@@ -262,7 +265,24 @@ def test_service_endpoints(monkeypatch) -> None:
         capabilities = await client.get("/api/v1/get_server_capabilities")
         assert capabilities.json() == {
             "supported_models": [
-                {"model_name": BASE_MODEL, "max_context_length": 16_384}
+                {
+                    "model_name": BASE_MODEL,
+                    "max_context_length": 16_384,
+                    "trainable": True,
+                    "sampleable": True,
+                },
+                {
+                    "model_name": DEFINITION,
+                    "max_context_length": 16_384,
+                    "trainable": True,
+                    "sampleable": True,
+                },
+                {
+                    "model_name": f"{DEFINITION}_full",
+                    "max_context_length": 65_536,
+                    "trainable": True,
+                    "sampleable": True,
+                },
             ],
             "spindle_version": spindle.__version__,
             "spindle_commit": "abc123",
@@ -307,14 +327,129 @@ def test_model_info_and_unload() -> None:
     asyncio.run(run())
 
 
-def test_base_sampling_session_uses_first_deployment() -> None:
+def test_every_trainable_and_sampleable_model_accepts_training_and_sampling() -> None:
+    async def run() -> None:
+        client = http_client()
+        listed = (await client.get("/api/v1/get_server_capabilities")).json()
+        session_id = (await client.post("/api/v1/create_session", json={})).json()[
+            "session_id"
+        ]
+        for seq, row in enumerate(listed["supported_models"]):
+            assert row["trainable"] is True and row["sampleable"] is True
+            trained = [
+                await client.post(
+                    "/api/v1/create_model",
+                    json={
+                        "session_id": session_id,
+                        "model_seq_id": 2 * seq + offset,
+                        "base_model": row["model_name"],
+                        **parameterization,
+                    },
+                )
+                for offset, parameterization in enumerate(
+                    (
+                        {"lora_config": {"rank": 32}},
+                        {"parameterization": {"type": "full"}},
+                    )
+                )
+            ]
+            assert 200 in {response.status_code for response in trained}, row
+            sampling = await client.post(
+                "/api/v1/create_sampling_session",
+                json={
+                    "session_id": session_id,
+                    "sampling_session_seq_id": seq,
+                    "base_model": row["model_name"],
+                },
+            )
+            assert sampling.status_code == 200, (row, sampling.text)
+        await client.aclose()
+
+    asyncio.run(run())
+
+
+SHORT = SimpleNamespace(**{**vars(DEFINITIONS[0]), "definition_id": "short"})
+LONG = SimpleNamespace(
+    **{**vars(SHORT), "definition_id": "long", "max_context_length": 32_768}
+)
+
+
+def recipes_client(definition_id: str) -> tuple[ControlPlane, httpx.AsyncClient]:
+    plane = ControlPlane(
+        InMemoryKeyValueStore(), LocalEnginePlatform(definition_id, EchoExecutor)
+    )
+    app = create_control_plane_app(plane, (SHORT, LONG), retrieve_window=1.0)
+    client = httpx.AsyncClient(
+        base_url="http://test", transport=httpx.ASGITransport(app=app)
+    )
+    return plane, client
+
+
+def test_every_listed_model_name_selects_its_recipe() -> None:
+    async def run() -> None:
+        _, client = recipes_client("long")
+        listed = (await client.get("/api/v1/get_server_capabilities")).json()
+        await client.aclose()
+        expected_recipe = {BASE_MODEL: "long", "short": "short", "long": "long"}
+        assert [row["model_name"] for row in listed["supported_models"]] == list(
+            expected_recipe
+        )
+        for name, expected in expected_recipe.items():
+            plane, client = recipes_client(expected)
+            _, model_id = await created_model(client, name)
+            assert (await plane.get_model(model_id)).engine_definition_id == expected
+            await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_adapter_sampled_by_model_name_keeps_its_recipe() -> None:
+    async def run() -> None:
+        plane, client = recipes_client("short")
+        session_id, model_id = await created_model(client, "short")
+        saved = await client.post(
+            "/api/v1/save_weights_for_sampler",
+            json={"model_id": model_id, "seq_id": 1, "path": "adapter"},
+        )
+        exported = await client.post(
+            "/api/v1/retrieve_future", json={"request_id": saved.json()["request_id"]}
+        )
+        sampling = await client.post(
+            "/api/v1/create_sampling_session",
+            json={
+                "session_id": session_id,
+                "sampling_session_seq_id": 0,
+                "base_model": BASE_MODEL,
+                "model_path": exported.json()["path"],
+            },
+        )
+        assert sampling.status_code == 200, sampling.text
+        record = await plane.get_sampling_session(
+            sampling.json()["sampling_session_id"]
+        )
+        assert record.engine_definition_id == "short"
+        mismatch = await client.post(
+            "/api/v1/create_sampling_session",
+            json={
+                "session_id": session_id,
+                "sampling_session_seq_id": 1,
+                "base_model": "long",
+                "model_path": exported.json()["path"],
+            },
+        )
+        assert mismatch.status_code == 400
+        await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_base_sampling_session_uses_longest_context_deployment() -> None:
     async def run() -> None:
         plane = ControlPlane(
             InMemoryKeyValueStore(),
             LocalEnginePlatform(DEFINITION, EchoExecutor),
         )
-        definitions = list(reversed(DEFINITIONS))
-        app = create_control_plane_app(plane, definitions, api_key=None)
+        app = create_control_plane_app(plane, DEFINITIONS, api_key=None)
         client = httpx.AsyncClient(
             base_url="http://control-plane",
             transport=httpx.ASGITransport(app=app),
@@ -645,10 +780,11 @@ def test_result_timing_counts_actual_response_bytes(monkeypatch):
 
 
 @pytest.mark.parametrize("accept_protobuf", [False, True])
-@pytest.mark.parametrize("forward_result", [False, True])
+@pytest.mark.parametrize("result_kind", ["forward", "checkpoint", "null", "list"])
 def test_result_negotiation_constructs_one_response_before_timing(
-    monkeypatch, accept_protobuf, forward_result
+    monkeypatch, accept_protobuf, result_kind
 ):
+    forward_result = result_kind == "forward"
     result = (
         {
             "loss_fn_output_type": "ArrayRecord",
@@ -658,7 +794,11 @@ def test_result_negotiation_constructs_one_response_before_timing(
             "metrics": {"loss:sum": 0.625},
         }
         if forward_result
-        else {"path": "tinker://model/weights/数学"}
+        else {
+            "checkpoint": {"path": "tinker://model/weights/数学"},
+            "null": None,
+            "list": [1, 2],
+        }[result_kind]
     )
     rendered = []
     marks = []
@@ -763,3 +903,110 @@ def test_pending_future_with_a_reason_reports_a_starting_queue_state() -> None:
         await client.aclose()
 
     asyncio.run(run())
+
+
+def test_billing_usage_says_when_usage_is_not_recorded() -> None:
+    async def run() -> None:
+        app = create_control_plane_app(object(), DEFINITIONS, api_key=None)
+        async with httpx.AsyncClient(
+            base_url="http://control-plane", transport=httpx.ASGITransport(app=app)
+        ) as client:
+            response = await client.get(
+                "/api/v1/billing/usage/events",
+                params={
+                    "starting_on": "2026-11-06T14:00:00Z",
+                    "ending_before": "2026-11-06T15:00:00Z",
+                },
+            )
+        assert response.status_code == 404
+        assert response.json()["message"] == "usage is not recorded here"
+
+    asyncio.run(run())
+
+
+class SlowSink:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.reads = 0
+        self.error = error
+        self.release = threading.Event()
+
+    def read(self, start: float, end: float) -> list:
+        self.reads += 1
+        self.release.wait(5)
+        if self.error is not None:
+            raise self.error
+        return []
+
+    def sessions(self, session_ids) -> dict:
+        return {}
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "reads"),
+    [
+        # A finished read also answers the later request.
+        (None, 200, 1),
+        # The SDK retries a 5xx for minutes, and a failed read isn't kept.
+        (OSError("volume unavailable"), 424, 2),
+    ],
+)
+def test_billing_reads_of_one_window_are_shared(error, status, reads) -> None:
+    sink = SlowSink(error)
+    window = {
+        "starting_on": "2026-11-06T14:00:00Z",
+        "ending_before": "2026-11-06T15:00:00Z",
+    }
+
+    async def run() -> list[int]:
+        app = create_control_plane_app(
+            object(), DEFINITIONS, api_key=None, usage_sink=sink
+        )
+        async with httpx.AsyncClient(
+            base_url="http://control-plane", transport=httpx.ASGITransport(app=app)
+        ) as client:
+            requests = [
+                asyncio.create_task(
+                    client.get("/api/v1/billing/usage/events", params=window)
+                )
+                for _ in range(3)
+            ]
+            await asyncio.sleep(0.2)
+            sink.release.set()
+            responses = [*await asyncio.gather(*requests)]
+            await asyncio.sleep(0)
+            responses.append(
+                await client.get("/api/v1/billing/usage/events", params=window)
+            )
+            return [response.status_code for response in responses]
+
+    assert asyncio.run(run()) == [status] * 4
+    assert sink.reads == reads
+
+
+@pytest.mark.parametrize(
+    ("usage_sink", "start", "status"),
+    [
+        (SlowSink(), "2026-11-06T14:30:00Z", 400),  # ValueError
+        (None, "2026-11-06T14:00:00Z", 404),  # HTTPException
+    ],
+)
+def test_error_responses_are_not_compressed_by_the_proxy(
+    usage_sink, start, status
+) -> None:
+    # Compressed, a 400 loses Content-Length, and the Tinker SDK retries it for minutes.
+    async def run() -> httpx.Response:
+        app = create_control_plane_app(
+            object(), DEFINITIONS, api_key=None, usage_sink=usage_sink
+        )
+        async with httpx.AsyncClient(
+            base_url="http://control-plane", transport=httpx.ASGITransport(app=app)
+        ) as client:
+            return await client.get(
+                "/api/v1/billing/usage/events",
+                params={"starting_on": start, "ending_before": "2026-11-06T15:00:00Z"},
+            )
+
+    response = asyncio.run(run())
+    assert response.status_code == status
+    assert response.headers["content-encoding"] == "identity"
+    assert int(response.headers["content-length"]) == len(response.content)

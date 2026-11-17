@@ -1,12 +1,16 @@
 import asyncio
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
+import torch
 
 from spindle.backends.miles_runtime import runtime as miles_runtime
 from spindle.backends.miles_runtime.runtime import (
     MilesRuntime,
+    _allow_allgather_cp_bshd_multi_lora,
     _allow_context_parallel_multi_lora,
+    _array_bridge,
     _configure_actor_spec,
     _materialize_capture,
     _require_cluster_nodes,
@@ -152,6 +156,41 @@ def test_upstream_error_result_invalidates_runtime():
         runtime._run(error())
 
 
+@pytest.mark.parametrize("operation", ["save_slot", "export_slot_peft"])
+def test_rejected_native_capture_fails_only_its_request(tmp_path, operation):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    runtime._v020 = SimpleNamespace()
+    capture = tmp_path / "capture"
+    incomplete = tmp_path / ".capture.1234"
+    incomplete.mkdir()
+
+    async def written(*args, **kwargs):
+        return incomplete
+
+    runtime._bridge = SimpleNamespace(save_slot=written, export_slot=written)
+    if operation == "save_slot":
+        call = lambda: runtime.save_slot(0, str(capture))  # noqa: E731
+    else:
+        call = lambda: runtime.export_slot_peft(  # noqa: E731
+            slot=0,
+            path=str(capture),
+            rank=8,
+            alpha=16.0,
+            base_model="m",
+            target_modules=(),
+            lora_dropout=0.0,
+        )
+
+    with pytest.raises((ValueError, FileNotFoundError)):
+        call()
+    assert runtime._failure is None
+    assert not capture.exists()
+    assert not incomplete.exists()
+
+
 @pytest.mark.parametrize("failed_rank", [0, 1])
 def test_weights_only_worker_error_invalidates_runtime_before_capture(
     tmp_path, failed_rank
@@ -200,3 +239,172 @@ def test_context_parallel_guard_restores_args_and_installs_once(fails):
         once(args)
     assert seen == [1]
     assert args.context_parallel_size == 8
+
+
+@pytest.mark.parametrize(
+    "context_parallel_size, estimator, rejected",
+    [
+        (4, "ppo", True),
+        (4, "reinforce_plus_plus", True),
+        (1, "ppo", False),
+        (1, "reinforce_plus_plus", False),
+        (4, "reinforce_baseline", False),
+    ],
+)
+def test_context_parallel_guard_rejects_full_length_advantage_estimators(
+    context_parallel_size, estimator, rejected
+):
+    lora_arguments = SimpleNamespace(validate_multi_lora_args=lambda args: None)
+    _allow_context_parallel_multi_lora(lora_arguments)
+    args = SimpleNamespace(
+        context_parallel_size=context_parallel_size, advantage_estimator=estimator
+    )
+    if rejected:
+        with pytest.raises(
+            ValueError, match=f"--advantage-estimator {estimator}"
+        ) as err:
+            lora_arguments.validate_multi_lora_args(args)
+        assert "--context-parallel-size 1" in str(err.value)
+    else:
+        lora_arguments.validate_multi_lora_args(args)
+    assert args.context_parallel_size == context_parallel_size
+
+
+@pytest.mark.parametrize(
+    "allgather_cp, qkv_format, seen",
+    [(True, "bshd", [False]), (True, "thd", [True]), (False, "bshd", [False])],
+)
+def test_allgather_cp_guard_is_skipped_only_for_bshd(allgather_cp, qkv_format, seen):
+    checked = []
+    lora_arguments = SimpleNamespace(
+        validate_multi_lora_args=lambda args: checked.append(args.allgather_cp)
+    )
+    _allow_allgather_cp_bshd_multi_lora(lora_arguments)
+    args = SimpleNamespace(allgather_cp=allgather_cp, qkv_format=qkv_format)
+    lora_arguments.validate_multi_lora_args(args)
+    assert checked == seen
+    assert args.allgather_cp is allgather_cp
+
+
+def test_array_bridge_keeps_the_miles_contract(monkeypatch):
+    """Rows go to the workers as arrays (RL fields as tensors, which Miles
+    slices per context-parallel rank) and come back ordered by sample index."""
+
+    class MilesBackend:
+        def __init__(self, trainer, router_url, dp_size=1):
+            self.trainer = trainer
+
+    def build_train_data(slot_datums):
+        rows = [row for _, row in slot_datums]
+        return {
+            "tokens": [row["tokens"] for row in rows],
+            "advantages": [row["advantages"] for row in rows],
+            "rollout_log_probs": [row["sampling_logprobs"] for row in rows],
+        }
+
+    store = SimpleNamespace(values=[], removed=[])
+    store.put = lambda value, value_spec: store.values.append(value) or 0
+    store.remove = store.removed.append
+    monkeypatch.setattr(
+        miles_runtime,
+        "tinker_runtime",
+        SimpleNamespace(
+            MilesBackend=MilesBackend,
+            _build_train_data=build_train_data,
+            ROLLOUT_DATA_VALUE_SPEC={},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        miles_runtime,
+        "object_store",
+        SimpleNamespace(get_instance=lambda: store),
+        raising=False,
+    )
+
+    async def forward_backward(*, batch_id, data_ref):
+        per_datum = [
+            {
+                "sample_index": 1,
+                "loss": torch.tensor(2.0),
+                "logprobs": torch.full((2,), -2.0),
+            },
+            {
+                "sample_index": 0,
+                "loss": torch.tensor(1.0),
+                "logprobs": torch.full((3,), -1.0),
+            },
+        ]
+        return [{"per_datum": per_datum}, {"per_datum": per_datum}]
+
+    rows = [
+        (
+            0,
+            {
+                "tokens": np.arange(4),
+                "target_len": 3,
+                "advantages": np.ones(3, np.float32),
+                "sampling_logprobs": np.zeros(3, np.float32),
+            },
+        ),
+        (
+            1,
+            {
+                "tokens": np.arange(3),
+                "target_len": 2,
+                "advantages": np.ones(2, np.float32),
+                "sampling_logprobs": np.zeros(2, np.float32),
+            },
+        ),
+    ]
+    bridge = _array_bridge(SimpleNamespace(forward_backward=forward_backward))
+    outputs = asyncio.run(bridge._execute_batch("forward_backward", 1, rows, "ppo", {}))
+
+    (sent,) = store.values
+    assert [mask.tolist() for mask in sent["loss_masks"]] == [[1, 1, 1], [1, 1]]
+    assert all(isinstance(v, torch.Tensor) for v in sent["advantages"])
+    assert all(isinstance(v, torch.Tensor) for v in sent["rollout_log_probs"])
+    assert [o["loss"] for o in outputs] == [1.0, 2.0]
+    assert [o["logprobs"].tolist() for o in outputs] == [[-1.0] * 3, [-2.0] * 2]
+    assert outputs[0]["logprobs"].dtype == np.float32
+    assert store.removed == [0]
+
+
+@pytest.mark.parametrize("seed", [None, 0, 42])
+@pytest.mark.parametrize("checkpoint", [None, "/saved"])
+def test_slot_seed_precedes_optimizer_and_never_overwrites_checkpoint(seed, checkpoint):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    weights = {0: "default"}
+    optimizer_weights = {}
+
+    async def load(slot, rank, alpha, *, ckpt_path, load_optimizer, seed=None):
+        if ckpt_path is not None:
+            assert seed is None
+            weights[slot] = "checkpoint"
+        elif seed is not None:
+            weights[slot] = seed
+        optimizer_weights[slot] = weights[slot]
+
+    runtime._bridge = SimpleNamespace(load_slot=load)
+    runtime.load_slot(0, 8, 32, seed=seed, checkpoint=checkpoint)
+    expected = "checkpoint" if checkpoint else "default" if seed is None else seed
+    assert weights[0] == optimizer_weights[0] == expected
+
+
+def test_seed_failure_invalidates_runtime_before_optimizer_creation():
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+
+    async def load(*args, **kwargs):
+        return {"error": "seed initialization failed"}
+
+    runtime._bridge = SimpleNamespace(load_slot=load)
+    with pytest.raises(BackendFailed, match="seed initialization failed"):
+        runtime.load_slot(0, 8, 32, seed=42)
+    with pytest.raises(BackendFailed, match="unavailable"):
+        runtime.load_slot(0, 8, 32)

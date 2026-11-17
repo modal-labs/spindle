@@ -216,3 +216,21 @@ def serve(app) -> Iterator[str]:
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+class RoutedTestStore:
+    """The real shared-store key routing over one in-memory store.
+
+    Tests that stand in for `shared_kv` should use this, so a key family the
+    deployed frontend would reject fails here too.
+    """
+
+    def __new__(cls, store):
+        from spindle.providers.modal.kv import KEY_STORES, RoutedKeyValueStore
+
+        class Routed(RoutedKeyValueStore):
+            def _matching_stores(self, prefixes):
+                super()._matching_stores(prefixes)  # rejects unknown prefixes
+                return (store,)
+
+        return Routed({domain: store for domain in set(KEY_STORES.values())})

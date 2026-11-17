@@ -91,7 +91,7 @@ class SnapshotBulletin:
     def advance(self, ref: VersionRef) -> bool:
         self._validate_ref(ref)
         with self._lock:
-            current = self.read_latest(ref.run_id)
+            current = self.read_latest(ref.run_id)  # ty: ignore[invalid-argument-type]
             if current == ref:
                 return False
             decide_pointer_move(current, ref)
@@ -109,7 +109,7 @@ class SnapshotBulletin:
             if not created:
                 if _read_manifest(target) != manifest:
                     raise ImmutableSnapshotError(ref.identity)
-                current = self.read_latest(ref.run_id)
+                current = self.read_latest(ref.run_id)  # ty: ignore[invalid-argument-type]
                 if current is not None and current.version > ref.version:
                     return False
             moved = self.advance(ref)

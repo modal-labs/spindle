@@ -6,10 +6,14 @@ import random
 import socket
 from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from stitch.publish import constrain_request
+from stitch.types import VersionRef
+
+if TYPE_CHECKING:
+    from .native_router import NativeRouter as Router
 
 from spindle.telemetry.sample_stats import SampleAttempt, event_sink, timing_metadata
 from spindle.telemetry.http_trace import HTTPTrace
@@ -53,6 +57,7 @@ async def sample_task(
     stats: dict[str, Any] | None = None,
     session_id: str | None = None,
     on_event: Callable[[dict], None] | None = None,
+    router: Router | None = None,
 ) -> dict[str, Any]:
     request = task["payload"]
     prompt = _prompt_tokens(request["prompt"])
@@ -66,11 +71,17 @@ async def sample_task(
         stop_token_ids_only=stop_token_ids_only,
     )
     replay_flags = {}
-    for key in ("return_routed_experts", "return_sampling_mask"):
+    for key in (
+        "return_routed_experts",
+        "return_sampling_mask",
+        "return_sampling_probabilities",
+    ):
         value = request.get(key, False)
         if type(value) is not bool:
             raise ValueError(f"{key} must be a boolean")
         replay_flags[key] = value
+    if replay_flags["return_sampling_probabilities"]:
+        replay_flags["return_sampling_mask"] = True
     model_id = task.get("model_id")
     version = task.get("publish_version")
     latest = bool(task.get("latest"))
@@ -131,6 +142,10 @@ async def sample_task(
             headers=headers,
         )
     )
+    # Latest sessions route by the version they were created at: the
+    # version the trainer just published for that sampling client.
+    if model_id is None or version is None:
+        router = None
     async with client_context as active_client:
         outputs = await asyncio.gather(
             *(
@@ -157,6 +172,7 @@ async def sample_task(
                     trace_attrs=trace_attrs,
                     base_headers=headers,
                     request_timeout=timeout,
+                    router=router,
                 )
                 for index in range(num_samples)
             )
@@ -172,6 +188,7 @@ async def sample_task(
                 temperature=params.get("temperature", 1.0),
                 routes=replay_flags["return_routed_experts"],
                 mask=replay_flags["return_sampling_mask"],
+                probabilities=replay_flags["return_sampling_probabilities"],
             )
     if stats is not None:
         meta = outputs[0].get("meta_info") or {}
@@ -181,6 +198,11 @@ async def sample_task(
         stats["reroutes"] = sum(row.get("reroutes", 0) for row in sequence_stats)
         stats.update(
             prompt_tokens=len(prompt),
+            prefill_tokens=len(prompt) * num_samples,
+            cached_prompt_tokens=sum(
+                int((output.get("meta_info") or {}).get("cached_tokens") or 0)
+                for output in outputs
+            ),
             generated_tokens=sum(len(sequence["tokens"]) for sequence in sequences),
             version_served_start=meta.get("weight_version_start"),
             version_served_end=meta.get("weight_version_end"),
@@ -224,6 +246,7 @@ async def _sample_one(
     trace_attrs: dict | None = None,
     base_headers: dict | None = None,
     request_timeout: float = 3000.0,
+    router: Router | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "input_ids": prompt,
@@ -231,7 +254,15 @@ async def _sample_one(
         "return_logprob": True,
         "routed_dp_rank": routed_dp_rank,
     }
-    body.update({key: value for key, value in replay_flags.items() if value})
+    body.update(
+        {
+            key: value
+            for key, value in replay_flags.items()
+            if value and key != "return_sampling_probabilities"
+        }
+    )
+    if replay_flags["return_sampling_probabilities"]:
+        body["sampling_logprobs_mode"] = "support"
     if replay_flags["return_routed_experts"]:
         body["routed_experts_start_len"] = 0
     if cache_affinity_id is not None:
@@ -293,8 +324,8 @@ async def _sample_one(
             constrain_request(
                 body,
                 headers,
-                latest=int(version) if latest else None,
-                exact=None if latest else int(version),
+                latest=int(version) if latest else None,  # ty: ignore[invalid-argument-type]
+                exact=None if latest else int(version),  # ty: ignore[invalid-argument-type]
             )
         physical_attempt += 1
         observation = SampleAttempt(
@@ -311,13 +342,31 @@ async def _sample_one(
         body["rid"] = observation.id
         attempt_result = observation.attrs
         try:
-            response = await client.post(
-                f"{gateway_url}/generate",
-                json=body,
-                headers=headers,
-                timeout=request_timeout,
-                extensions={"trace": HTTPTrace(attempt_result).record},
-            )
+            if router is not None:
+                dispatched = await router.dispatch(
+                    VersionRef(str(model_id), int(version)).identity,  # ty: ignore[invalid-argument-type]
+                    routing_session_id,
+                    request_id=observation.id,
+                    body=body,
+                    headers=headers,
+                    deadline=min(deadline, loop.time() + request_timeout),
+                )
+                response = dispatched.response
+                observation.attrs["selected_replica"] = dispatched.replica
+                observation.attrs["routing"] = dispatched.routing
+                observation.attrs["routing_wait_s"] = dispatched.routing["wait_s"]
+                if stats is not None:
+                    stats["wait_s"] = (
+                        stats.get("wait_s", 0.0) + dispatched.routing["wait_s"]
+                    )
+            else:
+                response = await client.post(
+                    f"{gateway_url}/generate",
+                    json=body,
+                    headers=headers,
+                    timeout=request_timeout,
+                    extensions={"trace": HTTPTrace(attempt_result).record},
+                )
         except httpx.TransportError as exc:
             attempt_result["error_type"] = type(exc).__name__
             cause = exc
@@ -338,7 +387,10 @@ async def _sample_one(
             retryable = (
                 response.status_code == 409
                 or response.status_code >= 500
-                or (response.status_code == 404 and not isinstance(gateway, str))
+                or (
+                    response.status_code == 404
+                    and (router is not None or not isinstance(gateway, str))
+                )
             )
             if not retryable:
                 if response.is_error:

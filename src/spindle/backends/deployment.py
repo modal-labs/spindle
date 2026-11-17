@@ -1,6 +1,7 @@
 """Resolve backend settings before launch; reserve fields owned by Spindle."""
 
 from dataclasses import asdict
+from hashlib import sha256
 
 from spindle.backends.megatron_config import parse_backend_config
 from spindle.backends.miles_config import MilesBackendConfig
@@ -70,10 +71,17 @@ SGLANG_MANAGED = {
     "encoder_only",
     "use_ray",
     "disaggregation_mode",
+    "speculative_draft_model_path",
+    "speculative_draft_model_revision",
 }
 
 
 def backend_config(spec, asset_path="/assets/pending"):
+    if (
+        spec.trainer_max_clients_per_batch is not None
+        and spec.trainer_max_clients_per_batch < 1
+    ):
+        raise ValueError("trainer_max_clients_per_batch must be positive")
     if spec.backend == "megatron":
         if spec.trainer_nodes != 1:
             raise ValueError("multi-node training currently requires Miles")
@@ -115,34 +123,62 @@ def backend_config(spec, asset_path="/assets/pending"):
         extra_args=("--seq-length", str(spec.max_context_length)),
         **settings,
     )
-    config.validate()
     if config.world_size % (
         config.expert_model_parallel_size * config.expert_tensor_parallel_size
     ):
         raise ValueError("expert parallel sizes must divide the trainer GPU allocation")
     if spec.trainer_max_clients_per_instance > config.max_lora_slots:
         raise ValueError("max_clients_per_instance exceeds max_lora_slots")
-    return {"miles": asdict(config), "checkpoint_dir": "/checkpoints"}
+    if spec.trainer_image.startswith("miles-v0.2.0-"):
+        if config.megatron_to_hf_mode != "bridge":
+            raise ValueError("miles-v0.2.0 supports only megatron_to_hf_mode bridge")
+        if spec.trainer_nodes != 1:
+            raise ValueError("miles-v0.2.0 supports only single-node trainers")
+    settings = {"miles": config.model_dump(), "checkpoint_dir": "/checkpoints"}
+    if spec.trainer_nodes > 1:
+        # Captures on the shared volume let every node's shards be assembled.
+        settings["capture_dir"] = "/checkpoints/.spindle-captures"
+    return settings
 
 
-def serving_options(spec):
+def serving_options(spec, draft_model_path=None):
     options = dict(spec.sglang_cfg)
     reject_managed_options(options, SGLANG_MANAGED)
     tp = options.get("tp_size", spec.inference_gpus_per_node)
     if tp != spec.inference_gpus_per_node:
         raise ValueError("sglang.tp_size must equal the replica GPU allocation")
+    if draft_model_path is not None:
+        options["speculative_draft_model_path"] = draft_model_path
     return options
 
 
+def resolve_draft_asset_path(spec):
+    if not spec.inference_draft_model:
+        return None
+    revision = spec.inference_draft_model_revision or "default"
+    revision_key = sha256(revision.encode()).hexdigest()[:16]
+    return f"/assets/.drafts/{spec.inference_draft_model}/{revision_key}"
+
+
 def resolve_backend_settings(spec, asset_path):
+    base_model = spec.model_weights or spec.model
+    if spec.inference_draft_model and spec.inference_draft_model == base_model:
+        raise ValueError("inference_draft_model must be different from the base model")
     trainer = backend_config(spec, asset_path)
+    draft_model_path = resolve_draft_asset_path(spec)
+    if (
+        draft_model_path is None
+        and spec.sglang_cfg.get("speculative_algorithm") == "NEXTN"
+    ):
+        draft_model_path = asset_path
     inference = {
         "context_length": spec.max_context_length,
         "tp_size": spec.inference_gpus_per_node,
         "mem_fraction_static": 0.8,
         "max_running_requests": 32,
+        "enable_metrics": True,
         "weight_loader_disable_mmap": True,
-        **serving_options(spec),
+        **serving_options(spec, draft_model_path),
     }
     if spec.parameterization == "lora":
         miles = MilesBackendConfig(**trainer["miles"])

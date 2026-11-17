@@ -4,7 +4,10 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -29,9 +32,20 @@ from spindle.providers.contracts import Parameterization
 from spindle.request_timing import enabled as request_timing_enabled
 from spindle.request_timing import mark
 from spindle.telemetry.trainer import CommandMiddleware
+from spindle.usage import DirectorySink, TooMuchUsage, billing_usage, usage_window
 from spindle.version import __version__, source_commit
 
-from .deployments import DeploymentRoutes
+from .deployments import (
+    DeploymentConflict,
+    DeploymentNotFound,
+    DeploymentRequest,
+    DeploymentRoutes,
+    RegistryUnavailable,
+    Routable,
+)
+from .keys import placement_key
+from .queues import QueueLimits, SharedSnapshot, describe_queues
+from .records import ModelRecord
 from .service import ControlPlane, FutureResolutionStatus
 
 ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
@@ -40,10 +54,31 @@ ERROR_STATUSES: tuple[tuple[type[Exception], int, str], ...] = (
     (SequenceConflict, 409, "conflict"),
     (RecordUnavailable, 409, "conflict"),
     (RecordNotFound, 404, "not_found"),
+    (DeploymentConflict, 409, "conflict"),
+    (DeploymentNotFound, 404, "not_found"),
+    (RegistryUnavailable, 503, "registry_unavailable"),
     (RequestValidationError, 400, "invalid_request"),
     (ValueError, 400, "invalid_request"),
     (httpx.TransportError, 503, "engine_unreachable"),
 )
+
+
+# How long a finished billing read answers requests for the same window.
+BILLING_READ_KEPT_S = 600
+
+
+def error_response(status_code: int, content: dict[str, object]) -> JSONResponse:
+    # Modal's proxy compresses responses unless they set an encoding, dropping
+    # Content-Length, and the Tinker SDK retries a 400 without one for minutes.
+    return JSONResponse(
+        status_code=status_code,
+        content=content,
+        headers={"Content-Encoding": "identity"},
+    )
+
+
+class BillingReadFailed(Exception):
+    pass
 
 
 class CreateSessionBody(BaseModel):
@@ -54,6 +89,15 @@ class CreateSessionBody(BaseModel):
 
 class SessionHeartbeatBody(BaseModel):
     session_id: str
+
+
+class FinishReason(BaseModel):
+    type: str
+
+
+class FinishSessionBody(BaseModel):
+    reason: FinishReason
+    detail: str | None = None
 
 
 class RolloutPoolBody(BaseModel):
@@ -173,26 +217,37 @@ def _training_envelope(
     return body, identity
 
 
+def _deployment_summary(definition: Routable) -> dict[str, object]:
+    return {
+        "name": definition.name,
+        "definition_id": definition.definition_id,
+        "base_model": definition.model,
+        "weights_repo": definition.weights_repo,
+        "parameterization": definition.parameterization,
+        "max_context_length": definition.max_context_length,
+    }
+
+
 def create_control_plane_app(
     control_plane: ControlPlane,
-    definitions: Iterable[Any],
+    definitions: DeploymentRoutes | Iterable[Any],
     *,
     api_key: str | None = None,
     retrieve_window: float = 30.0,
     checkpoint_volume: str = "spindle-checkpoints",
+    apps_status: Callable[[Routable], Awaitable[dict[str, str]]] | None = None,
+    deploy_apps: Callable[[Routable], Awaitable[None]] | None = None,
+    stop_apps: Callable[[Routable], Awaitable[None]] | None = None,
+    usage_sink: DirectorySink | None = None,
 ) -> FastAPI:
-    definitions = tuple(definitions)
+    routes = (
+        definitions
+        if isinstance(definitions, DeploymentRoutes)
+        else DeploymentRoutes.from_definitions(definitions)
+    )
 
-    routes = DeploymentRoutes(definitions)
-
-    def definition_for(model_name, parameterization):
-        selected = routes.select(model_name, parameterization)
-        return selected.definition_id if selected else None
-
-    def supports_model(model_name: str) -> bool:
-        return any(definition.model == model_name for definition in definitions) or any(
-            definition.definition_id == model_name for definition in definitions
-        )
+    async def supports_model(model_name: str) -> bool:
+        return await routes.select(model_name) is not None
 
     async def authorize(request: Request) -> None:
         if api_key is not None and request.headers.get("x-api-key") != api_key:
@@ -245,17 +300,15 @@ def create_control_plane_app(
                         logging.getLogger(__name__).exception(
                             "skip rejected operation on %s", request.url.path
                         )
-                return JSONResponse(
-                    status_code=status_code,
-                    content={"error": error, "message": str(exc)},
+                return error_response(
+                    status_code, {"error": error, "message": str(exc)}
                 )
         error_id = uuid.uuid4().hex
-        logging.getLogger(__name__).exception(
-            "unhandled error %s on %s", error_id, request.url.path
+        logging.getLogger(__name__).error(
+            "unhandled error %s on %s", error_id, request.url.path, exc_info=exc
         )
-        return JSONResponse(
-            status_code=500,
-            content={"error": "internal", "message": str(exc), "error_id": error_id},
+        return error_response(
+            500, {"error": "internal", "message": str(exc), "error_id": error_id}
         )
 
     for kind in (*(entry[0] for entry in ERROR_STATUSES), Exception):
@@ -268,9 +321,8 @@ def create_control_plane_app(
         error = {401: "unauthorized", 405: "unsupported"}.get(
             exc.status_code, "invalid_request"
         )
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"error": error, "message": str(exc.detail)},
+        return error_response(
+            exc.status_code, {"error": error, "message": str(exc.detail)}
         )
 
     @app.get("/api/v1/healthz")
@@ -280,25 +332,116 @@ def create_control_plane_app(
     @app.get("/api/v1/get_server_capabilities")
     async def get_server_capabilities() -> dict[str, object]:
         return {
-            "supported_models": routes.capabilities(),
+            "supported_models": [
+                model.model_dump(exclude_none=True)
+                for model in await routes.capabilities()
+            ],
             "spindle_version": __version__,
             "spindle_commit": source_commit(),
         }
 
     @app.get("/api/v1/spindle/deployments")
     async def list_deployments():
+        definitions = await routes.definitions()
+        rows = [_deployment_summary(d) for d in definitions]
+        if apps_status is not None:
+            statuses = await asyncio.gather(*(apps_status(d) for d in definitions))
+            for row, status in zip(rows, statuses):
+                row.update(status)
+        return {"deployments": rows}
+
+    @app.post("/api/v1/spindle/deployments", status_code=202)
+    async def add_deployment(body: DeploymentRequest):
+        deployment = await routes.build(body)
+        config = await routes.add(deployment)
+        summary = _deployment_summary(deployment)  # ty: ignore[invalid-argument-type]
+        if deploy_apps is not None:
+            await deploy_apps(deployment)  # ty: ignore[invalid-argument-type]
+        if apps_status is not None:
+            summary.update(await apps_status(deployment))  # ty: ignore[invalid-argument-type]
+        return {"deployment": summary, "config": config}
+
+    async def placed_models(name: str) -> list[dict[str, object]]:
+        placed = []
+        for _, value in await control_plane.kv.list_items("model:"):
+            model = ModelRecord.model_validate(value)
+            if model.engine_definition_id == name and await control_plane.kv.get(
+                placement_key(model.model_id)
+            ):
+                placed.append(
+                    {
+                        "model_id": model.model_id,
+                        "session_id": model.session_id,
+                        "created_at": model.created_at,
+                    }
+                )
+        return placed
+
+    @app.delete("/api/v1/spindle/deployments/{name}")
+    async def remove_deployment(name: str, force: bool = False):
+        current = await routes.get(name)
+        if current is None:
+            raise DeploymentNotFound(f"no deployment named {name!r}")
+        placed = await placed_models(name)
+        if placed and not force:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "conflict",
+                    "message": f"{len(placed)} model(s) still train on {name!r}; "
+                    "retry with force=true to remove it anyway",
+                    "models": placed,
+                },
+            )
+        # Stop the apps first, so a failed stop leaves the config for a retry.
+        if stop_apps is not None:
+            await stop_apps(current)
+        removed = await routes.remove(name)
+        if stop_apps is not None:
+            # Again, for an app the deploy worker finished between the stop and the removal.
+            await stop_apps(current)
+        if placed:
+            logging.getLogger(__name__).warning(
+                "Removed %s; orphaned models %s",
+                name,
+                [model["model_id"] for model in placed],
+            )
+        return {"deployment": _deployment_summary(removed)}  # ty: ignore[invalid-argument-type]
+
+    async def trained_recipes():
+        definitions = await routes.definitions()
+        return [d for d in definitions if getattr(d, "recipe", None) is not None]
+
+    async def read_queues(now):
+        limits = [
+            QueueLimits(
+                d.definition_id,
+                slots_per_trainer=d.recipe.trainer_max_clients_per_instance,
+                max_trainers=d.recipe.trainer_max_instances,
+            )
+            for d in await trained_recipes()
+        ]
+        return await describe_queues(
+            control_plane.kv, control_plane.engines, limits, now
+        )
+
+    queue_snapshot = SharedSnapshot(read_queues, lambda: control_plane.clock())
+
+    @app.get("/api/v1/spindle/queues")
+    async def queues():
+        observed_at, snapshot = await queue_snapshot.get()
         return {
-            "deployments": [
+            "observed_at": observed_at,
+            "queues": [
                 {
                     "name": d.name,
-                    "definition_id": d.definition_id,
                     "base_model": d.model,
-                    "weights_repo": d.weights_repo,
                     "parameterization": d.parameterization,
-                    "max_context_length": d.max_context_length,
+                    **asdict(snapshot[d.definition_id]),
                 }
-                for d in definitions
-            ]
+                for d in await trained_recipes()
+                if d.definition_id in snapshot
+            ],
         }
 
     @app.post("/api/v1/client/config")
@@ -330,14 +473,64 @@ def create_control_plane_app(
         )
         return {"type": "create_session", "session_id": session.session_id}
 
+    # Reads hold the sink's lock and can take minutes, so they run one at a time. A
+    # request for a window already being read, or read in the last few minutes, gets
+    # that read's answer, so a client that timed out can ask again.
+    billing_reads = ThreadPoolExecutor(1, thread_name_prefix="billing-reads")
+    reads: dict[tuple[datetime, datetime], asyncio.Future] = {}
+
+    def read_billing_usage(
+        sink: DirectorySink, window: tuple[datetime, datetime]
+    ) -> dict[str, object]:
+        try:
+            return billing_usage(sink, *window)
+        except TooMuchUsage:
+            raise
+        except Exception as exc:
+            raise BillingReadFailed from exc
+
+    @app.get("/api/v1/billing/usage/events")
+    async def billing_usage_events(
+        starting_on: str, ending_before: str
+    ) -> dict[str, object]:
+        # Errors here are 4xx: the Tinker SDK retries any 5xx for minutes.
+        if usage_sink is None:
+            raise HTTPException(status_code=404, detail="usage is not recorded here")
+        window = usage_window(starting_on, ending_before)
+        read = reads.get(window)
+        if read is None:
+            loop = asyncio.get_running_loop()
+            read = loop.run_in_executor(
+                billing_reads, read_billing_usage, usage_sink, window
+            )
+            reads[window] = read
+
+            def forget(done: asyncio.Future) -> None:
+                failed = done.cancelled() or done.exception() is not None
+                loop.call_later(
+                    0 if failed else BILLING_READ_KEPT_S, reads.pop, window, None
+                )
+
+            read.add_done_callback(forget)
+        try:
+            return await asyncio.shield(read)
+        except BillingReadFailed as exc:
+            raise HTTPException(
+                status_code=424, detail="reading usage from the Volume failed"
+            ) from exc
+
     @app.post("/api/v1/session_heartbeat")
     async def session_heartbeat(body: SessionHeartbeatBody) -> dict[str, str]:
         await control_plane.heartbeat(body.session_id)
         return {"type": "session_heartbeat"}
 
+    @app.post("/api/v1/sessions/{session_id}/finish")
+    async def finish_session(session_id: str, body: FinishSessionBody) -> None:
+        await control_plane.close_session(session_id, body.reason.type)
+
     @app.post("/api/v1/create_model")
     async def create_model(body: CreateModelBody) -> dict[str, object]:
-        if not supports_model(body.base_model):
+        if not await supports_model(body.base_model):
             raise HTTPException(
                 status_code=400,
                 detail=f"unsupported base_model: {body.base_model}",
@@ -370,8 +563,8 @@ def create_control_plane_app(
             raise ValueError("lora parameterization is configured through lora_config")
         if body.rollout is not None and parameterization != "full":
             raise ValueError("rollout is only configurable for full parameterization")
-        definition_id = definition_for(body.base_model, parameterization)
-        if definition_id is None:
+        selected = await routes.select(body.base_model, parameterization)
+        if selected is None:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -382,11 +575,9 @@ def create_control_plane_app(
         creation = await control_plane.create_model(
             session_id=body.session_id,
             model_seq_id=body.model_seq_id,
-            definition_id=definition_id,
+            definition_id=selected.definition_id,
             spec={
-                "base_model": next(
-                    d.model for d in definitions if d.definition_id == definition_id
-                ),
+                "base_model": selected.model,
                 "lora_config": body.lora_config,
                 "parameterization": {"type": parameterization},
                 "rollout": body.rollout and body.rollout.model_dump(exclude_none=True),
@@ -407,9 +598,11 @@ def create_control_plane_app(
                 status_code=400,
                 detail="base_model or model_path is required",
             )
-        selected = routes.select(body.base_model) if body.base_model else None
-        definition_id = selected.definition_id if selected else None
-        if body.model_path is None and definition_id is None:
+        selected = await routes.select(body.base_model) if body.base_model else None
+        if body.model_path and selected and selected.model == body.base_model:
+            # A plain model name defers to the recipe the adapter was trained on.
+            selected = None
+        if body.model_path is None and selected is None:
             raise HTTPException(
                 status_code=400,
                 detail=f"unsupported base_model: {body.base_model}",
@@ -417,15 +610,11 @@ def create_control_plane_app(
         session = await control_plane.create_sampling_session(
             session_id=body.session_id,
             sampling_session_seq_id=body.sampling_session_seq_id,
-            base_model=(
-                next(d.model for d in definitions if d.definition_id == definition_id)
-                if definition_id
-                else body.base_model
-            ),
+            base_model=selected.model if selected else body.base_model,
             model_path=body.model_path,
-            engine_definition_id=definition_id,
+            engine_definition_id=selected.definition_id if selected else None,
         )
-        if not supports_model(session.base_model):
+        if not await supports_model(session.base_model):
             raise HTTPException(
                 status_code=400,
                 detail=f"unsupported base_model: {session.base_model}",
@@ -525,7 +714,7 @@ def create_control_plane_app(
                 base_model=body.base_model,
                 user_metadata=body.user_metadata,
                 optimizer=body.optimizer,
-                definition_ids={d.definition_id for d in definitions},
+                definition_ids={d.definition_id for d in await routes.definitions()},
             )
             return {
                 "request_id": creation.request_id,
@@ -624,7 +813,7 @@ def create_control_plane_app(
                     response = Response(result.body, media_type=PROTOBUF_MEDIA_TYPE)
                 else:
                     result = await asyncio.to_thread(result.to_json)
-            elif accepts_protobuf:
+            elif accepts_protobuf and isinstance(result, dict):
                 encoded = encode_result(result)
                 if encoded is not None:
                     response = Response(encoded, media_type=PROTOBUF_MEDIA_TYPE)
@@ -645,7 +834,7 @@ def create_control_plane_app(
                 "queue_state": "active",
             }
             if resolution.reason:
-                content["queue_state"] = "starting"
+                content["queue_state"] = resolution.queue_state
                 content["queue_state_reason"] = resolution.reason
             return JSONResponse(status_code=408, content=content)
         if response is not None:

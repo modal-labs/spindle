@@ -114,6 +114,31 @@ def test_grouped_sampling_shares_session_and_dp_rank() -> None:
     }
 
 
+def test_sample_stats_count_prompt_tokens_once_per_sample() -> None:
+    request = task()
+    request["payload"]["num_samples"] = 4
+    request["payload"]["prompt"]["chunks"][0]["tokens"] = [1, 2, 3]
+    cached = iter([0, 2, 2, 2])  # The first sample warms the prefix cache.
+    stats: dict = {}
+
+    asyncio.run(
+        sample_task(
+            request,
+            "http://rollout",
+            transport=httpx.MockTransport(
+                lambda _: response(7, cached_tokens=next(cached))
+            ),
+            stats=stats,
+        )
+    )
+
+    assert (
+        stats["prefill_tokens"],
+        stats["cached_prompt_tokens"],
+        stats["generated_tokens"],
+    ) == (12, 6, 4)
+
+
 def test_multiturn_affinity_tracks_prefix_cache_hit_rate() -> None:
     cached_sequences: dict[tuple[str, int], list[int]] = {}
     sessions = []
@@ -688,3 +713,29 @@ def test_tokenizerless_sampler_accepts_stop_token_ids():
         )
     )
     assert seen[0]["stop_token_ids"] == [7, 9]
+
+
+@pytest.mark.parametrize("latest", [False, True])
+def test_versioned_sessions_route_by_their_session_version(latest) -> None:
+    from spindle.inference.native_router import RoutedResponse
+
+    class Router:
+        def __init__(self):
+            self.keys = []
+            self.bodies = []
+
+        async def dispatch(self, adapter, affinity, *, body, **_):
+            self.keys.append(adapter)
+            self.bodies.append(body)
+            return RoutedResponse(response(7), "replica", dict(wait_s=0.0))
+
+    router = Router()
+    asyncio.run(sample_task(task(latest=latest), "http://rollout", router=router))
+
+    assert router.keys == [sampling.VersionRef("model-a", 7).identity]
+    expected = (
+        {"min_version": 7, "exact_version": None}
+        if latest
+        else {"min_version": None, "exact_version": 7}
+    )
+    assert router.bodies[0]["weight_version"] == expected

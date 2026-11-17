@@ -117,7 +117,7 @@ class CommandMiddleware:
                     started = now
             except ValueError:
                 started = now
-            token = incoming.set((extract(carrier), started))
+            token = incoming.set((extract(carrier), started))  # ty: ignore[invalid-argument-type]
             accepted_token = accepted_root.set(None)
 
             async def respond(message):
@@ -146,7 +146,7 @@ class CommandMiddleware:
             finally:
                 incoming.reset(token)
                 accepted_root.reset(accepted_token)
-        token = incoming.set((Context(), now))
+        token = incoming.set((Context(), now))  # ty: ignore[invalid-argument-type]
         accepted_token = accepted_root.set(None)
         status = 500
         error_type = None
@@ -352,7 +352,7 @@ class TrainerTelemetry:
             canonical,
         )
         self.identities[operation.request_id] = canonical
-        accepted_root.set(canonical)
+        accepted_root.set(canonical)  # ty: ignore[invalid-argument-type]
         while len(self.identities) > 2048:
             self.identities.popitem(last=False)
 

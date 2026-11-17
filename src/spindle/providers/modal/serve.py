@@ -5,12 +5,12 @@ import logging
 import os
 import secrets
 import signal
-import socket
 import subprocess
 import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 import httpx
 import modal
@@ -19,6 +19,7 @@ import uvicorn
 from spindle.engine import Engine
 from spindle.engine.backend_http import HttpBackendClient
 from spindle.engine.http import create_engine_app
+from spindle.usage import ContainerUsage
 from spindle.startup_timing import TRAINER_COMPONENT, timeline
 from spindle.telemetry.trainer import TrainerTelemetry
 
@@ -146,18 +147,18 @@ def run_engine_with_backend(
     max_models: int = 8,
     sampler_persistence_concurrency: int = 1,
     max_forward_backward_batch: int | None = None,
+    max_forward_backward_models: int | None = None,
     startup_timeout: float = BACKEND_STARTUP_TIMEOUT,
     operation_timeout: float = BACKEND_OPERATION_TIMEOUT,
     notify_reconciler: bool = True,
     on_startup_error: Callable[[Exception], Awaitable[None]] | None = None,
+    usage: Callable[[], ContainerUsage] | None = None,
 ) -> None:
     if sampler_persistence_concurrency > 1 and nproc != 1:
         raise ValueError(
             "parallel sampler persistence requires a single-process executor"
         )
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    backend_socket = f"/tmp/spindle-backend-{uuid.uuid4().hex}.sock"
     env = {**os.environ, **(backend_env or {})}
     env["PYTHONPATH"] = os.pathsep.join(
         [entry for entry in (env.get("PYTHONPATH"), *sys.path) if entry]
@@ -179,7 +180,7 @@ def run_engine_with_backend(
         ]
     )
     backend = subprocess.Popen(
-        [*launcher, "spindle.engine.backend_http", executor_reference, str(port)],
+        [*launcher, "spindle.engine.backend_http", executor_reference, backend_socket],
         env=env,
         start_new_session=True,
     )
@@ -193,7 +194,11 @@ def run_engine_with_backend(
             pass
 
     executor = HttpBackendClient(
-        f"http://127.0.0.1:{port}",
+        "http://backend",
+        transport=httpx.AsyncHTTPTransport(
+            uds=backend_socket,
+            limits=httpx.Limits(max_keepalive_connections=0),
+        ),
         read_timeout=operation_timeout,
         # A lost command response leaves gradient/optimizer state uncertain.
         # Terminate all ranks so the process monitor exits the engine instead
@@ -225,6 +230,8 @@ def run_engine_with_backend(
                                 max_models=max_models,
                                 sampler_persistence_concurrency=sampler_persistence_concurrency,
                                 max_forward_backward_batch=max_forward_backward_batch,
+                                max_forward_backward_models=max_forward_backward_models,
+                                usage=usage() if usage is not None else None,
                             )
                     except httpx.TransportError:
                         pass
@@ -274,11 +281,14 @@ def run_engine_with_backend(
     try:
         asyncio.run(serve_until_backend_exits())
     finally:
-        running = backend.poll() is None
-        signal_backend(signal.SIGTERM if running else signal.SIGKILL)
-        if running:
-            try:
-                backend.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                signal_backend(signal.SIGKILL)
-                backend.wait(timeout=10)
+        try:
+            running = backend.poll() is None
+            signal_backend(signal.SIGTERM if running else signal.SIGKILL)
+            if running:
+                try:
+                    backend.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    signal_backend(signal.SIGKILL)
+                    backend.wait(timeout=10)
+        finally:
+            Path(backend_socket).unlink(missing_ok=True)

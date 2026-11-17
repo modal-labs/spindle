@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
+import json
 import os
-from collections.abc import Awaitable, Callable
+import random
+from collections.abc import Awaitable, Callable, Mapping
 
 import modal
 from grpclib.exceptions import StreamTerminatedError
@@ -17,6 +20,8 @@ SAMPLING_SESSION_KV_NAME = "spindle-sampling-sessions"
 EXPORT_KV_NAME = "spindle-exports"
 ARTIFACT_KV_NAME = "spindle-artifacts"
 FFT_POOL_KV_NAME = "spindle-fft-pools"
+DEPLOYMENT_KV_NAME = "spindle-deployments"
+QUEUE_EVENT_KV_NAME = "spindle-queue-events"
 LIST_ITEMS_ATTEMPTS = 3
 # A healthy scan of ~4,800 session records can take over 40 seconds.
 LIST_ITEMS_TIMEOUT_SECONDS = 120.0
@@ -29,6 +34,7 @@ STORE_NAMES = {
     "sampling_sessions": SAMPLING_SESSION_KV_NAME,
     "exports": EXPORT_KV_NAME,
     "artifacts": ARTIFACT_KV_NAME,
+    "queue_events": QUEUE_EVENT_KV_NAME,
 }
 
 KEY_STORES = {
@@ -40,10 +46,17 @@ KEY_STORES = {
     "placement": "models",
     "placement_claim": "models",
     "trainer_demand": "models",
+    "queue_event": "queue_events",
+    "trainer_slot_wait": "models",
     "engine_instance": "engines",
     "model_assets_ready": "engines",
+    "model_assets_call": "engines",
     "lora_pool": "engines",
+    "sampler_warm": "engines",
     "deployment_failure": "engines",
+    "app_deploy": "engines",
+    "registry_version": "engines",
+    "registry_claim": "engines",
     "engine_call": "engines",
     "engine_current": "engines",
     "trainer_plan": "engines",
@@ -199,13 +212,16 @@ class RoutedKeyValueStore:
         return tuple(sorted(items))
 
 
-def shared_kv(app_id: str | None = None) -> RoutedKeyValueStore:
+def shared_kv(
+    app_id: str | None = None, environment: str | None = None
+) -> RoutedKeyValueStore:
     app_id = app_id or os.environ.get("SPINDLE_FRONTEND_APP_ID") or current_app_id()
     return RoutedKeyValueStore(
         {
             domain: ModalKeyValueStore(
                 modal.Dict.from_name(
                     app_store_name(name, app_id),
+                    environment_name=environment,
                     create_if_missing=True,
                 )
             )
@@ -221,4 +237,107 @@ def fft_pool_kv(app_id: str | None = None) -> ModalKeyValueStore:
             app_store_name(FFT_POOL_KV_NAME, app_id),
             create_if_missing=True,
         )
+    )
+
+
+VOLUME_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0)
+
+
+async def _retry_rate_limited(call: Callable[[], Awaitable[object]]) -> object:
+    for delay in (*VOLUME_RETRY_DELAYS_S, None):
+        try:
+            return await call()
+        except modal.exception.ResourceExhaustedError:
+            if delay is None:
+                raise
+            await asyncio.sleep(delay * (1 + random.random()))
+
+
+class ModalVolumeStore:
+    """One `<folder>/<key>.json` file per key in a shared Modal Volume."""
+
+    def __init__(self, volume: modal.Volume, folder: str) -> None:
+        self.volume = volume
+        self.folder = folder
+
+    def _path(self, key: str) -> str:
+        return f"/{self.folder}/{key}.json"
+
+    def read(self, key: str) -> object | None:
+        try:
+            return json.loads(b"".join(self.volume.read_file(self._path(key))))
+        except FileNotFoundError:
+            return None
+
+    async def get(self, key: str) -> object | None:
+        return await _retry_rate_limited(lambda: asyncio.to_thread(self.read, key))
+
+    async def put(self, key: str, value: object) -> None:
+        await self.put_many({key: value})
+
+    async def put_many(self, items: Mapping[str, object]) -> None:
+        """Write every item in one Volume commit."""
+        if not items:
+            return
+        async with self.volume.batch_upload.aio(force=True) as batch:
+            for key, value in items.items():
+                batch.put_file(io.BytesIO(json.dumps(value).encode()), self._path(key))
+
+    async def put_if_absent(self, key: str, value: object) -> InsertResult:
+        current = await self.get(key)
+        if current is not None:
+            return InsertResult(False, current)
+        await self.put(key, value)
+        return InsertResult(True, value)
+
+    async def delete(self, key: str) -> None:
+        try:
+            await self.volume.remove_file.aio(self._path(key))
+        except (FileNotFoundError, modal.exception.NotFoundError):
+            pass
+
+    async def clear(self) -> None:
+        try:
+            await self.volume.remove_file.aio(f"/{self.folder}", recursive=True)
+        except (FileNotFoundError, modal.exception.NotFoundError):
+            pass
+
+    async def list_keys(self, prefix: str) -> tuple[str, ...]:
+        try:
+            entries = await _retry_rate_limited(
+                lambda: self.volume.listdir.aio(f"/{self.folder}")
+            )
+        except (FileNotFoundError, modal.exception.NotFoundError):
+            return ()
+        names = [os.path.basename(entry.path) for entry in entries]
+        return tuple(
+            sorted(
+                name.removesuffix(".json")
+                for name in names
+                if name.endswith(".json") and name.startswith(prefix)
+            )
+        )
+
+    async def list_items(self, *prefixes: str) -> tuple[tuple[str, object], ...]:
+        keys = [
+            key
+            for key in await self.list_keys("")
+            if any(key.startswith(prefix) for prefix in prefixes)
+        ]
+        values = await asyncio.gather(*(self.get(key) for key in keys))
+        return tuple(zip(keys, values))
+
+
+def deployment_kv(
+    app_id: str | None = None, environment: str | None = None
+) -> ModalVolumeStore:
+    """The recipes a frontend serves: `<app_id>/<recipe>.json` in one shared Volume.
+
+    Keyed by app ID, so a frontend redeployed after `spindle stop` starts empty.
+    """
+    return ModalVolumeStore(
+        modal.Volume.from_name(
+            DEPLOYMENT_KV_NAME, environment_name=environment, create_if_missing=True
+        ),
+        app_id or current_app_id(),
     )

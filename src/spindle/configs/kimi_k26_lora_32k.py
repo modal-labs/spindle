@@ -3,6 +3,8 @@ from spindle.configs.deepseek_v31_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "kimi-k26-lora-32k"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "moonshotai/Kimi-K2.6"
     trainer_gpu = "H200"
     trainer_nodes = 3

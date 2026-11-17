@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 from stitch.types import VersionRef
 
@@ -9,7 +10,7 @@ from spindle.inference.bulletin import SnapshotBulletin
 from spindle.inference.lora_sidecar import create_app
 
 
-def test_generation_concurrency_does_not_block_health_requests(tmp_path):
+def test_generation_concurrency_does_not_block_health_or_metrics(tmp_path):
     async def scenario():
         arrived = 0
         all_arrived = asyncio.Event()
@@ -54,12 +55,52 @@ def test_generation_concurrency_does_not_block_health_requests(tmp_path):
                 await asyncio.wait_for(all_arrived.wait(), 5)
                 health = await asyncio.wait_for(client.get("/health"), 2)
                 assert health.status_code == 200
+                metrics = await asyncio.wait_for(client.get("/metrics"), 2)
+                assert metrics.status_code == 200
             finally:
                 release.set()
                 responses = await asyncio.wait_for(asyncio.gather(*requests), 5)
                 assert all(response.status_code == 200 for response in responses)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", [200, 503])
+def test_metrics_preserves_prometheus_response_without_an_adapter(tmp_path, status):
+    body = b"# TYPE sglang:num_running_reqs gauge\nsglang:num_running_reqs 3\n"
+    content_type = "text/plain; version=0.0.4; charset=utf-8"
+
+    def upstream(request):
+        assert request.method == "GET"
+        assert request.url.path == "/metrics"
+        return httpx.Response(
+            status, content=body, headers={"content-type": content_type}
+        )
+
+    app = create_app(
+        SnapshotBulletin(tmp_path / "bulletin"),
+        "http://sglang",
+        transport=httpx.MockTransport(upstream),
+    )
+    with TestClient(app) as client:
+        response = client.get("/metrics")
+
+    assert response.status_code == status
+    assert response.content == body
+    assert response.headers["content-type"] == content_type
+
+
+def test_metrics_returns_service_unavailable_when_engine_times_out(tmp_path):
+    def upstream(request):
+        raise httpx.ReadTimeout("engine unavailable", request=request)
+
+    app = create_app(
+        SnapshotBulletin(tmp_path / "bulletin"),
+        "http://sglang",
+        transport=httpx.MockTransport(upstream),
+    )
+    with TestClient(app) as client:
+        assert client.get("/metrics").status_code == 503
 
 
 def _publish(tmp_path, version):
@@ -226,6 +267,8 @@ def test_sidecar_propagates_adapter_registration_failure(tmp_path) -> None:
     bulletin = _publish(tmp_path, 6)
 
     def upstream(request):
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": []})
         assert request.url.path == "/load_lora_adapter"
         return httpx.Response(400, json={"success": False, "error": "invalid adapter"})
 
@@ -246,6 +289,98 @@ def test_sidecar_propagates_adapter_registration_failure(tmp_path) -> None:
 
     assert response.status_code == 400
     assert response.json()["error"] == "invalid adapter"
+
+
+def test_lost_load_acknowledgement_recovers_on_retry(tmp_path):
+    bulletin = _publish(tmp_path, 6)
+    ref = VersionRef("model-a", 6)
+    path = str(bulletin.resolve(ref))
+
+    async def scenario():
+        loads = 0
+        registered = False
+
+        async def upstream(request):
+            nonlocal loads, registered
+            if request.url.path == "/load_lora_adapter":
+                loads += 1
+                if not registered:
+                    registered = True
+                    raise httpx.ReadError("load acknowledgement lost", request=request)
+                return httpx.Response(
+                    400,
+                    json={"success": False, "error_message": "already loaded"},
+                )
+            if request.url.path == "/v1/models":
+                return httpx.Response(
+                    200, json={"data": [{"id": ref.identity, "root": path}]}
+                )
+            assert registered
+            assert json.loads(request.content)["lora_path"] == ref.identity
+            return httpx.Response(200, json={"output_ids": [42], "meta_info": {}})
+
+        app = create_app(
+            bulletin, "http://sglang", transport=httpx.MockTransport(upstream)
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://sidecar"
+            ) as client,
+        ):
+            payload = {
+                "input_ids": [1],
+                "weight_run_id": "model-a",
+                "weight_version": {"exact_version": 6},
+            }
+            with pytest.raises(httpx.ReadError):
+                await client.post("/generate", json={**payload, "rid": "lost"})
+            response = await client.post("/generate", json={**payload, "rid": "retry"})
+            assert response.status_code == 200
+            assert response.json()["output_ids"] == [42]
+            assert response.json()["meta_info"]["weight_version_start"] == 6
+            assert loads == 2
+            assert app.state.registered_adapters == {ref.identity: path}
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "registry_state",
+    ["absent", "wrong-path", "unavailable"],
+)
+def test_load_error_is_not_hidden_without_registry_confirmation(
+    tmp_path, registry_state
+):
+    bulletin = _publish(tmp_path, 6)
+    ref = VersionRef("model-a", 6)
+    error = {"success": False, "error_message": "already loaded"}
+
+    def upstream(request):
+        if request.url.path == "/load_lora_adapter":
+            return httpx.Response(400, json=error)
+        assert request.url.path == "/v1/models", "generation must not be attempted"
+        if registry_state == "unavailable":
+            return httpx.Response(503)
+        models = {
+            "absent": [],
+            "wrong-path": [{"id": ref.identity, "root": "/another/checkpoint"}],
+        }
+        return httpx.Response(200, json={"data": models[registry_state]})
+
+    app = create_app(bulletin, "http://sglang", transport=httpx.MockTransport(upstream))
+    with TestClient(app) as client:
+        response = client.post(
+            "/generate",
+            json={
+                "input_ids": [1],
+                "weight_run_id": "model-a",
+                "weight_version": {"exact_version": 6},
+            },
+        )
+        assert response.status_code == 400
+        assert response.json() == error
+        assert not app.state.registered_adapters
 
 
 def test_volume_refresh_cannot_overlap_adapter_loading(tmp_path) -> None:

@@ -4,7 +4,195 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
-## 0.2.0 - 2026-10-20
+### Added
+
+- Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
+
+### Fixed
+
+- Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
+
+### Changed
+
+- `nemotron35-lightning-30b-a3b-lora-64k` trains on two B300s with one model copy per GPU. The previous two-H200 layout is now `nemotron35-lightning-30b-a3b-lora-64k-h200`; use it when B300s are not available. The 256K recipe and the shared-server recipe keep H200 trainers.
+- MoE LoRA training on the default Miles images gives the expert token permute a scatter-add backward, which is faster than the BF16 index_add it replaces.
+- Miles LoRA training builds the logits gradient once per micro-batch instead of once per row. Steps with many short rows run faster and hold less memory; results are unchanged.
+- Every bundled config sets its own `trainer_image` and `inference_image`, so SGLang and Miles can be upgraded one config at a time. The images each config runs are unchanged. Configs that leave these fields empty still use the defaults. See [Images](docs/deployment-configs.md#images).
+- Image names now include the fork commit, and a named image is never changed in place. `miles-v0.1.2` is now `miles-v0.1.2-f2f8447`, and `miles-v0.2.0` is now `miles-v0.2.0-15afe21`. Update `trainer_image` in your configs, because the old names are rejected. The defaults now have names too: `miles-v0.1.1-fdd808c` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.23-c4182b2` for samplers. The DeepSeek-V4.1 and GLM-5.3 Flash images are now `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2-glm53` and `miles-v0.1.2-464efc9-glm53`.
+- The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers, which make up three of every four layers, and sample on `sglang-v0.5.23-803bccb`. Checkpoints these recipes saved before this change can't be loaded into them. To keep using one, load it into a variant with the old targets, as described in [Older Qwen3.5 LoRA checkpoints](docs/deployment-configs.md#older-qwen35-lora-checkpoints).
+
+### Fixed
+
+- Sampled-token logprobs are now the model's temperature-1 logprobs at any sampling temperature, matching what the trainer computes. RL scripts that sample at a temperature other than 1 get correct importance ratios for importance sampling, PPO, CISPO and DRO.
+
+## 0.1.8
+
+### Added
+
+- Pretrained DFlash inference recipes for Qwen3-8B, Qwen3.5-9B, Qwen3.8-27B and GLM-5.3 Flash, plus Qwen3.5-4B native MTP using its cached target checkpoint.
+
+### Changed
+
+- The standard 32K LoRA recipes for Qwen3-8B, Qwen3.5-9B Instruct, Qwen3.8-27B and GLM-5.3 Flash use DFlash; Qwen3.5-4B uses native MTP. These replace the separate `with-spec` and `mtp` variants. Qwen3-8B samples on one B300 instead of two H100 GPUs, and Qwen3.5-4B uses B200 for training and sampling.
+
+### Fixed
+
+- Speculative samplers use a corrected SGLang runtime that honors the earliest matching string, regex or EOS stop within an accepted token block.
+- Draft checkpoint revisions use separate cache directories, and downloads sharing target weights run one at a time.
+- Trainer backends use a local Unix socket so another process cannot take their port while model weights load and make startup fail.
+
+## 0.1.7 - 2026-11-15
+
+See what each run or team costs on a shared deployment: Spindle records the tokens every session uses, serves them through Tinker's `get_billing_usage`, and `spindle usage` turns them into dollars per run or label. See [Cost attribution](docs/cost-attribution.md).
+
+### Added
+
+- An opt-in `miles-v0.2.0` trainer image with native adapter checkpoints, for single-node trainers in bridge mode. It trains the same shared-`lora_A` adapter layout as the existing images, which remain the default. Checkpoints don't restore across Miles versions. See [Images](docs/deployment-configs.md#images).
+- Token usage per session on shared trainers and samplers, stored on a `<frontend>-usage` Modal Volume and readable with Tinker's `get_billing_usage`. Label runs with `user_metadata`; `SPINDLE_USAGE_LABEL_KEYS` in the frontend's API secret lists the keys kept (default `run_id,team_id`). See [Cost attribution](docs/cost-attribution.md).
+- `spindle usage` splits Modal app cost across runs or labels by tokens processed, reading costs from Modal's billing report. Idle and cold-start time of trainers and sampler pools isn't charged to a run but still costs you, so it's shown as separate lines; `--hide-overhead` hides them. If Modal's billing report doesn't cover the whole window yet, only the hours it covers are split.
+- `reference_runs/`: a DAPO-Math GRPO workload on the stock Tinker SDK that records learning and timing metrics, with recorded results and a chart script for comparing deployments. Its deployment recipe fixes four H100 trainer GPUs and two single-H100 sampler replicas, and the client records that hardware contract.
+- GLM-5.3 Flash LoRA recipes with a model-specific Miles image, including single-node B300 training with RDMA and expert-routing replay.
+- `mis`, `score_centered`, and `score_centered_mis` train on recorded sampler supports in Miles LoRA and Megatron full-parameter backends. Replay requires explicit sampling temperature; omitted weights mask prompt positions in both backends.
+- `platform.modal.exclude_reserved_capacity`: when `True`, multi-node and RDMA trainers stay off GPUs reserved for the workspace, so the reservation stays free for other jobs. The shared-server example turns it on (#255).
+
+### Changed
+
+- Samplers run SGLang v0.5.23 with PyTorch 2.14.1 and Transformers 5.19. A server's samplers switch over when it is redeployed with a new Spindle version. DeepSeek-V4.1-Flash samplers stay on SGLang v0.5.21, because their LoRA samplers crash on v0.5.23 after loading a trained adapter (#240, #270).
+- `inference_target_concurrency` now defaults to `None`, which adds a sampler replica only when every replica holds `sglang_cfg.max_running_requests` requests. New `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long.
+- The Qwen3.5-9B 16K and Qwen3.5-4B 32K recipes sample on B200, falling back to H200 (9B) or H100 (4B) when no B200 is free. Batches finish faster; a B200 replica costs more per hour. The 4B sampler also runs 128 requests at once. Qwen3.5-2B and the 9B 64K and 128K recipes stay on Hopper (#254).
+- The `spindle deploy` model picker starts with no model selected, so you no longer deploy Qwen3.6-35B-A3B unless you pick it (#281).
+- Spindle now requires `tinker>=0.26.0`, the first SDK release whose `SupportedModel` has `trainable` and `sampleable`.
+- Replay training prepares expert routes and top-p supports with arrays, reducing CPU work before training.
+
+### Fixed
+
+- A request a Modal-hosted frontend rejected with a 400, such as a misaligned `get_billing_usage` window, no longer makes the Tinker SDK retry it for 5 minutes. Modal's proxy compressed the error and dropped its `Content-Length`, which the SDK treats as a retryable proxy rejection; error responses are now sent uncompressed.
+- Local sampling task runners can return an asyncio future as well as a coroutine.
+- Retrieving a null or list result returns JSON when the client requests protobuf.
+- Frontend containers reread the recipe list as soon as it changes, so a config just added or removed through another container is seen at once by name, by model ID, and in `GET /api/v1/spindle/deployments` and `get_server_capabilities`.
+- `spindle stop` no longer aborts on apps that `spindle remove` is already stopping, and removing a config while its apps are still deploying no longer leaves those apps running.
+- Sampling requests rejected with HTTP 429 or 503 can retry with the same request ID as soon as capacity is available, instead of replaying the rejection for 30 seconds.
+- `get_server_capabilities` now sets `trainable` and `sampleable` on each model, which Tinker SDK 0.26 and later read. Before, both were `null`.
+- Sampling recovers when SGLang loads an adapter but its acknowledgement is lost. A later load error is accepted only when SGLang's registry confirms the same adapter name and checkpoint path.
+- Sampling from a `qwen35_35b_a3b_fft_64k` or `qwen36_35b_a3b_fft_64k` full fine-tune no longer runs out of GPU memory while the sampler loads the trained weights (#260).
+
+## 0.1.6 - 2026-11-06
+
+Add and remove configs on a running frontend without redeploying it, wait in line for a trainer slot instead of failing, and see each recipe's training queue.
+
+### Added
+
+- `spindle deploy` registers every recipe in one per-frontend registry instead of baking a configs file into the frontend image, so a deploy adds or updates configs instead of replacing the set; upgrading a pre-registry frontend carries over every recipe it serves (#181).
+- `POST /api/v1/spindle/deployments` registers a config on a running frontend and deploys its apps, and `DELETE /api/v1/spindle/deployments/{name}` removes one (#160).
+- `spindle add NAME --base BASE --FIELD=VALUE ...` registers a config through that API and waits until its apps are ready; `spindle remove NAME` removes a config while checking whether there are any models still training on it live (#160).
+- `qwen25_7b_instruct_lora_32k`: Qwen2.5-7B-Instruct LoRA with 32K context, trained on 4× H100 and sampled on one GPU per replica.
+- `qwen25_3b_lora_32k`: Qwen2.5-3B LoRA with 32K context, with one model replica per GPU. The shared server serves both Qwen2.5 recipes (#206).
+- `GET /api/v1/spindle/queues` describes each recipe's training queue: waiting clients, free trainer slots, and how many clients were added, placed and released in the last hour (#201, #205).
+- `spindle stop` stops a deployment: its frontend, then every trainer, inference, and sampler app it created. Pass the same `--app` and `--env` as the deploy.
+
+### Changed
+
+- Every app a deployment creates now starts with its frontend name, so `spindle deploy --app my-spindle` names its trainers `my-spindle-trainer-<recipe>` and its sampler pools `my-spindle-lora-<recipe>`. Two deployments with different `--app` values can share one Modal environment and recipe names. Deployments without `--app` keep their `spindle-...` names. A deployment made with `--app` on an earlier release gets new worker apps on its next deploy; stop its old `spindle-...` apps with `modal app stop`.
+- When every trainer for a recipe is full, creating a model waits for a slot instead of failing with `trainer capacity exhausted`. The Tinker SDK shows the request's place in line. When a slot frees up, the request that has waited longest gets it. Rarely, a brand-new request takes it first.
+- Spindle requires Modal 1.6.3 or newer, the first release that builds images with [image builder version](https://modal.com/docs/guide/images#image-builder-updates) 2026.10. Multi-node trainers use `modal.clustered` instead of the deprecated `modal.experimental.clustered`.
+
+### Fixed
+
+- The `qwen35_4b_lora_32k` and `qwen35_2b_lora_32k` trainers no longer run out of GPU memory on batches of many short sequences. They pack up to 16K tokens per GPU instead of 32K; sequences up to the full 32K context still train (#203).
+- Full fine-tune training clients and `sample_with_replay` work with Tinker SDK 0.38 (#212).
+
+## 0.1.5 - 2026-11-02
+
+Faster DeepSeek-V4.1-Flash training, 64K and 128K DeepSeek-V4.1-Flash recipes, and frontends that can require a Modal proxy token.
+
+### Added
+
+- `deepseek_v41_flash_lora_64k`: DeepSeek-V4.1-Flash LoRA with 64K context. It trains at TP8 on B300 or B200; H200 cannot hold a 64K training sequence for this model (#178).
+- `deepseek_v41_flash_lora_128k`: DeepSeek-V4.1-Flash LoRA with 128K context (#172).
+- LoRA trainers can split one long sequence across GPUs for models that need it, such as DeepSeek-V4.1 (Miles `allgather_cp` with `qkv_format: bshd`), including batches that train several LoRA adapters at once (#172).
+- `platform.url_label` sets the part of the frontend URL after the double dash, so `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. `platform.requires_proxy_auth` makes Modal turn away frontend requests without a [proxy token](https://modal.com/docs/guide/webhook-proxy-auth). Deployments that set neither keep their URL and stay reachable by stock Tinker clients (#180).
+- `examples/shared-server`: one deployment a team shares, with one LoRA recipe for each bundled base model on a `prod` frontend in its own environment, a smoke test, a script that adds the proxy token to any Tinker script, and a workflow that redeploys it from `main` (#139, #189, #192).
+- Every Spindle deployment is tagged with its version, such as `v0.1.5`. The Tag column of each app's deployment history shows which Spindle release it runs (#179).
+
+### Changed
+
+- When a frontend serves several recipes for the same model, requests by model name go to the recipe with the longest context, instead of whichever was deployed first. Pass a recipe's name as `base_model` to pick that recipe. `get_server_capabilities` lists every recipe and its context length. Sampling a saved adapter uses the recipe that trained it (#171).
+- Deployments now download base weights for up to four recipes at once, so a small model no longer waits behind a large one (#182).
+- The DeepSeek-V4.1-Flash 8K and 32K LoRA trainers now train several sequences together instead of one at a time, so training steps take less time and use more GPU memory. On two 8× H200 nodes, a 32K GRPO training step drops from 128 to 57 seconds. Recipes based on them inherit this; set `miles_cfg.dynamic_batch_size: False` and `miles_cfg.cli_options.qkv_format: "bshd"` to keep the previous behavior (#193).
+
+### Fixed
+
+- Scripts on Tinker SDK 0.36 or newer, including tinker-cookbook, no longer fail with a 404 when they exit. Spindle now accepts the SDK's end-of-session call and frees that session's models right away (#190).
+- Creating a model no longer fails with `trainer capacity exhausted` when a trainer finishes starting while the model is being placed (#185).
+
+## 0.1.4 - 2026-10-29
+
+Faster DeepSeek-V4.1-Flash sampling and sampler starts, and agent skills for working with Spindle.
+
+### Added
+
+- `deepseek_v41_flash_lora_32k_b300`: the 32K DeepSeek-V4.1-Flash recipe on B300, which holds a 32K row at TP2 (#163).
+- `spindle skills install` installs agent skills that explain deploying Spindle, where it differs from Tinker, and how to run experiments on it (#140).
+
+### Changed
+
+- The DeepSeek-V4.1-Flash 32K recipes train at TP4 instead of TP8 on H200 and B200, so each rank runs half as many micro-batches per step. The 1017 32K recipe inherits this (#163).
+- The DeepSeek-V4.1-Flash 32K recipes decode with the checkpoint's draft heads (SGLang's DSpark mode). A long sample that used to finish alone at 30 to 60 tokens per second now finishes several times faster, and samples keep the model's own distribution because the full model checks every draft token. The sampler takes four to seven minutes longer to start, which a 32K run earns back within about five steps. The 8K recipes are unchanged (#165).
+- DeepSeek-V4.1-Flash samplers run 128 requests at once instead of 32, so a GRPO step's samples generate together instead of in four waves (#147).
+- DeepSeek-V4.1-Flash samplers start sooner: they read the checkpoint with eight threads instead of one (#148), each GPU rank pins its own eighth of the Engram tables instead of all ranks pinning one shared copy, which saves 200 to 250 seconds on 8× H200 (#149), and they keep their compiled kernels on the shared kernel-cache volume, like trainers, which saves about five minutes once the cache is warm (#146, #167). Other recipes can keep SGLang's caches on the volume too by setting `SGLANG_CACHE_DIR` under `/root/.cache/kernel-cache` in `inference_env`.
+- Sampler images no longer build SGLang's prompt-indexing extension at startup; it ships prebuilt (#146).
+- Every sampler sets `SGLANG_ENABLE_LORA_CSGMV_SPLIT_K=1`. SGLang still applies split-K only to the BF16 rank-32 CSGMV shapes it measured, and never in deterministic mode. LoRA servers already set the flag (#123); set it to `0` in `inference_env` to turn it off. `qwen35_9b_instruct_lora_256k` set the flag under its old name, so split-K never ran there before (#151).
+
+## 0.1.3 - 2026-10-28
+
+Faster training for LoRA classifiers that score several candidate labels per position, and cache-aware routing for LoRA samplers.
+
+### Added
+
+- `qwen3_4b_lora_32k`: Qwen3-4B LoRA on 4× H100 with 32K context, one model replica per GPU (#142).
+- Qwen3.8-27B LoRA recipe with B200 samplers, `qwen38_27b_lora_16k_b200`, which serves with the TensorRT-LLM attention backend and 64-token pages (#145).
+- LoRA samplers can route each request to the replica with its longest cached prefix with `inference_lora_routing = "cache_wait"`, while keeping request load and pinned KV memory within bounds. The router runs in Rust inside each sampling container. It measures the pool's prefill rate from completed requests unless `inference_routing_prefill_tokens_per_second` sets it, and `inference_routing_balance_absolute`, `inference_routing_balance_relative` and `inference_routing_cache_threshold` tune it. Pools without routable replicas, including pools scaled to zero and pools whose SGLang cache publishes no observations, fall back to Modal's gateway routing (#121, #122, #123).
+
+### Changed
+
+- LoRA recipes use `cache_wait` routing by default when SGLang runs one data-parallel rank, and Modal session affinity otherwise. `inference_lora_routing = "affinity"` keeps session affinity. `inference_routing_balance_absolute` defaults to 40% of `max_running_requests`, and at least 4 (#123).
+- LoRA samplers enable SGLang's CSGMV split-K kernel. For rank-32 adapters on models with 4,096-wide hidden layers, such as Qwen3.5-9B and Qwen3-8B, it speeds up the LoRA kernels for decode-sized batches by up to 2.9× on H200 and 2.6× on B200. Set `SGLANG_ENABLE_LORA_CSGMV_SPLIT_K=0` in `inference_env` to disable it (#123).
+- The frontend server runs in `platform.modal.region`, or `us-east` when no region is set. Only the CPU frontend is placed; trainers and samplers stay unpinned unless the recipe sets a region. Before, frontend containers could start in any region, and one on another continent added 2 s or more to each training step (#152).
+- `forward` requests use the same binary transport and protobuf results as `forward_backward`, and queued forwards are batched into one trainer call (#153).
+- The Miles backend prepares labels and weights with numpy instead of per-value Python loops (#154), and passes training rows and log probabilities to its GPU workers as arrays instead of Python lists (#158). Large batches spend less time between the request and the GPU work.
+- When every datum in a batch has the same number of candidate labels (`target_tokens` shaped `[sequence_length, K]`), the Miles backend scores all K labels from one softmax over the vocabulary instead of K (#157).
+
+## 0.1.2 - 2026-10-27
+
+DeepSeek-V4.1-Flash LoRA recipes for the original and 1017 releases, loaded from DeepSeek's own weights, and multi-LoRA trainer scheduling for clients that train independently.
+
+### Added
+
+- DeepSeek-V4.1-Flash-1017 LoRA recipes, `deepseek_v41_flash_1017_lora_8k` and `deepseek_v41_flash_1017_lora_32k`, which load the 1017 release (#129).
+- DeepSeek-V4.1-Flash LoRA recipe with 32K context, `deepseek_v41_flash_lora_32k`. It splits each layer across eight GPUs instead of four (#128).
+- `deepseek_v41_flash_lora_8k` falls back to B200 and H200 for the trainer and samplers (#128).
+- `trainer_max_clients_per_batch` caps how many multi-LoRA clients a trainer trains together. With `1`, each client's step runs on its own, so clients that train independently no longer wait for each other (#124).
+- Samplers serve SGLang's Prometheus metrics at `/metrics`, so Modal collects inference metrics for sampler deployments (#125).
+- Example launchers for the Qwen3.8-27B DAPO run on 4 H200s and 12 B200s (#135) and the Qwen3.5-9B SWE-Gym run on B300s (#136).
+
+### Changed
+
+- DeepSeek-V4.1-Flash recipes load DeepSeek's FP8/FP4 release instead of a BF16 export. The trainer dequantizes it to BF16 as it loads, and samplers serve it with FP8 routed experts. Redeploying downloads the release once (#128).
+- `deepseek_v41_flash_lora_8k` keeps one sampler running for the length of a run, so the first sample doesn't wait for the weights to load. Recipes that subclass it inherit this (#134).
+- DeepSeek-V4.1-Flash samplers queue up to 128 requests instead of 8, so a GRPO step's group samples no longer get 503s and retries (#141).
+- Multi-LoRA trainers run optimizer steps, checkpoint saves and sampler-weight captures ahead of queued `forward_backward` requests, and serve queued training requests oldest first (#124).
+- A sampling request delivered again with the same request ID shares the in-flight work or the completed response instead of generating twice (#120).
+
+### Fixed
+
+- DeepSeek-V4.1-Flash trainers on B200 no longer hang in their first step (#128).
+- Miles' gloo process group waits as long as `distributed_timeout_minutes`, so trainers on slow-loading hosts no longer time out after 30 minutes (#128).
+- The Miles v0.1.2 trainer image, the Miles Megatron base image and the SGLang image are pinned to exact commits or digests, so a cached build cannot serve an older fork branch (#128, #131).
+- The rollout image builds SGLang's radix-tree binding from the pinned fork revision, so the scheduler no longer crashes when routing observations are enabled (#137).
+- A sampling request that waited longer than 30 seconds, or a future polled after its sample completed, no longer fails with `unknown key family: sampler_warm` (#130).
+- Training runs named in sampler paths, `<model_id>:train:0`, resolve to the model's checkpoints, so tinker-cookbook's `run_inspect_evals` finds the base model (#130).
+
+## 0.1.1 - 2026-10-23
 
 The first versioned release. Deployments made before it report `0.1.0`.
 
@@ -17,6 +205,9 @@ The first versioned release. Deployments made before it report `0.1.0`.
 - Support for Tinker SDK 0.25 through 0.33 (#3, #69).
 - Multiple target tokens per input position (#104).
 - Model recipes with multi-LoRA backend support (#35), a Qwen3.5 9B 256K config (#86), and output-head LoRA for Qwen3.6 35B (#103).
+- DeepSeek-V4.1-Flash LoRA recipe, `deepseek_v41_flash_lora_8k`, trained and served on B300s from pinned BF16 weights (#73, #74, #75).
+- `trainer_image` selects a named trainer image, and multi-LoRA Miles recipes can run on Miles v0.1.2. LoRA target modules accept wildcard checkpoint paths (#74).
+- While a trainer waits for GPU capacity, `create_model` reports which GPUs it is waiting for and for how long, instead of "starting a trainer" (#113).
 - Per-phase startup timing on trainer and sampler containers (#58).
 
 ### Changed
@@ -26,8 +217,10 @@ The first versioned release. Deployments made before it report `0.1.0`.
 - gpt-oss presets: train `lm_head` LoRA to match Tinker SDK defaults (#6), serve LoRA from BF16 weights (#7), and retuned trainer and sampler parallelism and admission limits (#36, #40, #45, #49).
 - Sampling: multi-turn conversations route to one sampler replica (#46), and warm sampler pools persist between training steps (#37).
 - Faster cold starts: TileLang kernels persist in the shared kernel cache (#82), the asset download is skipped once weights are on the volume (#83), and `spindle deploy` builds the sampler image up front (#95).
+- `spindle deploy` starts each model's base-weight download in the background. `create_model` and `create_sampling_client` return immediately, report download progress while they wait, and work for checkpoints that take longer than a request timeout to download (#107).
 - Deployment configs reach the frontend as a file instead of an environment variable (#94).
 - Optimizers other than AdamW are rejected instead of silently running AdamW (#78, #101).
+- A client that asks to train the unembedding, as Tinker clients do by default, keeps it frozen when the deployment doesn't target it, instead of being refused (#74).
 - Lower request and training overhead (#29, #31, #41, #42).
 
 ### Fixed
@@ -37,3 +230,4 @@ The first versioned release. Deployments made before it report `0.1.0`.
 - Miles LoRA A initialization matches PEFT and Tinker (#10).
 - Grouped-expert LoRA checkpoint loading in the pinned Miles version (#16).
 - `execute_sample` is non-preemptible (#15).
+- `load_state` on multi-node LoRA trainers, which failed on missing checkpoint shards (#74).

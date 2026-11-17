@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import shlex
 import subprocess
@@ -14,11 +15,15 @@ from itertools import count
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import torch
+
 from spindle.backends.miles_arguments import defer_config_overrides
 from spindle.backends.miles_config import MilesBackendConfig
 from spindle.errors import BackendFailed
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
+from .native_checkpoint import materialize_adapter
 from .replay_data import install_bridge_replay, validate_routed_experts
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
@@ -53,12 +58,24 @@ except ImportError:
 class MilesRuntime:
     """Synchronous owner of Miles's asynchronous Ray trainer controller."""
 
+    _v020 = None
+
     def __init__(self, config: MilesBackendConfig) -> None:
         if _runtime_import_error is not None:
             raise ImportError(
                 "MilesRuntime requires Miles and Ray in the trainer image"
             ) from _runtime_import_error
         self.config = config
+        self.supports_seed = (
+            "seed"
+            in inspect.signature(tinker_runtime.MilesBackend.load_slot).parameters
+        )
+        self._v020 = None
+        if os.environ.get("SPINDLE_MILES_API") == "0.2":
+            # This API module requires dependencies absent in legacy trainer images.
+            from . import v020
+
+            self._v020 = v020
         # Record the commit actually installed from the branch in this image.
         self.revision = subprocess.check_output(
             [
@@ -93,6 +110,10 @@ class MilesRuntime:
             self._stop_loop()
             raise
 
+    @property
+    def checkpoint_format(self):
+        return self._v020.CHECKPOINT_FORMAT if self._v020 else "miles_torch_dist"
+
     def load_slot(
         self,
         slot: int,
@@ -101,6 +122,7 @@ class MilesRuntime:
         *,
         checkpoint: str | None = None,
         restore_optimizer: bool = True,
+        seed: int | None = None,
     ) -> None:
         self._run(
             self._bridge.load_slot(
@@ -109,6 +131,7 @@ class MilesRuntime:
                 alpha,
                 ckpt_path=checkpoint,
                 load_optimizer=restore_optimizer,
+                **({"seed": seed} if seed is not None and checkpoint is None else {}),
             )
         )
 
@@ -129,6 +152,7 @@ class MilesRuntime:
                 num_layers=self._args.num_layers,
                 num_experts=self._args.num_experts,
                 topk=self._args.moe_router_topk,
+                moe_layer_freq=getattr(self._args, "moe_layer_freq", 1),
             )
         unit_id = next(self._unit_ids)
         method = (
@@ -151,6 +175,13 @@ class MilesRuntime:
     def save_slot(
         self, slot: int, path: str, *, include_optimizer: bool = True
     ) -> None:
+        if self._v020 is not None:
+            written = self._run(
+                self._bridge.save_slot(slot, path, include_optimizer=include_optimizer)
+            )
+            # Outside _run: a bad capture fails this request, not the shared trainer.
+            materialize_adapter(written, Path(path), checkpoint=True)
+            return
         if include_optimizer:
             self._run(self._bridge.save_slot(slot, path))
         else:
@@ -170,7 +201,10 @@ class MilesRuntime:
         target_modules: tuple[str, ...],
         lora_dropout: float,
     ) -> None:
-        self._run(self._bridge.export_slot(slot, rank, alpha, path))
+        written = self._run(self._bridge.export_slot(slot, rank, alpha, path))
+        if self._v020 is not None:
+            materialize_adapter(written, Path(path), checkpoint=False)
+            return
         _materialize_capture(path)
 
     def torch_profile_start(self) -> None:
@@ -234,13 +268,20 @@ class MilesRuntime:
         os.environ.setdefault("no_proxy", "127.0.0.1")
 
         install_bridge_replay(tinker_runtime)
-        _configure_actor_spec(train_specs)
-        _allow_context_parallel_multi_lora(lora_arguments)
+        if self._v020 is not None:
+            self._v020.configure_actor()
+        else:
+            _configure_actor_spec(train_specs)
+        if create_trainer_handles is None:
+            _allow_context_parallel_multi_lora(lora_arguments)
+        if self._v020 is None:
+            _allow_allgather_cp_bshd_multi_lora(lora_arguments)
         architecture = (
             shlex.split(load_model_args(self.config.model_type))
             if self.config.model_type
             else []
         )
+        parse_options = {"preprocess_args": _configure_args} if self._v020 else {}
         with _temporary_argv([*architecture, *self.config.miles_arguments()]):
             if self.config.cli_options:
 
@@ -249,15 +290,15 @@ class MilesRuntime:
                         parser, self.config.cli_options, sys.argv
                     )
 
-                args = parse_args(add_custom_arguments=configure, entry="serve")
+                args = parse_args(
+                    add_custom_arguments=configure, entry="serve", **parse_options
+                )
             else:
-                args = parse_args(entry="serve")
-        self._args = args
+                args = parse_args(entry="serve", **parse_options)
+        self._args = self._v020.replay_args(args) if self._v020 else args
 
-        # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
-        args.lora_A_init_method = "kaiming"
-        args.use_dynamic_global_batch_size = True
-        args.delay_split_train_data_by_dp = True
+        if self._v020 is None:
+            _configure_args(args)
         configure_logger(args, source=_main_process_identity())
         startup = timeline(BACKEND_COMPONENT)
         startup.mark("miles_args_parsed")
@@ -293,7 +334,10 @@ class MilesRuntime:
         object_store.init_instance(args, contribute_segment=False)
         self._owns_object_store = True
         startup.mark("ray_workers_launched")
-        if create_trainer_handles is not None:
+        if self._v020 is not None:
+            self._trainer, request = await self._v020.initialize_trainer(args)
+            await self._trainer.init(request)
+        elif create_trainer_handles is not None:
             configs = compute_trainer_configs(args)
             (actor_config,) = [c for c in configs if c.role == ACTOR_ROLE]
             handles = create_trainer_handles(args, trainer_configs=configs)
@@ -310,9 +354,9 @@ class MilesRuntime:
             )
             await self._trainer.init()
         startup.mark("trainer_actors_initialized")
-        self._bridge = tinker_runtime.MilesBackend(
-            self._trainer, router_url="", dp_size=1
-        )
+        self._bridge = _array_bridge(self._trainer, native=self._v020 is not None)
+        if self._v020 is not None:
+            self._bridge = self._v020.AdapterBridge(self._bridge, args)
         startup.mark("miles_backend_ready")
 
     async def _close(self) -> None:
@@ -354,7 +398,62 @@ _WORKER_ENV_VARS = (
     "TORCHINDUCTOR_CACHE_DIR",
     "TILELANG_CACHE_DIR",
     "EXPERT_LORA_COMPAT",
+    "EXPERT_GROUPED_GEMM",
 )
+
+
+def _array_bridge(trainer, *, native=False):
+    """Miles's ``_execute_batch`` builds per-token Python lists and returns log
+    probabilities with ``.tolist()``; this keeps rows and outputs as arrays."""
+
+    class ArrayBackend(tinker_runtime.MilesBackend):
+        async def _execute_batch(
+            self, method, batch_id, slot_datums, loss_fn, loss_fn_config
+        ):
+            train_data = tinker_runtime._build_train_data(slot_datums)
+            # Data-parallel padding rows come from pad_slot_rows with zero weights.
+            train_data["loss_masks"] = [
+                np.ones(row["target_len"], np.int32) for _, row in slot_datums
+            ]
+            # Miles slices these per context-parallel rank with list ``+`` or
+            # ``torch.cat``; an array would reach ``torch.cat``.
+            for key in ("loss_weights", "advantages", "rollout_log_probs"):
+                if key in train_data:
+                    train_data[key] = [
+                        torch.as_tensor(values) for values in train_data[key]
+                    ]
+            train_data["loss_fn"] = loss_fn
+            train_data["loss_fn_config"] = loss_fn_config
+            store = object_store.get_instance()
+            data_ref = store.put(
+                value=train_data, value_spec=tinker_runtime.ROLLOUT_DATA_VALUE_SPEC
+            )
+            try:
+                worker_results = await getattr(self.trainer, method)(
+                    batch_id=batch_id, data_ref=data_ref
+                )
+            finally:
+                store.remove(data_ref)
+            outputs: dict[int, dict] = {}
+            for worker_result in worker_results:
+                if "error" in worker_result:
+                    return worker_result
+                for datum_output in worker_result["per_datum"]:
+                    index = int(datum_output["sample_index"])
+                    if index not in outputs:
+                        recorded = {
+                            "loss": float(datum_output["loss"]),
+                            "logprobs": torch.as_tensor(datum_output["logprobs"])
+                            .float()
+                            .numpy(),
+                        }
+                        if "metrics" in datum_output:
+                            recorded["metrics"] = datum_output["metrics"]
+                        outputs[index] = recorded
+            return [outputs[index] for index in range(len(slot_datums))]
+
+    options = {"lora_layout": None} if native else {}
+    return ArrayBackend(trainer, router_url="", dp_size=1, **options)
 
 
 def _worker_env() -> dict[str, str]:
@@ -395,6 +494,13 @@ def _temporary_argv(arguments: list[str]):
         sys.argv = original
 
 
+def _configure_args(args) -> None:
+    # Match the megatron LoRA backend and PEFT/Tinker: kaiming-uniform A, zero B.
+    args.lora_A_init_method = "kaiming"
+    args.use_dynamic_global_batch_size = True
+    args.delay_split_train_data_by_dp = True
+
+
 def _check_result(result) -> None:
     if isinstance(result, (list, tuple)):
         for item in result:
@@ -433,8 +539,30 @@ def _configure_actor_spec(train_specs) -> None:
     train_specs._compute_spec_trainer = compute
 
 
+def _allow_allgather_cp_bshd_multi_lora(lora_arguments) -> None:
+    """Miles rejects multi-LoRA with all-gather CP. With bshd rows the actor's
+    allgather_cp_lora patch counts each adapter's tokens, so skip that check."""
+    original = lora_arguments.validate_multi_lora_args
+    if getattr(original, "__spindle_allows_allgather_bshd__", False):
+        return
+
+    @wraps(original)
+    def validate(args) -> None:
+        allgather_cp = getattr(args, "allgather_cp", False)
+        if not (allgather_cp and getattr(args, "qkv_format", "thd") == "bshd"):
+            return original(args)
+        args.allgather_cp = False
+        try:
+            original(args)
+        finally:
+            args.allgather_cp = allgather_cp
+
+    validate.__spindle_allows_allgather_bshd__ = True
+    lora_arguments.validate_multi_lora_args = validate
+
+
 def _allow_context_parallel_multi_lora(lora_arguments) -> None:
-    """Miles rejects multi-LoRA with CP>1 because its Tinker losses zip
+    """Miles v0.1.1 rejects multi-LoRA with CP>1 because its Tinker losses zip
     full-length per-datum vectors against CP-sharded log probs. The Spindle actor
     gathers those log probs back to full response length before the loss runs,
     so the guard does not apply to this path."""
@@ -444,6 +572,16 @@ def _allow_context_parallel_multi_lora(lora_arguments) -> None:
 
     @wraps(original)
     def validate(args) -> None:
+        estimator = getattr(args, "advantage_estimator", None)
+        if args.context_parallel_size > 1 and estimator in (
+            "ppo",
+            "reinforce_plus_plus",
+        ):
+            raise ValueError(
+                f"--advantage-estimator {estimator} has no effect on multi-LoRA "
+                "training, and Spindle doesn't support it with context parallelism "
+                "above 1. Remove the flag or set --context-parallel-size 1."
+            )
         context_parallel_size = args.context_parallel_size
         args.context_parallel_size = 1
         try:

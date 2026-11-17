@@ -1,0 +1,21 @@
+from spindle.configs.deepseek_v41_flash_lora_8k import Config as Parent
+
+
+class Config(Parent):
+    """DeepSeek-V4.1-Flash LoRA with 32K context."""
+
+    name = "deepseek-v41-flash-lora-32k"
+    trainer_image = "miles-v0.1.2-f2f8447"
+    inference_image = "sglang-v0.5.21-a3e0e17"
+    max_context_length = 32768
+    overrides = {
+        "miles_cfg.tensor_model_parallel_size": 4,
+        "miles_cfg.max_tokens_per_gpu": 32768,
+        "miles_cfg.cli_options.make_vocab_size_divisible_by": 32,
+        "sglang_cfg.speculative_algorithm": "DSPARK",
+        "sglang_cfg.speculative_dspark_block_size": 5,
+        "sglang_cfg.cuda_graph_max_bs_decode": 64,
+    }
+
+
+config = Config()

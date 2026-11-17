@@ -1,7 +1,6 @@
 import asyncio
 import json
 import re
-import socket
 import subprocess
 import sys
 import threading
@@ -149,47 +148,29 @@ def test_optim_step_rejects_non_adam_params(payload, message, caplog) -> None:
     assert "rejected unsupported optimizer: dimuon" in caplog.text
 
 
-def test_backend_batches_cross_http() -> None:
+@pytest.mark.parametrize(
+    "kind", [OperationKind.FORWARD, OperationKind.FORWARD_BACKWARD]
+)
+def test_backend_batches_cross_http(kind) -> None:
+    def command(model_id, token):
+        payload = {
+            "data": [
+                {"model_input": {"chunks": [{"tokens": [token]}]}, "loss_fn_inputs": {}}
+            ],
+            "loss_fn": "cross_entropy",
+        }
+        return Command(model_id, kind, parse_operation_payload(kind, payload))
+
     async def run() -> None:
         executor = http_executor(EchoExecutor())
         results = await executor.execute_forward_backward_batch(
-            (
-                Command(
-                    "model-a",
-                    OperationKind.FORWARD_BACKWARD,
-                    parse_operation_payload(
-                        OperationKind.FORWARD_BACKWARD,
-                        {
-                            "data": [
-                                {
-                                    "model_input": {"chunks": [{"tokens": [1]}]},
-                                    "loss_fn_inputs": {},
-                                }
-                            ],
-                            "loss_fn": "cross_entropy",
-                        },
-                    ),
-                ),
-                Command(
-                    "model-b",
-                    OperationKind.FORWARD_BACKWARD,
-                    parse_operation_payload(
-                        OperationKind.FORWARD_BACKWARD,
-                        {
-                            "data": [
-                                {
-                                    "model_input": {"chunks": [{"tokens": [2]}]},
-                                    "loss_fn_inputs": {},
-                                }
-                            ],
-                            "loss_fn": "cross_entropy",
-                        },
-                    ),
-                ),
-            )
+            (command("model-a", 1), command("model-b", 2))
         )
 
-        assert [result["model_id"] for result in results] == ["model-a", "model-b"]
+        assert [(result["model_id"], result["kind"]) for result in results] == [
+            ("model-a", kind.value),
+            ("model-b", kind.value),
+        ]
         await executor.close()
 
     asyncio.run(run())
@@ -216,22 +197,22 @@ def test_backend_shutdown_is_idempotent() -> None:
     asyncio.run(run())
 
 
-def test_backend_runner_serves_executor_in_subprocess() -> None:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+def test_backend_runner_serves_executor_in_subprocess(tmp_path) -> None:
+    socket_path = str(tmp_path / "backend.sock")
     backend = subprocess.Popen(
         [
             sys.executable,
             "-m",
             "spindle.engine.backend_http",
             "tests.support:EchoExecutor",
-            str(port),
+            socket_path,
         ]
     )
 
     async def run() -> None:
-        executor = HttpBackendClient(f"http://127.0.0.1:{port}")
+        executor = HttpBackendClient(
+            "http://backend", transport=httpx.AsyncHTTPTransport(uds=socket_path)
+        )
         deadline = time.time() + 10
         while True:
             assert backend.poll() is None, "backend exited"
