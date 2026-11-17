@@ -15,6 +15,8 @@ from miles.backends.training_utils.loss_hub import (
 )
 from miles.backends.training_utils.parallel import get_parallel_state
 
+from spindle.patching import same_signature
+
 
 def _pad_local_shard(
     tensor,
@@ -75,6 +77,7 @@ def install() -> None:
     if getattr(original, "__spindle_gathers_cp__", False):
         return
 
+    @same_signature(original)
     def get_log_probs_and_entropy(
         logits,
         *,
@@ -143,10 +146,11 @@ def install() -> None:
     if getattr(original_slice, "__spindle_unslices_cp__", False):
         return
 
+    @same_signature(original_slice)
     def slice_log_prob_with_cp(
-        value, total_length, response_length, qkv_format, max_seq_len=None
+        log_prob, total_length, response_length, qkv_format="thd", max_token_len=None
     ):
-        return value
+        return log_prob
 
     slice_log_prob_with_cp.__spindle_unslices_cp__ = True
     cp_utils.slice_log_prob_with_cp = slice_log_prob_with_cp

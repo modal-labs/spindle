@@ -106,6 +106,7 @@ def _load_actor(monkeypatch):
     # These need real torch; import them before torch is stubbed below.
     importlib.import_module("spindle.backends.miles_runtime.replay_data")
     importlib.import_module("spindle.backends.score_centering")
+    importlib.import_module("spindle.backends.miles_runtime.moe_permute")
     monkeypatch.delitem(
         sys.modules, "spindle.backends.miles_runtime.actor_shared", raising=False
     )
@@ -115,7 +116,8 @@ def _load_actor(monkeypatch):
     _module(monkeypatch, "torch.distributed.constants").default_pg_timeout = timedelta(
         minutes=30
     )
-    _module(monkeypatch, "miles.ray.train_actor")
+    train_actor = _module(monkeypatch, "miles.ray.train_actor")
+    train_actor.init_gloo_group = lambda: None
     _module(monkeypatch, "miles.utils.distributed_utils").GLOO_GROUP = None
     megatron_bridge = _module(monkeypatch, "megatron.bridge")
     megatron_bridge.AutoBridge = type("AutoBridge", (), {})
@@ -130,8 +132,11 @@ def _load_actor(monkeypatch):
     megatron_actor = _module(monkeypatch, "miles.backends.megatron_utils.actor")
     megatron_model = _module(monkeypatch, "miles.backends.megatron_utils.model")
     megatron_model.get_batch = lambda *args, **kwargs: {}
+    megatron_model.get_packed_seq_params = lambda *args, **kwargs: None
     checkpoint = _module(monkeypatch, "miles.backends.megatron_utils.lora.checkpoint")
-    _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
+    _module(
+        monkeypatch, "miles.backends.megatron_utils.lora.model"
+    ).run_forward_backward = lambda *args, **kwargs: None
     _module(
         monkeypatch, "miles.backends.training_utils.replay_data"
     ).fill_replay_data = lambda **kwargs: None
@@ -248,6 +253,12 @@ class _FakeVolume:
 
     def copy_files(self, src_paths, dst_path, recursive=False) -> None:
         self.events.append(("copy", tuple(src_paths), dst_path, recursive))
+
+
+def test_training_passes_keep_earlier_gradients(monkeypatch) -> None:
+    _load_actor(monkeypatch)
+    run = sys.modules["miles.backends.megatron_utils.lora.model"].run_forward_backward
+    assert run.__spindle_gradient_accumulation__
 
 
 @pytest.mark.parametrize("minutes, expected", [(120, 120), (10, 30)])

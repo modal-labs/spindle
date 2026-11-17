@@ -106,7 +106,9 @@ def worker():
             )
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs=dict(poll_interval=0.01), daemon=True
+    )
     thread.start()
     state["gateway"] = f"http://127.0.0.1:{server.server_port}"
     yield state
@@ -203,6 +205,7 @@ def test_lost_response_is_redelivered_with_the_same_rid(worker, fault):
     with_router(worker, test)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("fault", ["headers", "proxy"])
 def test_transport_failures_have_a_retry_limit(worker, fault):
     worker["faults"] = [fault] * 30
@@ -251,6 +254,7 @@ def test_only_a_cancelled_replay_starts_a_new_attempt(worker, state, status, req
     with_router(worker, test)
 
 
+@pytest.mark.slow
 def test_busy_responses_do_not_spend_the_failure_budget(worker):
     worker["statuses"] = [503] * 9 + [200]
 
@@ -311,7 +315,7 @@ def test_a_slow_peer_does_not_stale_a_fast_replica(worker):
     [
         ({}, 1),
         ({"unobservable": {"unobservable": True}}, 1),
-        ({"stale": {"age": 100}}, 7),
+        pytest.param({"stale": {"age": 100}}, 7, marks=pytest.mark.slow),
     ],
 )
 def test_unroutable_pools_fall_back_to_the_gateway(worker, observations, seconds):

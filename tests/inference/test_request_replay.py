@@ -268,6 +268,7 @@ def test_cancelled_original_does_not_cancel_connected_replay(tmp_path):
     asyncio.run(scenario())
 
 
+@pytest.mark.slow
 def test_last_cancellation_is_bounded_when_engine_abort_does_not_reply(tmp_path):
     async def scenario():
         entered = asyncio.Event()
