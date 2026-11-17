@@ -1,10 +1,10 @@
-import modal
-
 import json
 import re
 import subprocess
 from importlib.metadata import distribution
 from pathlib import Path
+
+import modal
 
 from .image_dependencies import (
     MEGATRON_RUNTIME_CHECK,

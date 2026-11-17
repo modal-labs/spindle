@@ -16,9 +16,11 @@ else:
 class SeedProbeActor(SpindleMilesTrainRayActor):
     def seed_probe(self, slot: int) -> dict[str, str]:
         weights = hashlib.sha256()
+        replicated = 0
         for chunk in self.model:
             for module in chunk.modules():
                 if module.__class__.__name__ == "MultiLoRALinear":
+                    replicated += int(module.replicate_adapter)
                     for parameter in module.adapters[slot].parameters():
                         weights.update(
                             parameter.detach()
@@ -36,4 +38,8 @@ class SeedProbeActor(SpindleMilesTrainRayActor):
             if not torch.is_tensor(state):
                 state = state.get_state()
             rng.update(state.cpu().numpy().tobytes())
-        return {"weights": weights.hexdigest(), "rng": rng.hexdigest()}
+        return {
+            "weights": weights.hexdigest(),
+            "rng": rng.hexdigest(),
+            "replicated_modules": str(replicated),
+        }
