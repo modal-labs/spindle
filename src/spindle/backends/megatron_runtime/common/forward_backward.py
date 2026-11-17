@@ -20,6 +20,7 @@ from spindle.replay import REPLAY_FIELDS
 from spindle.telemetry import backend as telemetry
 
 from ...contract import ForwardBatch
+from .chunked_logprobs import chunked_logprobs, materialize_logits
 
 
 def log_packing(
@@ -513,6 +514,9 @@ def make_forward_step(
     *,
     route_adapters: bool = True,
     defer_fp32_logits: bool = False,
+    deferred_output: dict | None = None,
+    logprob_chunk_tokens: int | None = None,
+    fp32_logits: bool = False,
 ):
     from megatron.bridge.training.utils.packed_seq_utils import (
         get_packed_seq_cp_partition_indices,
@@ -584,7 +588,11 @@ def make_forward_step(
             if context_parallel_size > 1:
                 batch["adapter_token_counts"] //= context_parallel_size
             set_tokens_per_adapter_slot(model, batch["adapter_token_counts"])
-        model_kwargs = {"fp32_output": False} if defer_fp32_logits else {}
+        model_kwargs = (
+            {"fp32_output": False}
+            if defer_fp32_logits or deferred_output is not None
+            else {}
+        )
         logits = model(
             input_ids=batch["tokens"].unsqueeze(0),
             position_ids=batch["position_ids"].unsqueeze(0),
@@ -595,7 +603,22 @@ def make_forward_step(
 
         def loss_func(output):
             diagnostics = {}
-            if "sampling_mask_offsets" in batch:
+            temperature = batch["loss_config"].get("sampling_temperature", 1.0)
+            replay = "sampling_mask_offsets" in batch
+            if logprob_chunk_tokens is not None and not replay:
+                logprobs = chunked_logprobs(
+                    output,
+                    deferred_output["weight"],
+                    batch["labels"],
+                    chunk=logprob_chunk_tokens,
+                    fp32=fp32_logits,
+                    temperature=temperature,
+                )
+            elif replay:
+                if deferred_output is not None:
+                    output = materialize_logits(
+                        output, deferred_output["weight"], fp32=fp32_logits
+                    )
                 logprobs, batch["score_correction"], diagnostics = replay_logprobs(
                     output,
                     batch,
@@ -604,7 +627,6 @@ def make_forward_step(
                     tp_group=parallel_state.get_tensor_model_parallel_group(),
                 )
             else:
-                temperature = batch["loss_config"].get("sampling_temperature", 1.0)
                 logprobs = _vocab_parallel_logprobs(
                     output if temperature == 1.0 else output / temperature,
                     batch["labels"],
@@ -903,6 +925,9 @@ def run_megatron_pipeline(
     forward_only: bool,
     route_adapters: bool,
     defer_fp32_logits: bool = False,
+    deferred_output: dict | None = None,
+    logprob_chunk_tokens: int | None = None,
+    fp32_logits: bool = False,
 ) -> tuple[
     dict[str, list[dict[str, torch.Tensor]]],
     dict[str, dict[str, torch.Tensor]],
@@ -917,6 +942,9 @@ def run_megatron_pipeline(
         metric_collector,
         route_adapters=route_adapters,
         defer_fp32_logits=defer_fp32_logits,
+        deferred_output=deferred_output,
+        logprob_chunk_tokens=logprob_chunk_tokens,
+        fp32_logits=fp32_logits,
     )
     model_config = get_model_config(model[0])
     model_config.grad_scale_func = optimizer.scale_loss
