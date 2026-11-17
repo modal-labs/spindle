@@ -35,7 +35,13 @@ except ImportError:
 
     from . import tinker_cp
 
-from . import allgather_cp_lora, expert_lora_compat, host_syncs, moe_permute
+from . import (
+    allgather_cp_lora,
+    expert_lora_compat,
+    host_syncs,
+    mamba_packing,
+    moe_permute,
+)
 from .actor_shared import (
     ProfiledActor,
     install_replay_patches,
@@ -70,6 +76,7 @@ install_replay_patches(
 
 host_syncs.install()
 allgather_cp_lora.install(megatron_model)
+mamba_packing.install(megatron_model)
 moe_permute.install()
 
 
