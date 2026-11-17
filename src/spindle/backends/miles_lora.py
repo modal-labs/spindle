@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import json
 import math
 import os
@@ -13,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import modal
-import torch
 from stitch.types import VersionRef
 from tinker import AdamParams, ForwardBackwardOutput, OptimStepResponse
 
@@ -35,7 +33,7 @@ from .miles_config import (
     parse_backend_config,
 )
 from .miles_runtime.data import build_outputs, pad_slot_rows, prepare_batch
-from .miles_runtime.profiling import RankProfiler, StepPhaseTimer, TorchProfileConfig
+from .miles_runtime.profiling import StepPhaseTimer, TorchProfileConfig
 from .miles_runtime.runtime import MilesRuntime
 
 
@@ -83,7 +81,6 @@ class MilesCommandBackend(Backend):
         self._profiling_active = False
         self._profile_step_done = False
         self._firsts: set[str] = set()
-        self._controller_profiler: RankProfiler | None = None
         self._closed = False
         if self._profile.enabled:
             print(
@@ -208,10 +205,7 @@ class MilesCommandBackend(Backend):
                     )
         phase_name = "forward_only" if batch.forward_only else "forward_backward"
         started = time.perf_counter()
-        with (
-            self._timer.phase(phase_name, step, model_id=batch.items[0].model_id),
-            self._record(f"spindle/{phase_name}"),
-        ):
+        with self._timer.phase(phase_name, step, model_id=batch.items[0].model_id):
             slot_rows = pad_slot_rows(
                 prepared.slot_rows,
                 self.config.data_parallel_size,
@@ -253,10 +247,7 @@ class MilesCommandBackend(Backend):
         }
         step = self.jobs[model_ids[0]].optimizer_step
         started = time.perf_counter()
-        with (
-            self._timer.phase("optim_step", step, model_id=model_ids[0]),
-            self._record("spindle/optim_step"),
-        ):
+        with self._timer.phase("optim_step", step, model_id=model_ids[0]):
             outcomes = self.runtime.optim_step(by_slot)
         self._first(
             "first_optim_step_done",
@@ -305,11 +296,8 @@ class MilesCommandBackend(Backend):
         capture_path = self.capture_dir / "checkpoints" / snapshot_id
         capture_path.parent.mkdir(parents=True, exist_ok=True)
         state = self.jobs[model_id]
-        with (
-            self._timer.phase(
-                "save_checkpoint", state.optimizer_step, model_id=model_id
-            ),
-            self._record("spindle/save_checkpoint"),
+        with self._timer.phase(
+            "save_checkpoint", state.optimizer_step, model_id=model_id
         ):
             self.runtime.save_slot(
                 self.job_to_slot[model_id],
@@ -373,11 +361,8 @@ class MilesCommandBackend(Backend):
                 target = self.checkpoint_dir / destination / model_id
                 job = self.jobs.get(model_id)
                 persist_step = job.optimizer_step if job is not None else -1
-                with (
-                    self._timer.phase(
-                        "persist_checkpoint", persist_step, model_id=model_id
-                    ),
-                    self._record("spindle/persist_checkpoint"),
+                with self._timer.phase(
+                    "persist_checkpoint", persist_step, model_id=model_id
                 ):
                     if self._native:
                         _install_directory(capture["path"], target, overwrite=overwrite)
@@ -438,11 +423,8 @@ class MilesCommandBackend(Backend):
         state = self.jobs[model_id]
         path = self.capture_dir / "sampler" / capture_id
         path.parent.mkdir(parents=True, exist_ok=True)
-        with (
-            self._timer.phase(
-                "save_sampler_weights", state.optimizer_step, model_id=model_id
-            ),
-            self._record("spindle/save_sampler_weights"),
+        with self._timer.phase(
+            "save_sampler_weights", state.optimizer_step, model_id=model_id
         ):
             self.runtime.export_slot_peft(
                 slot=self.job_to_slot[model_id],
@@ -479,11 +461,8 @@ class MilesCommandBackend(Backend):
             )
             job = self.jobs.get(capture["model_id"])
             publish_step = job.optimizer_step if job is not None else -1
-            with (
-                self._timer.phase(
-                    "publish_weights", publish_step, model_id=capture["model_id"]
-                ),
-                self._record("spindle/publish_weights"),
+            with self._timer.phase(
+                "publish_weights", publish_step, model_id=capture["model_id"]
             ):
                 bulletin.publish(
                     VersionRef(
@@ -524,17 +503,9 @@ class MilesCommandBackend(Backend):
             self._firsts.add(name)
             timeline(BACKEND_COMPONENT).mark(name, **fields)
 
-    def _record(self, name: str):
-        """Controller-side profiler span; inert when profiling is off."""
-        if self._controller_profiler is None:
-            return contextlib.nullcontext()
-        return torch.profiler.record_function(name)
-
     def _start_profiling(self, step: int) -> None:
         try:
             self.runtime.torch_profile_start()
-            self._controller_profiler = RankProfiler(activities_cpu_only=True)
-            self._controller_profiler.start()
             self._profiling_active = True
             print(
                 json.dumps(
@@ -549,7 +520,6 @@ class MilesCommandBackend(Backend):
             )
         except Exception:  # noqa: BLE001 - profiling must not kill training
             self._profiling_active = False
-            self._controller_profiler = None
             print(
                 json.dumps(
                     {"event": "spindle_torch_profile", "state": "error", "step": step}
@@ -564,11 +534,6 @@ class MilesCommandBackend(Backend):
             for result in results or []:
                 if result:
                     files.extend(result.values())
-            if self._controller_profiler is not None:
-                controller = self._controller_profiler.stop(
-                    self._profile.output_dir, "controller"
-                )
-                files.extend(controller.values())
             _commit_volume(os.environ.get("SPINDLE_CHECKPOINT_VOLUME"))
         except Exception as exc:  # noqa: BLE001 - profiling must not kill training
             print(
@@ -584,7 +549,6 @@ class MilesCommandBackend(Backend):
         finally:
             self._profiling_active = False
             self._profile_step_done = True
-            self._controller_profiler = None
         if files:
             print(
                 json.dumps(

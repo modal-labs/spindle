@@ -1,6 +1,7 @@
 import gzip
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -111,17 +112,17 @@ def test_timer_accumulates_idle_between_ops() -> None:
     assert metrics["timing/idle_wait_s"] >= 0.01
 
 
-def test_rank_profiler_writes_cpu_trace(tmp_path) -> None:
-    profiler = RankProfiler(activities_cpu_only=True)
+def test_rank_profiler_writes_trace(tmp_path) -> None:
+    profiler = RankProfiler()
     profiler.start()
     torch.randn(64, 64) @ torch.randn(64, 64)
-    result = profiler.stop(str(tmp_path), "controller")
+    result = profiler.stop(str(tmp_path), "rank0")
 
     trace = Path(result["trace"])
     table = Path(result["table"])
-    assert trace.name == "controller.trace.json.gz"
+    assert trace.name == "rank0.trace.json.gz"
     assert json.loads(gzip.decompress(trace.read_bytes()))
-    assert table.name == "controller.key_averages.txt"
+    assert table.name == "rank0.key_averages.txt"
     assert table.read_text()
 
 
@@ -162,20 +163,6 @@ def test_backend_starts_and_stops_torch_profile(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SPINDLE_TORCH_PROFILE_STEP", "1")
     monkeypatch.setenv("SPINDLE_TORCH_PROFILE_DIR", str(tmp_path / "traces"))
     monkeypatch.delenv("SPINDLE_CHECKPOINT_VOLUME", raising=False)
-
-    class FakeControllerProfiler:
-        def __init__(self, **_kwargs):
-            self.started = False
-
-        def start(self):
-            self.started = True
-
-        def stop(self, output_dir, name):
-            return {"trace": f"{output_dir}/{name}.trace.json.gz"}
-
-    monkeypatch.setattr(
-        "spindle.backends.miles_lora.RankProfiler", FakeControllerProfiler
-    )
     runtime = FakeMilesRuntime()
     backend = _backend(tmp_path, runtime)
     backend.accept_model("model-a", _spec())
@@ -206,38 +193,32 @@ def test_backend_starts_and_stops_torch_profile(tmp_path, monkeypatch) -> None:
     assert len([c for c in runtime.calls if c[0] == "torch_profile_stop"]) == 1
 
 
-def test_backend_stops_torch_profile_after_publish(tmp_path, monkeypatch) -> None:
+def test_backend_stops_torch_profile_after_publish_on_another_thread(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("SPINDLE_TORCH_PROFILE_STEP", "1")
     monkeypatch.setenv("SPINDLE_TORCH_PROFILE_DIR", str(tmp_path / "traces"))
     monkeypatch.setenv("SPINDLE_BULLETIN_ROOT", str(tmp_path / "bulletin"))
     monkeypatch.delenv("SPINDLE_BULLETIN_VOLUME", raising=False)
     monkeypatch.delenv("SPINDLE_CHECKPOINT_VOLUME", raising=False)
-
-    class FakeControllerProfiler:
-        def __init__(self, **_kwargs):
-            pass
-
-        def start(self):
-            pass
-
-        def stop(self, output_dir, name):
-            return {"trace": f"{output_dir}/{name}.trace.json.gz"}
-
-    monkeypatch.setattr(
-        "spindle.backends.miles_lora.RankProfiler", FakeControllerProfiler
-    )
     runtime = FakeMilesRuntime()
     backend = _backend(tmp_path, runtime)
-    backend.accept_model("model-a", _spec())
+    # The engine runs commands and sampler publishes on different threads.
+    commands = ThreadPoolExecutor(1)
+    publishes = ThreadPoolExecutor(1)
+    commands.submit(backend.accept_model, "model-a", _spec()).result()
 
-    _step(backend)
-    _step(backend)  # profiled step; the run ends here (no further step)
+    commands.submit(_step, backend).result()
+    commands.submit(_step, backend).result()  # profiled step; the run ends here
     assert backend._profiling_active
 
-    backend.capture_sampler_snapshot("model-a", "capture-a", 2)
-    backend.publish_sampler_snapshot("capture-a")
+    commands.submit(
+        backend.capture_sampler_snapshot, "model-a", "capture-a", 2
+    ).result()
+    publishes.submit(backend.publish_sampler_snapshot, "capture-a").result()
 
     assert not backend._profiling_active
+    assert not commands.submit(torch.autograd._profiler_enabled).result()
     assert [c for c in runtime.calls if c[0] == "torch_profile_stop"] == [
         ("torch_profile_stop", str(tmp_path / "traces"))
     ]
