@@ -606,6 +606,7 @@ GDN_TARGETS = (
         (None, None, True),
         (None, GDN_TARGETS, False),
         (list(GDN_TARGETS), None, False),
+        (list(reversed(GDN_TARGETS)), GDN_TARGETS, True),
     ],
 )
 def test_checkpoint_restore_checks_target_modules(

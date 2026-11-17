@@ -29,6 +29,7 @@ from .contract import (
     SamplerPublication,
 )
 from .miles_config import (
+    GDN_INPUT_PROJECTIONS,
     MilesBackendConfig,
     lora_target_flags,
     parse_backend_config,
@@ -671,14 +672,15 @@ class MilesCommandBackend(Backend):
         modules = list(self.config.target_modules)
         # Legacy checkpoints lack the field and never trained linear-attention adapters.
         legacy = (
-            saved_modules is None and not self._native and "in_proj_qkv" not in modules
+            saved_modules is None
+            and not self._native
+            and not set(modules) & set(GDN_INPUT_PROJECTIONS)
         )
         # Checked here because a target mismatch found by Miles disables the whole trainer.
-        if saved_modules != modules and not legacy:
+        if not legacy and set(saved_modules or ()) != set(modules):
             raise ValueError(
                 "checkpoint LoRA target_modules do not match the deployment: "
-                f"saved {saved_modules or 'without linear-attention adapters'}, "
-                f"deployment {modules}"
+                f"saved {saved_modules or 'none recorded'}, deployment {modules}"
             )
         expected_topology = {
             "world_size": self.config.world_size,
