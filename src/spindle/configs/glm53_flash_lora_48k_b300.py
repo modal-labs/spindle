@@ -10,8 +10,8 @@ from spindle.configs.glm53_flash_lora_64k import Config as GLMConfig
 
 class Config(GLMConfig):
     name = "glm53-flash-lora-48k-b300"
-    trainer_image = "spindle.providers.modal.glm53_trainer_image:image"
-    inference_image = "spindle.providers.modal.glm53_image:inference_image"
+    trainer_image = "miles-v0.1.2-464efc9-glm53"
+    inference_image = "sglang-v0.5.23-c4182b2-glm53"
     max_context_length = 49152
     trainer_gpu = "B300"
     trainer_nodes = 1

@@ -5,8 +5,8 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "glm53-flash-lora-64k"
-    trainer_image = "spindle.providers.modal.glm53_trainer_image:image"
-    inference_image = "spindle.providers.modal.glm53_image:inference_image"
+    trainer_image = "miles-v0.1.2-464efc9-glm53"
+    inference_image = "sglang-v0.5.23-c4182b2-glm53"
     model = "zai-org/GLM-5.3-Flash"
     model_weights = "zai-org/GLM-5.3-Flash-BF16"
     max_context_length = 65552
