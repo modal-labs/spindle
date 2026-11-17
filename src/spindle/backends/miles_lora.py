@@ -18,7 +18,7 @@ from stitch.types import VersionRef
 from tinker import AdamParams, ForwardBackwardOutput, OptimStepResponse
 
 from spindle.engine.spmd import DistributedExecutor
-from spindle.errors import BackendFailed
+from spindle.errors import BackendFailed, TrainerOutOfMemory
 from spindle.inference.bulletin import SnapshotBulletin
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
@@ -216,12 +216,18 @@ class MilesCommandBackend(Backend):
                 prepared.slot_rows,
                 self.config.data_parallel_size,
             )
-            raw_outputs = self.runtime.forward_backward(
-                slot_rows,
-                loss_fn=str(batch.loss_fn),
-                loss_fn_config=dict(batch.loss_fn_config),
-                forward_only=batch.forward_only,
-            )
+            try:
+                raw_outputs = self.runtime.forward_backward(
+                    slot_rows,
+                    loss_fn=str(batch.loss_fn),
+                    loss_fn_config=dict(batch.loss_fn_config),
+                    forward_only=batch.forward_only,
+                )
+            except TrainerOutOfMemory:
+                if not batch.forward_only:
+                    for item in batch.items:
+                        self.jobs[item.model_id].accumulating = False
+                raise
         self._first(
             f"first_{phase_name}_done",
             duration_s=round(time.perf_counter() - started, 3),

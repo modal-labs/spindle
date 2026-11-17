@@ -20,10 +20,11 @@ import torch
 
 from spindle.backends.miles_arguments import defer_config_overrides
 from spindle.backends.miles_config import MilesBackendConfig
-from spindle.errors import BackendFailed
+from spindle.errors import BackendFailed, TrainerOutOfMemory
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
 from .native_checkpoint import materialize_adapter
+from .out_of_memory import OUT_OF_MEMORY
 from .replay_data import install_bridge_replay, validate_routed_experts
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
@@ -158,14 +159,29 @@ class MilesRuntime:
         method = (
             self._bridge.forward_only if forward_only else self._bridge.forward_backward
         )
-        return self._run(
-            method(
-                unit_id,
-                list(slot_rows),
-                loss_fn,
-                loss_fn_config,
+        try:
+            return self._run(
+                method(
+                    unit_id,
+                    list(slot_rows),
+                    loss_fn,
+                    loss_fn_config,
+                )
             )
-        )
+        except TrainerOutOfMemory as error:
+            discarded = ""
+            if not forward_only:
+                slots = sorted({slot for slot, _ in slot_rows})
+                self._run(
+                    self._trainer._execute_slots("discard_gradients", slots=slots)
+                )
+                discarded = (
+                    " Gradients accumulated since the last optim_step were discarded."
+                )
+            raise TrainerOutOfMemory(
+                f"The trainer ran out of GPU memory on this batch and skipped it.{discarded} "
+                f"Send fewer or shorter sequences per request. ({error})"
+            ) from None
 
     def optim_step(
         self, adam_params_by_slot: dict[int, dict[str, float]]
@@ -233,11 +249,15 @@ class MilesRuntime:
             raise BackendFailed("Miles trainer is unavailable") from self._failure
         try:
             result = self._call(coroutine)
-            _check_result(result)
-            return result
+            out_of_memory = isinstance(result, dict) and result.get(OUT_OF_MEMORY)
+            if not out_of_memory:
+                _check_result(result)
         except Exception as exc:
             self._failure = exc
             raise BackendFailed(f"Miles trainer failed: {exc}") from exc
+        if out_of_memory:
+            raise TrainerOutOfMemory(result["error"])
+        return result
 
     def _run_best_effort(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
         """Like ``_run`` but an exception does not mark the trainer as failed."""

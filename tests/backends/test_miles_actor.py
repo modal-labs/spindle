@@ -107,6 +107,7 @@ def _load_actor(monkeypatch):
     importlib.import_module("spindle.backends.miles_runtime.replay_data")
     importlib.import_module("spindle.backends.score_centering")
     importlib.import_module("spindle.backends.miles_runtime.moe_permute")
+    importlib.import_module("spindle.backends.miles_runtime.out_of_memory")
     monkeypatch.delitem(
         sys.modules, "spindle.backends.miles_runtime.actor_shared", raising=False
     )
@@ -127,12 +128,14 @@ def _load_actor(monkeypatch):
         "megatron.core.dist_checkpointing"
     )
     _module(monkeypatch, "megatron.core.dist_checkpointing")
+    _module(monkeypatch, "megatron.core.parallel_state")
 
     fsdp_actor = _module(monkeypatch, "miles.backends.fsdp_utils.actor")
     megatron_actor = _module(monkeypatch, "miles.backends.megatron_utils.actor")
     megatron_model = _module(monkeypatch, "miles.backends.megatron_utils.model")
     megatron_model.get_batch = lambda *args, **kwargs: {}
     megatron_model.get_packed_seq_params = lambda *args, **kwargs: None
+    megatron_model.finalize_model_grads_with_empty_cache = lambda *args, **kwargs: None
     checkpoint = _module(monkeypatch, "miles.backends.megatron_utils.lora.checkpoint")
     _module(
         monkeypatch, "miles.backends.megatron_utils.lora.model"
@@ -140,9 +143,9 @@ def _load_actor(monkeypatch):
     _module(
         monkeypatch, "miles.backends.training_utils.replay_data"
     ).fill_replay_data = lambda **kwargs: None
-    _module(
-        monkeypatch, "miles.utils.replay_base"
-    ).routing_replay_manager = types.SimpleNamespace()
+    replay_base = _module(monkeypatch, "miles.utils.replay_base")
+    replay_base.routing_replay_manager = types.SimpleNamespace()
+    replay_base.all_replay_managers = []
     lora_actor = _module(monkeypatch, "miles.backends.megatron_utils.lora.actor")
     lora_actor.MultiLoRATrainRayActor = type("MultiLoRATrainRayActor", (), {})
     training_cp_utils = _module(monkeypatch, "miles.backends.training_utils.cp_utils")
