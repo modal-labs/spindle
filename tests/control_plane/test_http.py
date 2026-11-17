@@ -537,7 +537,8 @@ def test_sample_endpoint_returns_one_sequence_id_per_requested_sample() -> None:
 
 def test_invalid_sample_options_are_rejected_before_submission() -> None:
     class CaptureControlPlane:
-        requests: list[dict] = []
+        def __init__(self):
+            self.requests = []
 
         async def submit_sample(self, request):
             self.requests.append(request)

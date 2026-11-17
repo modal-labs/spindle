@@ -313,10 +313,13 @@ def test_unsupported_sdk_sampling_options_are_rejected(key, value) -> None:
 
 def test_prompt_logprobs_last_n_scores_only_the_suffix() -> None:
     request = task()
-    request["payload"].update(prompt_logprobs=True, prompt_logprobs_last_n=2)
+    request["payload"].update(
+        prompt_logprobs=True, topk_prompt_logprobs=1, prompt_logprobs_last_n=2
+    )
     request["payload"]["prompt"]["chunks"][0]["tokens"] = [1, 2, 3, 4, 5]
     body = response(7).json()
     body["meta_info"]["input_token_logprobs"] = [[None, 3], [-0.4, 4], [-0.5, 5]]
+    body["meta_info"]["input_top_logprobs"] = [None, [[-0.4, 4]], [[-0.5, 5]]]
     sent = {}
 
     def handle(http_request: httpx.Request) -> httpx.Response:
@@ -329,6 +332,13 @@ def test_prompt_logprobs_last_n_scores_only_the_suffix() -> None:
 
     assert sent["logprob_start_len"] == 2
     assert result["prompt_logprobs"] == [None, None, None, -0.4, -0.5]
+    assert result["topk_prompt_logprobs"] == [
+        None,
+        None,
+        None,
+        [(4, -0.4)],
+        [(5, -0.5)],
+    ]
 
 
 @pytest.mark.parametrize(

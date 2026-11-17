@@ -19,7 +19,6 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from spindle.engine.api import JSON_OPERATIONS, OperationKind, submit_json_operation
-from spindle.inference.sampling import validate_sample_request
 from spindle.errors import (
     EngineSaturated,
     ModelLost,
@@ -27,6 +26,7 @@ from spindle.errors import (
     RecordUnavailable,
     SequenceConflict,
 )
+from spindle.inference.sampling import validate_sample_request
 from spindle.proto import tinker_public_pb2
 from spindle.proto.responses import PROTOBUF_MEDIA_TYPE, EncodedResult, encode_result
 from spindle.providers.contracts import Parameterization

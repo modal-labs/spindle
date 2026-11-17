@@ -524,7 +524,8 @@ def validate_sample_request(request: dict[str, Any]) -> None:
     prompt_length = len(_prompt_tokens(request.get("prompt") or {}))
     if type(last_n) is not int or not 1 <= last_n < prompt_length:
         raise ValueError(
-            "prompt_logprobs_last_n must be between 1 and the prompt length minus 1"
+            "prompt_logprobs_last_n must be between 1 and the prompt length minus 1, "
+            f"got {last_n} for a {prompt_length}-token prompt"
         )
 
 
