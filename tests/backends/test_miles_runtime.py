@@ -351,17 +351,14 @@ def test_slot_seed_precedes_optimizer_and_never_overwrites_checkpoint(seed, chec
     weights = {0: "default"}
     optimizer_weights = {}
 
-    async def execute(method, *, slot, seed):
-        assert method == "seed_slot"
-        weights[slot] = seed
-        return [None]
-
-    async def load(slot, rank, alpha, *, ckpt_path, load_optimizer):
+    async def load(slot, rank, alpha, *, ckpt_path, load_optimizer, seed):
         if ckpt_path is not None:
+            assert seed is None
             weights[slot] = "checkpoint"
+        elif seed is not None:
+            weights[slot] = seed
         optimizer_weights[slot] = weights[slot]
 
-    runtime._trainer = SimpleNamespace(_execute_slots=execute)
     runtime._bridge = SimpleNamespace(load_slot=load)
     runtime.load_slot(0, 8, 32, seed=seed, checkpoint=checkpoint)
     expected = "checkpoint" if checkpoint else "default" if seed is None else seed
@@ -374,13 +371,8 @@ def test_seed_failure_invalidates_runtime_before_optimizer_creation():
     runtime._failure = None
     runtime._call = asyncio.run
 
-    async def execute(*args, **kwargs):
-        return [None, {"error": "seed initialization failed"}]
-
-    runtime._trainer = SimpleNamespace(_execute_slots=execute)
-
     async def load(*args, **kwargs):
-        raise AssertionError("optimizer must not be created")
+        return {"error": "seed initialization failed"}
 
     runtime._bridge = SimpleNamespace(load_slot=load)
     with pytest.raises(BackendFailed, match="seed initialization failed"):

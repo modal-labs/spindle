@@ -20,7 +20,6 @@ from .contract import (
     ModelSpec,
     SamplerPublication,
 )
-from .lora_seed import reset_adapter_slot_with_seed
 from .megatron_config import parse_backend_config
 from .megatron_runtime.common.checkpoint_io import rank_tag
 from .megatron_runtime.common.config import EngineModelConfig
@@ -35,6 +34,7 @@ from .megatron_runtime.common.forward_backward import (
 from .megatron_runtime.lora.adapters import (
     clear_adapter_slot_preserving_rng,
     iter_named_multi_lora_modules,
+    reset_adapter_slot_with_seed,
     zero_adapter_grads_for_slots,
 )
 from .megatron_runtime.lora.checkpoint import (

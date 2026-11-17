@@ -119,8 +119,6 @@ class MilesRuntime:
         restore_optimizer: bool = True,
         seed: int | None = None,
     ) -> None:
-        if seed is not None and checkpoint is None:
-            self._run(self._trainer._execute_slots("seed_slot", slot=slot, seed=seed))
         self._run(
             self._bridge.load_slot(
                 slot,
@@ -128,6 +126,7 @@ class MilesRuntime:
                 alpha,
                 ckpt_path=checkpoint,
                 load_optimizer=restore_optimizer,
+                seed=seed if checkpoint is None else None,
             )
         )
 

@@ -64,13 +64,16 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
         rank: int,
         alpha: float,
         source: dict[str, Any] | None = None,
+        seed: int | None = None,
     ) -> dict[str, object] | None:
         if source is not None:
             sync_checkpoint_volume("reload")
             # Miles checks keys and shapes, not that each shard on the volume is complete.
             with agree_on_failure_context():
                 validate_adapter(Path(source["path"]), checkpoint=True)
-        return MultiLoRATrainRayActor.load_slot(self, slot, rank, alpha, source=source)
+        return MultiLoRATrainRayActor.load_slot(
+            self, slot, rank, alpha, source=source, seed=seed
+        )
 
     def save_slot_weights(
         self, slot: int, root: str, name: str, parametrization_fields: dict[str, object]
