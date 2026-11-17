@@ -1,13 +1,11 @@
 import gzip
 import json
-import os
 import subprocess
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 import torch
@@ -145,19 +143,6 @@ def test_rank_profiler_stop_returns_before_the_files_are_written(
     assert Path(result["table"]).read_text()
 
 
-def test_rank_profiler_without_fork_writes_before_returning(
-    tmp_path, monkeypatch
-) -> None:
-    monkeypatch.setattr(os, "fork", Mock(side_effect=AssertionError("forked")))
-    profiler = RankProfiler()
-    profiler.start()
-    torch.randn(64, 64) @ torch.randn(64, 64)
-    result = profiler.stop(str(tmp_path / "traces"), "rank0", fork=False)
-
-    assert json.loads(gzip.decompress(Path(result["trace"]).read_bytes()))
-    assert Path(result["table"]).read_text()
-
-
 def test_trace_is_written_when_the_trainer_exits_right_after_stop(tmp_path) -> None:
     script = f"""
 import torch
@@ -256,10 +241,10 @@ def test_backend_stops_torch_profile_once_across_command_and_publish_threads(
     release = threading.Event()
 
     class SlowStopRuntime(FakeMilesRuntime):
-        def torch_profile_stop(self, output_dir, *, fork):
+        def torch_profile_stop(self, output_dir):
             stopping.set()
             release.wait(timeout=10)
-            return super().torch_profile_stop(output_dir, fork=fork)
+            return super().torch_profile_stop(output_dir)
 
     runtime = SlowStopRuntime()
     backend = _backend(tmp_path, runtime)
