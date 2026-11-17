@@ -15,7 +15,8 @@ from spindle.backends.megatron_runtime.common.forward_backward import (  # noqa:
     _vocab_parallel_logprobs,
     log_packing,
     pack_microbatches,
-    shard_microbatches,
+    balance_sequences,
+    pad_microbatches,
 )
 from spindle.backends.megatron_runtime.common.forward_backward import (  # noqa: E402
     build_sequence_batches as build_microbatches,
@@ -421,7 +422,7 @@ def test_pack_microbatches_tracks_short_cp_sequences(length: int) -> None:
         ]
 
 
-def test_shard_microbatches_marks_packed_padding_dummy() -> None:
+def test_pad_microbatches_marks_packed_padding_dummy() -> None:
     packed = pack_microbatches(
         build_microbatches(
             packed_batch(3, 2),
@@ -433,15 +434,24 @@ def test_shard_microbatches_marks_packed_padding_dummy() -> None:
         pad_to_multiple=1,
     )
 
-    local = shard_microbatches(
-        packed,
-        data_parallel_rank=1,
-        data_parallel_size=2,
-    )
+    (copy,) = pad_microbatches([], 1, source=packed[0])
+    assert copy["output_indices"] == (-1, -1)
+    assert copy["is_dummy"] == (True, True)
+    assert copy["loss_mask"].count_nonzero().item() == 0
 
-    assert local[0]["output_indices"] == (-1, -1)
-    assert local[0]["is_dummy"] == (True, True)
-    assert local[0]["loss_mask"].count_nonzero().item() == 0
+    (short,) = pad_microbatches([], 1, source=packed[0], dummy_tokens=4)
+    assert short["is_dummy"] == (True,)
+    assert short["tokens"].numel() == 4
+    assert short["cu_seqlens"].tolist() == [0, 4]
+    assert short["loss_mask"].count_nonzero().item() == 0
+    assert short["adapter_token_counts"].sum().item() == 4
+
+
+def test_balance_sequences_evens_tokens_across_ranks() -> None:
+    sequences = [{"tokens": torch.zeros(n)} for n in (40, 30, 30, 20, 10, 10)]
+    groups = balance_sequences(sequences, 2)
+    assert [sum(int(s["tokens"].numel()) for s in g) for g in groups] == [70, 70]
+    assert balance_sequences(sequences[:1], 3)[1:] == [[], []]
 
 
 @pytest.mark.parametrize(

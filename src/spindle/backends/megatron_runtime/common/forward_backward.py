@@ -128,6 +128,10 @@ def _loss_config(loss_name: str, config: dict[str, float]) -> dict[str, float]:
     return values
 
 
+# Length of the no-loss micro-batch a data-parallel rank runs when it has
+# fewer packed micro-batches than its peers.
+DUMMY_TOKENS = 128
+
 RL_LOSSES = frozenset(
     {
         "importance_sampling",
@@ -398,16 +402,69 @@ def pack_microbatches(
     return packed
 
 
-def shard_microbatches(
-    microbatches: list[dict[str, Any]],
-    *,
-    data_parallel_rank: int,
+def _short_dummy(source: dict[str, Any], tokens: int) -> dict[str, Any]:
+    dummy = {
+        "job_ids": source["job_ids"][:1],
+        "output_indices": (-1,),
+        "starts": (0,),
+        "original_lengths": (tokens,),
+        "is_dummy": (True,),
+        "tokens": torch.zeros(tokens, dtype=source["tokens"].dtype),
+        "labels": torch.full((tokens,), -100, dtype=source["labels"].dtype),
+        "loss_mask": torch.zeros(tokens, dtype=source["loss_mask"].dtype),
+        "sampling_logprobs": torch.zeros(tokens, dtype=source["sampling_logprobs"].dtype),
+        "advantages": torch.zeros(tokens, dtype=source["advantages"].dtype),
+        "position_ids": torch.arange(tokens),
+        "token_indices": torch.arange(tokens),
+        "loss_name": source["loss_name"],
+        "loss_config": source["loss_config"],
+        "cu_seqlens": torch.tensor([0, tokens], dtype=torch.int32),
+        "max_seqlen": tokens,
+    }
+    if "adapter_token_counts" in source:
+        counts = torch.zeros_like(source["adapter_token_counts"])
+        counts[int(source["adapter_token_counts"].argmax())] = tokens
+        dummy["adapter_token_counts"] = counts
+    return dummy
+
+
+def balance_sequences(
+    sequences: list[dict[str, Any]],
     data_parallel_size: int,
+) -> list[list[dict[str, Any]]]:
+    """Split sequences across data-parallel ranks with near-equal token counts.
+
+    Longest first, each to the rank with the fewest tokens so far. Every rank
+    computes the same split, so no communication is needed.
+    """
+    groups: list[list[dict[str, Any]]] = [[] for _ in range(data_parallel_size)]
+    loads = [0] * data_parallel_size
+    for sequence in sorted(
+        sequences, key=lambda item: int(item["tokens"].numel()), reverse=True
+    ):
+        rank = loads.index(min(loads))
+        groups[rank].append(sequence)
+        loads[rank] += int(sequence["tokens"].numel())
+    return groups
+
+
+def pad_microbatches(
+    local: list[dict[str, Any]],
+    count: int,
+    *,
+    source: dict[str, Any],
+    dummy_tokens: int | None = None,
 ) -> list[dict[str, Any]]:
-    local = list(microbatches[data_parallel_rank::data_parallel_size])
-    target_count = math.ceil(len(microbatches) / data_parallel_size)
-    while len(local) < target_count:
-        source = microbatches[0]
+    """Pad a rank's micro-batches to ``count`` with dummies that carry no loss.
+
+    With ``dummy_tokens`` a dummy is that many tokens long instead of a full
+    copy of ``source``, so a rank with less work does not repeat a packed batch.
+    """
+    local = list(local)
+    while len(local) < count:
+        if dummy_tokens is not None and "sampling_mask_offsets" not in source:
+            local.append(_short_dummy(source, dummy_tokens))
+            continue
         dummy = {
             key: value.clone() if torch.is_tensor(value) else value
             for key, value in source.items()
@@ -867,12 +924,23 @@ def prepare_microbatches(
     input_sequences = len(sequences)
     context_parallel_size = parallel_state.get_context_parallel_world_size()
     token_capacity = config.packed_token_capacity()
-    packed = pack_microbatches(
-        sequences,
-        max_tokens=token_capacity,
-        pad_to_multiple=(2 * context_parallel_size if context_parallel_size > 1 else 1),
-        total_pad_to_multiple=config.sequence_padding_multiple(),
+    pad_to_multiple = 2 * context_parallel_size if context_parallel_size > 1 else 1
+    data_parallel_size = parallel_state.get_data_parallel_world_size(
+        with_context_parallel=False,
     )
+    groups = [
+        pack_microbatches(
+            group,
+            max_tokens=token_capacity,
+            pad_to_multiple=pad_to_multiple,
+            total_pad_to_multiple=config.sequence_padding_multiple(),
+        )
+        if group
+        else []
+        for group in balance_sequences(sequences, data_parallel_size)
+    ]
+    packed = [microbatch for group in groups for microbatch in group]
+    dummy_unit = math.lcm(pad_to_multiple, config.sequence_padding_multiple())
     packing_metrics = log_packing(
         batch,
         packed,
@@ -881,15 +949,15 @@ def prepare_microbatches(
         token_capacity=token_capacity,
         rank=rank,
     )
+    local = groups[
+        parallel_state.get_data_parallel_rank(with_context_parallel=False)
+    ]
     return (
-        shard_microbatches(
-            packed,
-            data_parallel_rank=parallel_state.get_data_parallel_rank(
-                with_context_parallel=False,
-            ),
-            data_parallel_size=parallel_state.get_data_parallel_world_size(
-                with_context_parallel=False,
-            ),
+        pad_microbatches(
+            local,
+            max(len(group) for group in groups),
+            source=packed[0],
+            dummy_tokens=dummy_unit * math.ceil(DUMMY_TOKENS / dummy_unit),
         ),
         packing_metrics,
     )
