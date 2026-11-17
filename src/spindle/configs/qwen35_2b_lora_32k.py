@@ -3,7 +3,7 @@ from spindle.configs._qwen35_lora_32k import Qwen35Lora32k as Parent
 
 class Config(Parent):
     name = "qwen35-2b-lora-32k"
-    trainer_image = "miles-v0.1.1-ce494f0"
+    trainer_image = "miles-v0.1.1-52a7a99"
     inference_image = "sglang-v0.5.23-803bccb"
     model = "Qwen/Qwen3.5-2B"
     # Miles has no 2B preset; keep the shared Qwen3.5 spec and tied embeddings.

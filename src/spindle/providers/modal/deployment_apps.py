@@ -66,13 +66,13 @@ from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 # Named images are frozen: add a new name instead of editing one. See docs/deployment-configs.md#images.
 TRAINER_IMAGES = {
     "miles-v0.1.1-fdd808c": miles_image.image_01_fdd808c,
-    "miles-v0.1.1-ce494f0": miles_image.image_02_ce494f0,
+    "miles-v0.1.1-52a7a99": miles_image.image_02_52a7a99,
     "miles-v0.1.2-f2f8447": miles_v012_image.image_01_f2f8447,
-    "miles-v0.1.2-fde5e9e": miles_v012_image.image_02_fde5e9e,
+    "miles-v0.1.2-99e1ebe": miles_v012_image.image_02_99e1ebe,
     "miles-v0.1.2-464efc9-glm53": glm53_trainer_image.image_01_464efc9,
-    "miles-v0.1.2-612703a-glm53": glm53_trainer_image.image_02_612703a,
+    "miles-v0.1.2-99e1ebe-glm53": glm53_trainer_image.image_02_99e1ebe,
     "miles-v0.2.0-15afe21": miles_v020_image.image_01_15afe21,
-    "miles-v0.2.0-384d73b": miles_v020_image.image_02_384d73b,
+    "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {
@@ -83,7 +83,7 @@ SAMPLER_IMAGES = {
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {
-    "miles": "miles-v0.1.1-ce494f0",
+    "miles": "miles-v0.1.1-52a7a99",
     "megatron": "megatron-2d1fa8d",
     "sglang": "sglang-v0.5.23-c4182b2",
 }

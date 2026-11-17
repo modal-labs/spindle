@@ -12,7 +12,7 @@ from pathlib import Path
 
 import modal
 
-from spindle.providers.modal.miles_image import image_02_ce494f0 as image
+from spindle.providers.modal.miles_image import image_02_52a7a99 as image
 
 app = modal.App("spindle-multi-target-gpu-check")
 worker = Path(__file__).resolve().parents[1] / "tests/gpu/multi_targets_worker.py"

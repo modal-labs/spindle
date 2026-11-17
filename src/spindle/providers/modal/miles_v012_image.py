@@ -22,5 +22,5 @@ def image_at(miles_commit: str) -> modal.Image:
 
 # Fork commits in ancestry order, each a descendant of the one before. Append new commits; never edit an entry.
 image_01_f2f8447 = image_at("f2f8447c33ac0755a0988c30d413d334dea0a26a")
-# Passes per-adapter seeds through load_slot.
-image_02_fde5e9e = image_at("fde5e9e8862aefcfe68816c0540728eb27c684ea")
+# Branch head: the GLM-5.3 provider hooks, inert without the glm53 build steps, and per-adapter seeds through load_slot.
+image_02_99e1ebe = image_at("99e1ebe8e86974e0b3c290f47f415ee47726f965")

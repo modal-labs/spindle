@@ -3,7 +3,7 @@ from spindle.configs.kimi_k26_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "kimi-k26-lora-128k"
-    trainer_image = "miles-v0.1.1-ce494f0"
+    trainer_image = "miles-v0.1.1-52a7a99"
     inference_image = "sglang-v0.5.23-c4182b2"
     max_context_length = 131072
     trainer_nodes = 4

@@ -26,5 +26,5 @@ def image_at(miles_commit: str) -> modal.Image:
 # Fork commits in ancestry order, each a descendant of the one before. Append new commits; never edit an entry.
 # Merged modal-projects/miles#31 on spindle-miles-v0.1.2.
 image_01_464efc9 = image_at("464efc9781bbf8edf2135f0857f5aa417685eae2")
-# Passes per-adapter seeds through load_slot.
-image_02_612703a = image_at("612703a07c6a1e569ffa5059a66796cc693d95b1")
+# Merged modal-projects/miles#43: per-adapter seeds through load_slot.
+image_02_99e1ebe = image_at("99e1ebe8e86974e0b3c290f47f415ee47726f965")

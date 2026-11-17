@@ -506,7 +506,7 @@ def test_declared_compute_settings_reach_modal(builders):
 
 def test_recipes_select_trainer_images(builders, monkeypatch):
     image_for = deployment_apps.image_for
-    assert image_for("miles") is miles_image.image_02_ce494f0
+    assert image_for("miles") is miles_image.image_02_52a7a99
     assert image_for("megatron") is deployment_apps.megatron_image
     assert image_for("sglang") is rollout_image.image_01_c4182b2
     assert (
