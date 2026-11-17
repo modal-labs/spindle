@@ -16,11 +16,11 @@ _PEFT_TARGETS = {
     "linear_fc1_up": ("up_proj",),
     "linear_fc2": ("down_proj",),
     "output_layer": ("lm_head",),
-    # The sampler serves Qwen3.5 linear-attention q, k, v, z as in_proj_qkvz; b and a stay frozen.
+    # SGLang serves the Qwen3.5 linear-attention input projections as in_proj_qkvz and in_proj_ba.
     "in_proj_qkv": ("in_proj_qkvz",),
     "in_proj_z": ("in_proj_qkvz",),
-    "in_proj_b": (),
-    "in_proj_a": (),
+    "in_proj_b": ("in_proj_ba",),
+    "in_proj_a": ("in_proj_ba",),
 }
 GDN_INPUT_PROJECTIONS = ("in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a")
 _ATTN_LEAVES = frozenset(

@@ -26,12 +26,13 @@ def test_all_packaged_recipes_validate_offline(path):
         resolved = DeploymentConfig.create(spec)
         # Legacy Megatron selectors also match vision layers in current Bridge.
         # Samplers match the path after a wildcard as a module-name suffix, and
-        # serve the Qwen3.5 linear-attention input projections as in_proj_qkvz.
+        # serve the Qwen3.5 linear-attention input projections fused.
         expected = {
             target.rsplit("*.", 1)[-1] for target in spec.miles_cfg["target_modules"]
         }
         if expected & set(GDN_INPUT_PROJECTIONS):
-            expected = expected - set(GDN_INPUT_PROJECTIONS) | {"in_proj_qkvz"}
+            expected = expected - set(GDN_INPUT_PROJECTIONS)
+            expected |= {"in_proj_qkvz", "in_proj_ba"}
         assert expected == set(resolved.inference_settings["lora_target_modules"])
 
 

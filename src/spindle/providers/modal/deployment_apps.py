@@ -56,6 +56,7 @@ from .miles_v012_image import image as miles_v012_image
 from .miles_v020_image import image as miles_v020_image
 from .miles_image import image as miles_image
 from .ray_cluster import start_trainer_cluster
+from .rollout_image import gdn_lora_image as gdn_lora_sampler_image
 from .rollout_image import image as rollout_image
 from .serve import run_engine_with_backend
 from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
@@ -72,6 +73,7 @@ SAMPLER_IMAGES = {
     "sglang-v0.5.21-a3e0e17": deepseek_v41_sampler_image,
     "sglang-v0.5.23-c4182b2": rollout_image,
     "sglang-v0.5.23-c4182b2-glm53": glm53_sampler_image,
+    "sglang-v0.5.23-803bccb": gdn_lora_sampler_image,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {

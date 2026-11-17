@@ -181,6 +181,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
             "down_proj",
             "lm_head",
             "in_proj_qkvz",
+            "in_proj_ba",
             "out_proj",
         ]
     else:
