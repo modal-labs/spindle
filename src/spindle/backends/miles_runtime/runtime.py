@@ -159,29 +159,14 @@ class MilesRuntime:
         method = (
             self._bridge.forward_only if forward_only else self._bridge.forward_backward
         )
-        try:
-            return self._run(
-                method(
-                    unit_id,
-                    list(slot_rows),
-                    loss_fn,
-                    loss_fn_config,
-                )
+        return self._run(
+            method(
+                unit_id,
+                list(slot_rows),
+                loss_fn,
+                loss_fn_config,
             )
-        except TrainerOutOfMemory as error:
-            discarded = ""
-            if not forward_only:
-                slots = sorted({slot for slot, _ in slot_rows})
-                self._run(
-                    self._trainer._execute_slots("discard_gradients", slots=slots)
-                )
-                discarded = (
-                    " Gradients accumulated since the last optim_step were discarded."
-                )
-            raise TrainerOutOfMemory(
-                f"The trainer ran out of GPU memory on this batch and skipped it.{discarded} "
-                f"Send fewer or shorter sequences per request. ({error})"
-            ) from None
+        )
 
     def optim_step(
         self, adam_params_by_slot: dict[int, dict[str, float]]
@@ -256,7 +241,10 @@ class MilesRuntime:
             self._failure = exc
             raise BackendFailed(f"Miles trainer failed: {exc}") from exc
         if out_of_memory:
-            raise TrainerOutOfMemory(result["error"])
+            raise TrainerOutOfMemory(
+                "The trainer ran out of GPU memory on this batch and skipped it. "
+                f"Send fewer or shorter sequences per request. ({result['error']})"
+            )
         return result
 
     def _run_best_effort(self, coroutine: Coroutine[Any, Any, Any]) -> Any:

@@ -3,8 +3,10 @@
 Miles v0.1.x keeps gradients across forward_backward calls and lets each pass's
 reduce run over them again. That rescales kept gradients on two layouts: expert
 gradients when experts are sharded differently from tensor parallelism, and
-sequence-parallel adapters, which are summed over tensor-parallel ranks. Other
-layouts skip the extra copy of the gradient buffers.
+sequence-parallel adapters, which are summed over tensor-parallel ranks. Layouts
+where running out of memory fails only the request use it too, so a failed pass
+leaves earlier gradients intact. Other layouts skip the extra copy of the
+gradient buffers.
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ from contextlib import contextmanager
 from functools import wraps
 from types import ModuleType
 from typing import Any
+
+from . import out_of_memory
 
 
 @contextmanager
@@ -52,8 +56,8 @@ def install(lora_model: ModuleType) -> None:
         *rest: object,
         **kwargs: object,
     ) -> object:
-        if kwargs.get("forward_only", False) or not _rescales_kept_gradients(
-            args, model
+        if kwargs.get("forward_only", False) or not (
+            out_of_memory.recoverable() or _rescales_kept_gradients(args, model)
         ):
             return original(args, batch_id, model, *rest, **kwargs)
         with accumulate_gradients(model):

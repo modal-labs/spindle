@@ -1,7 +1,8 @@
 """Fail only the training call that ran out of GPU memory, not the trainer.
 
-Ranks that only meet in the gradient all-reduce agree before it, so a rank
-that ran out of memory never leaves the others waiting in a collective.
+Ranks that meet only in the gradient and loss all-reduces agree before the
+first of them, so a rank that ran out of memory never leaves the others
+waiting in a collective.
 """
 
 from __future__ import annotations
@@ -21,51 +22,41 @@ class PeerOutOfMemory(RuntimeError):
     pass
 
 
-class _State:
-    recoverable = True
-    # Gloo group the ranks agree on before the gradient all-reduce; None on one rank.
-    group: object | None = None
-    agreed = False
+_recoverable = False
+# Gloo group the ranks agree on; None on one rank.
+_group: dist.ProcessGroup | None = None
+_agreed = False
 
 
-_state = _State()
+def configure(*, recoverable: bool, group: dist.ProcessGroup | None) -> None:
+    global _recoverable, _group
+    _recoverable = recoverable
+    _group = group if recoverable else None
 
 
-def configure(*, recoverable: bool, group: object | None) -> None:
-    _state.recoverable = recoverable
-    _state.group = group if recoverable else None
+def recoverable() -> bool:
+    return _recoverable
 
 
-def install(megatron_model: ModuleType) -> None:
-    original = megatron_model.finalize_model_grads_with_empty_cache
-    if getattr(original, "__spindle_out_of_memory__", False):
-        return
-
-    @wraps(original)
-    def finalize(*args: object, **kwargs: object) -> object:
-        _agree(failed=False)
-        return original(*args, **kwargs)
-
-    finalize.__spindle_out_of_memory__ = True  # type: ignore[attr-defined]
-    megatron_model.finalize_model_grads_with_empty_cache = finalize
+def install(*, megatron_model: ModuleType, lora_model: ModuleType) -> None:
+    _agree_before(megatron_model, "finalize_model_grads_with_empty_cache")
+    _agree_before(lora_model, "aggregate_train_losses")
 
 
-def run(
-    call: Callable[[], object], *, backward: bool, replay_managers: Sequence[object]
-) -> object:
+def run(call: Callable[[], object], *, replay_managers: Sequence[object]) -> object:
     """Run one forward or forward-backward call; on out of memory, free it and return an error result."""
-    _state.agreed = False
+    global _agreed
+    _agreed = False
     stages = [manager.stage for manager in replay_managers]
     try:
         return call()
     except torch.OutOfMemoryError as error:
-        # After the agreement, the other ranks may already be in the all-reduce.
-        if not _state.recoverable or (backward and _state.agreed):
+        # After the agreement, the other ranks may already be in an all-reduce.
+        if not _recoverable or _agreed:
             raise
         # Keep "CUDA out of memory. Tried to allocate N GiB"; the rest is allocator advice for the server.
         detail = ". ".join(str(error).split(". ")[:2])
-        if backward:
-            _agree(failed=True)
+        _agree(detail)
     except PeerOutOfMemory as error:
         detail = str(error)
     for manager, stage in zip(replay_managers, stages, strict=True):
@@ -75,11 +66,27 @@ def run(
     return {"error": detail, OUT_OF_MEMORY: True}
 
 
-def _agree(*, failed: bool) -> None:
-    if _state.group is None or _state.agreed:
+def _agree_before(module: ModuleType, name: str) -> None:
+    original = getattr(module, name)
+    if getattr(original, "__spindle_out_of_memory__", False):
         return
-    _state.agreed = True
-    any_failed = torch.tensor([int(failed)])
-    dist.all_reduce(any_failed, op=dist.ReduceOp.MAX, group=_state.group)
-    if any_failed.item() and not failed:
-        raise PeerOutOfMemory("another trainer rank ran out of GPU memory")
+
+    @wraps(original)
+    def agree_then_call(*args: object, **kwargs: object) -> object:
+        _agree(None)
+        return original(*args, **kwargs)
+
+    agree_then_call.__spindle_out_of_memory__ = True  # type: ignore[attr-defined]
+    setattr(module, name, agree_then_call)
+
+
+def _agree(failure: str | None) -> None:
+    global _agreed
+    if _group is None or _agreed:
+        return
+    _agreed = True
+    failures: list[str | None] = [None] * dist.get_world_size(_group)
+    dist.all_gather_object(failures, failure, group=_group)
+    peer_failure = next((f for f in failures if f is not None), None)
+    if failure is None and peer_failure is not None:
+        raise PeerOutOfMemory(peer_failure)

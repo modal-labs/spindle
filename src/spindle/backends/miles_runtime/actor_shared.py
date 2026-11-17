@@ -52,7 +52,7 @@ def install_replay_patches(
     install_qwen3_vl_cp_position_ids(
         bridge_model=qwen3_vl_model, miles_qwen3_vl=miles_qwen3_vl
     )
-    out_of_memory.install(megatron_model)
+    out_of_memory.install(megatron_model=megatron_model, lora_model=lora_model)
 
 
 def use_distributed_timeout_for_gloo(minutes: int) -> None:
@@ -113,10 +113,6 @@ class ProfiledActor:
     def forward_only(self, *args: object, **kwargs: object) -> object:
         return self._fail_request_on_out_of_memory("forward_only", args, kwargs)
 
-    def discard_gradients(self, slots: list[int]) -> None:
-        for slot in slots:
-            self.slot_optimizers[slot].zero_grads()
-
     def optim_step(self, *args: object, **kwargs: object) -> object:
         return self._profiled("optim_step", *args, **kwargs)
 
@@ -127,7 +123,6 @@ class ProfiledActor:
             self._configure_out_of_memory()
         result = out_of_memory.run(
             lambda: self._profiled(operation, *args, **kwargs),
-            backward=operation == "forward_backward",
             replay_managers=all_replay_managers,
         )
         if isinstance(result, dict) and result.get(out_of_memory.OUT_OF_MEMORY):
