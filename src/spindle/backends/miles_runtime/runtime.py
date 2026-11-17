@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import shlex
 import subprocess
@@ -65,6 +66,10 @@ class MilesRuntime:
                 "MilesRuntime requires Miles and Ray in the trainer image"
             ) from _runtime_import_error
         self.config = config
+        self.supports_seed = (
+            "seed"
+            in inspect.signature(tinker_runtime.MilesBackend.load_slot).parameters
+        )
         self._v020 = None
         if os.environ.get("SPINDLE_MILES_API") == "0.2":
             # This API module requires dependencies absent in legacy trainer images.
@@ -117,6 +122,7 @@ class MilesRuntime:
         *,
         checkpoint: str | None = None,
         restore_optimizer: bool = True,
+        seed: int | None = None,
     ) -> None:
         self._run(
             self._bridge.load_slot(
@@ -125,6 +131,7 @@ class MilesRuntime:
                 alpha,
                 ckpt_path=checkpoint,
                 load_optimizer=restore_optimizer,
+                **({"seed": seed} if seed is not None and checkpoint is None else {}),
             )
         )
 
@@ -565,6 +572,16 @@ def _allow_context_parallel_multi_lora(lora_arguments) -> None:
 
     @wraps(original)
     def validate(args) -> None:
+        estimator = getattr(args, "advantage_estimator", None)
+        if args.context_parallel_size > 1 and estimator in (
+            "ppo",
+            "reinforce_plus_plus",
+        ):
+            raise ValueError(
+                f"--advantage-estimator {estimator} has no effect on multi-LoRA "
+                "training, and Spindle doesn't support it with context parallelism "
+                "above 1. Remove the flag or set --context-parallel-size 1."
+            )
         context_parallel_size = args.context_parallel_size
         args.context_parallel_size = 1
         try:
