@@ -395,6 +395,41 @@ def test_revisions_of_one_repo_download_one_at_a_time(monkeypatch) -> None:
     assert spawned == [LORA_DEFINITION, other.definition_id]
 
 
+def test_different_drafts_serialize_downloads_of_their_shared_target(monkeypatch):
+    modal_app = importlib.import_module("spindle.providers.modal.app")
+    registry = InMemoryKeyValueStore()
+    calls = {}
+    spawned = weight_downloads(monkeypatch, registry, calls)
+    recipe = asyncio.run(modal_app.module_for(LORA_DEFINITION)).recipe
+    definitions = [
+        DeploymentConfig.create(
+            BaseConfig(
+                **{
+                    **vars(recipe),
+                    "name": "draft-" + name,
+                    "inference_draft_model": "org/" + name,
+                    "inference_draft_model_revision": "pinned-revision",
+                }
+            )
+        )
+        for name in ["first", "second"]
+    ]
+    first, second = definitions
+    register_recipes(modal_app, modal_app.deployment_kv(), *definitions)
+
+    async def run():
+        started = await modal_app._start_weights_download(first.definition_id)
+        assert await modal_app._start_weights_download(second.definition_id) == started
+        assert spawned == [first.definition_id]
+        calls["fc-1"] = False
+        await registry.put(await modal_app._weights_ready_key(first.definition_id), 1.0)
+        assert not await modal_app._weights_are_ready(second.definition_id)
+        assert await modal_app._weights_download(second.definition_id) is not None
+
+    asyncio.run(run())
+    assert spawned == [first.definition_id, second.definition_id]
+
+
 def test_weights_marked_ready_by_an_older_release_are_not_downloaded_again(
     monkeypatch,
 ) -> None:

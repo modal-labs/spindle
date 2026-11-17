@@ -1,4 +1,4 @@
-from spindle.configs.qwen35_4b_lora_32k import Config as Parent
+from spindle.configs._qwen35_lora_32k import Qwen35Lora32k as Parent
 
 
 class Config(Parent):

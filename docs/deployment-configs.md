@@ -63,6 +63,34 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
 
+## Spec decoding
+
+We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 
+
+The following 32K LoRA recipes enable speculative decoding by default:
+
+| Recipe | Method | Draft checkpoint |
+| --- | --- | --- |
+| `qwen35-4b-lora-32k` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
+| `qwen3-8b-lora-32k` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
+| `qwen35-9b-instruct-lora-32k` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
+| `qwen38-27b-lora-32k` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
+| `glm53-flash-lora-32k` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |
+
+Deploy a recipe by passing its Python path to `spindle deploy`, for example:
+
+```sh
+spindle deploy src/spindle/configs/qwen35_4b_lora_32k.py
+```
+
+For a separate drafter, set `inference_draft_model` and
+`inference_draft_model_revision`, and select the algorithm in `sglang_cfg`.
+Spindle downloads the draft alongside the target and supplies its local path to
+SGLang. With `NEXTN` and no separate draft, Spindle supplies the resolved target
+checkpoint instead. The GLM recipe retains its parent's BF16 target weights and
+eight inference GPUs. Reference runs and benchmark artifacts are maintained
+separately from these deployment recipes.
+
 ## Recommended configuration for eval jobs
 
 The defaults suit training loops. An eval sends one short batch, and any replica it starts takes a few minutes to load, so it arrives after the work is done and then sits idle. For eval-only configs:
@@ -185,7 +213,7 @@ class Config(Parent):
 config = Config()
 ```
 
-Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Modal accepts the option only on clustered functions, so other trainers and inference pools are unaffected. To turn it on for every recipe you load, set `SPINDLE_EXCLUDE_RESERVED_CAPACITY=1` in the environment that runs `spindle deploy` or builds recipes.
+Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Modal accepts the option only on clustered functions, so other trainers and inference pools are unaffected.
 
 The frontend's URL is `https://<workspace>-<environment>--<frontend>-server.modal.run`. To choose the part after `--`, set `"platform.url_label"`; for example `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. Changing the label changes the URL clients use.
 

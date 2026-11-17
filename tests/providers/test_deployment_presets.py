@@ -30,6 +30,35 @@ def test_all_packaged_recipes_validate_offline(path):
         } == set(resolved.inference_settings["lora_target_modules"])
 
 
+@pytest.mark.parametrize(
+    "preset,algorithm,draft",
+    [
+        ("qwen3-8b-lora-32k", "DFLASH", "z-lab/Qwen3-8B-DFlash-b16"),
+        ("qwen35-9b-instruct-lora-32k", "DFLASH", "modal-labs/Qwen3.5-9B-DFlash"),
+        ("qwen38-27b-lora-32k", "DFLASH", "incoai/Qwen3.8-27B-DFlash2"),
+        ("glm53-flash-lora-32k", "DFLASH", "modal-labs/GLM-5.3-Flash-DFlash"),
+        ("qwen35-4b-lora-32k", "NEXTN", ""),
+        ("qwen3-4b-lora-32k", None, ""),
+        ("qwen25-7b-instruct-lora-32k", None, ""),
+        ("qwen25-3b-lora-32k", None, ""),
+        ("qwen35-2b-lora-32k", None, ""),
+    ],
+)
+def test_speculative_defaults_use_model_specific_drafts(preset, algorithm, draft):
+    spec = load(config_path(preset))
+    deployment = DeploymentConfig.create(spec)
+    assert spec.inference_draft_model == draft
+    serving = deployment.inference_settings
+    assert serving.get("speculative_algorithm") == algorithm
+    if draft:
+        assert serving["speculative_draft_model_path"] == deployment.draft_asset_path
+    elif algorithm == "NEXTN":
+        assert serving["speculative_draft_model_path"] == deployment.asset_path
+    else:
+        assert "speculative_draft_model_path" not in serving
+        assert spec.inference_gpu == "H100"
+
+
 @pytest.mark.parametrize("preset", ["qwen35-35b-a3b-fft-64k", "qwen36-35b-a3b-fft-64k"])
 def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
     config = backend_config(load(config_path(preset)))["megatron"]
