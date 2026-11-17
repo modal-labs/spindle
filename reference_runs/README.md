@@ -22,6 +22,7 @@ is relative to the TOML file.
 ```toml
 config = "qwen35-4b-lora-32k"
 script = "../scripts/dapo_math.py"
+trainer_image = "miles-v0.1.1-fdd808c"
 
 [tokenizer]
 model = "Qwen/Qwen3.5-4B"
@@ -41,19 +42,26 @@ name in `create_lora_training_client` to select the exact recipe.
 Script arguments cannot override these values. Direct callers of
 `dapo_math.py` must also pass `--tokenizer MODEL REVISION`; it has no default.
 
+Every definition also requires a nonempty `trainer_image` at the top level.
+Set it to the registered image name, including its commit suffix. The launcher
+applies it when preparing the deployment config; `config_overrides` cannot
+replace it. Running the workload requires that config to be deployed already;
+the launcher does not verify the image running on the server.
+
 `dapo_qwen38_27b_multinode.toml` uses the same workload with a pinned Qwen3.8-27B
 tokenizer in its definition. It inherits the committed `qwen38-27b-lora-256k`
 topology: two eight-H200 trainer nodes, TP2/CP8, and two
-four-H200 sampler replicas. Reference overrides select the registered Miles
-v0.2.0 trainer image, exact H200 hardware and one training client/adapter slot.
+four-H200 sampler replicas. The definition selects the registered Miles v0.2.0
+trainer image, exact H200 hardware and one training client/adapter slot.
 The workload generates at most 2,048 response tokens; it does not validate 256K
 sequences. This definition has no recorded GPU execution yet. Compare new
 measurements against the same validation, rather than the 4B learning curve.
 
 Once published, a validation TOML file is immutable. Create a new definition
 when changing its script selection, arguments or deployment overrides. Spindle
-commits and runtime image versions identify executions and belong in the index,
-not in the validation definition. Deployment recipes still own default images.
+commits and observed runtime image versions identify executions and belong in
+the index, not in the validation definition. Each definition explicitly selects
+its trainer image; deployment recipes still own the other default images.
 
 ## Prepare and run
 

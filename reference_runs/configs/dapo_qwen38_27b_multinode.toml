@@ -1,5 +1,6 @@
 config = "qwen38-27b-lora-256k"
 script = "../scripts/dapo_math.py"
+trainer_image = "miles-v0.2.0-15afe21"
 
 [tokenizer]
 model = "Qwen/Qwen3.8-27B"
@@ -7,7 +8,6 @@ revision = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
 
 [config_overrides]
 name = "dapo-math-qwen38-27b-multinode"
-trainer_image = "miles-v0.2.0-15afe21"
 trainer_gpu = "H200!"
 trainer_max_instances = 1
 trainer_max_clients_per_instance = 1

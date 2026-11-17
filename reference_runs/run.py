@@ -7,7 +7,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import config_path, load
@@ -25,9 +25,19 @@ class ValidationRunConfig(BaseModel):
 
     config: str
     script: str
+    trainer_image: str = Field(min_length=1)
     tokenizer: TokenizerConfig
     config_overrides: dict[str, object] = Field(default_factory=dict)
     script_args: list[str] = Field(default_factory=list)
+
+    @field_validator("config_overrides")
+    @classmethod
+    def validate_config_overrides(
+        cls, overrides: dict[str, object]
+    ) -> dict[str, object]:
+        if "trainer_image" in overrides:
+            raise ValueError("trainer_image must be set at the top level")
+        return overrides
 
 
 def main() -> None:
@@ -47,7 +57,10 @@ def main() -> None:
     parent = args.validation.resolve().parent
     recipe = BaseConfig(
         **vars(load(config_path(definition.config))),
-        overrides=definition.config_overrides,
+        overrides={
+            **definition.config_overrides,
+            "trainer_image": definition.trainer_image,
+        },
     )
     if args.write_config:
         if extra:

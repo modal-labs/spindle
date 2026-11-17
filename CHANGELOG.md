@@ -23,6 +23,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- Reference definitions must specify `trainer_image` at the top level so the trainer image selection is recorded explicitly.
 - DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
 - Reference runs use flat TOML definitions, a typed execution index, and flat JSONL outputs. A shared launcher selects the exact deployment for the existing DAPO-Math workload.
 - Miles multi-target scoring shares one vocabulary softmax across mixed candidate counts in supported scoring modes, preserving each datum's output shape and batch order.
