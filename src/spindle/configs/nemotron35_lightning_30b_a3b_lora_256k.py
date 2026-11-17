@@ -13,6 +13,7 @@ class Config(Parent):
         "miles_cfg.align_sequences_to_parallel_layout": True,
         "miles_cfg.cli_options.log_probs_chunk_size": -1,
         "trainer_env.EXPERT_GROUPED_GEMM": "0",
+        "trainer_env.FUSED_WEIGHTED_SQUARED_RELU": "0",
     }
 
 

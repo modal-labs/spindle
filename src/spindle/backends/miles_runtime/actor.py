@@ -39,6 +39,7 @@ from . import (
     allgather_cp_lora,
     expert_grouped_gemm,
     expert_lora_compat,
+    fused_squared_relu,
     gradient_accumulation,
     host_syncs,
     mamba_packing,
@@ -84,6 +85,7 @@ mamba_packing.install(megatron_model)
 moe_permute.install()
 response_logits.install(logit_processors)
 expert_grouped_gemm.install()
+fused_squared_relu.install(AutoBridge)
 
 
 def _publish_checkpoints_across_nodes() -> None:

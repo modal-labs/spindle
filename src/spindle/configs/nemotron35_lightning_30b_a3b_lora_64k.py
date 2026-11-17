@@ -17,6 +17,7 @@ class Config(Parent):
         "miles_cfg.max_lora_slots": 4,
         "miles_cfg.cli_options.log_probs_chunk_size": 4096,
         "trainer_env.EXPERT_GROUPED_GEMM": "1",
+        "trainer_env.FUSED_WEIGHTED_SQUARED_RELU": "1",
         "sglang_cfg.max_loras_per_batch": 4,
         "sglang_cfg.max_loaded_loras": 32,
         "sglang_cfg.max_mamba_cache_size": 640,
