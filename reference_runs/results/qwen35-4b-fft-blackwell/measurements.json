@@ -1,0 +1,2847 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "date": "2026-11-17",
+  "workload": "Synthetic repeated-text cross-entropy forward/backward and Adam through the Tinker API; one closed-loop full-parameter client",
+  "seed": 42,
+  "learning_rate": 0.0001,
+  "pricing_source": "https://modal.com/pricing",
+  "pricing_scope": "Trainer GPUs during the measured window only; excludes startup, idle, CPU, memory, sampler, storage, and account discounts",
+  "runs": [
+    {
+      "run_id": "b-20261117-020137-e5b410f4",
+      "revision": "21dc3936c6fd0b9b8422f4c2d9bad14a7cf6cdcb",
+      "harness_revision": "d801679",
+      "hardware": "B200",
+      "batch_size": 1,
+      "model_weights_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "tp": 2,
+      "cp": 4,
+      "gpus": 8,
+      "trainer_cpu": 32,
+      "trainer_memory_mib": 131072,
+      "trainer_rdma": true,
+      "exclude_reserved_capacity": true,
+      "steps": 5,
+      "warmup_steps": 2,
+      "gpu_hourly_rate_usd": 6.2496,
+      "client_package_versions": {
+        "modal-spindle": "0.1.7",
+        "tinker": "0.33.1",
+        "opentelemetry-sdk": "1.43.0",
+        "transformers": "5.22.2",
+        "numpy": "2.5.4",
+        "httpx": "0.28.1",
+        "modal": "1.6.4"
+      },
+      "trainer_image": "megatron-2d1fa8d",
+      "sequence_parallel": true,
+      "fp32_lm_head": true,
+      "defer_fp32_logits": true,
+      "activation_recomputation": {
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1
+      },
+      "compile_threads": "1",
+      "cuda_device_max_connections": null,
+      "points": [
+        {
+          "context_length": 8192,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 4139.916594161637,
+            "aggregate.updates_per_s": 0.5053609123732467,
+            "aggregate.wall_s": 9.893919132999997,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 4139.916594161637,
+            "clients.step_latency_mean_s": 1.9768549368000037,
+            "clients.step_latency_p50_s": 1.928132962999996,
+            "clients.step_latency_p95_s": 2.196740992600013,
+            "cost.estimated_gpu_usd": 0.13740674891910395,
+            "cost.estimated_gpu_usd_per_client": 0.13740674891910395,
+            "cost.estimated_gpu_usd_per_client_hour": 49.9968,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 3.3546569560328114,
+            "cost.gpu_hourly_rate_usd": 6.2496,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 80,
+            "sampled.spindle.gpu.memory.used": 31064.0,
+            "sampled.spindle.gpu.utilization.gpu": 0.0,
+            "sampled.spindle.gpu.power.draw": 296.04999999999995
+          },
+          "step_s": [
+            1.885919819999998,
+            1.8732056720000116,
+            1.934786650999996,
+            1.928132962999996,
+            2.2622295780000172
+          ],
+          "median_step_s": 1.928132962999996,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 9.04693603515625,
+                  "loss:sum": 74112.5,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.2231517120000035
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 2905097.25,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 4343.768973168758,
+                "training.optimizer_s": 0.660940557999993,
+                "training.step_s": 1.885919819999998
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 7.707675576210022,
+                  "loss:sum": 63141.2783203125,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.2132953820000125
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 2184262.25,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 4373.251758977137,
+                "training.optimizer_s": 0.6577594000000033,
+                "training.step_s": 1.8732056720000116
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 1.0217387676239014,
+                  "loss:sum": 8370.083984375,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.2585543739999991
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 969072.5,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 4234.058569592652,
+                "training.optimizer_s": 0.6745032169999945,
+                "training.step_s": 1.934786650999996
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 1.630827009677887,
+                  "loss:sum": 13359.73486328125,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.228310620000002
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 829186.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 4248.669649448868,
+                "training.optimizer_s": 0.6972262230000013,
+                "training.step_s": 1.928132962999996
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.7566845118999481,
+                  "loss:sum": 6198.759521484375,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.2461954660000174
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 291701.09375,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 3621.2063000442026,
+                "training.optimizer_s": 1.0133695520000003,
+                "training.step_s": 2.2622295780000172
+              }
+            }
+          ]
+        },
+        {
+          "context_length": 32768,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 12279.016461585497,
+            "aggregate.updates_per_s": 0.3747258441645965,
+            "aggregate.wall_s": 13.343088228000028,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 12279.016461585497,
+            "clients.step_latency_mean_s": 2.662858709999989,
+            "clients.step_latency_p50_s": 2.6316532220000113,
+            "clients.step_latency_p95_s": 2.797357033000003,
+            "cost.estimated_gpu_usd": 0.1853088093104644,
+            "cost.estimated_gpu_usd_per_client": 0.1853088093104644,
+            "cost.estimated_gpu_usd_per_client_hour": 49.9968,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 1.1310352130765648,
+            "cost.gpu_hourly_rate_usd": 6.2496,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 112,
+            "sampled.spindle.gpu.memory.used": 37726.0,
+            "sampled.spindle.gpu.utilization.gpu": 0.0,
+            "sampled.spindle.gpu.power.draw": 357.405
+          },
+          "step_s": [
+            2.6316532220000113,
+            2.646467080999969,
+            2.6009169169999495,
+            2.600176809000004,
+            2.8350795210000115
+          ],
+          "median_step_s": 2.6316532220000113,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.9792217910289764,
+                  "loss:sum": 32087.1396484375,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.890176389000004
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 2429894.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 12451.488564704161,
+                "training.optimizer_s": 0.7393637529999921,
+                "training.step_s": 2.6316532220000113
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.004643074935302138,
+                  "loss:sum": 152.14427947998047,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.901405939999961
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 33387.15625,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 12381.79013646321,
+                "training.optimizer_s": 0.7408895410000014,
+                "training.step_s": 2.646467080999969
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.05230873916298151,
+                  "loss:sum": 1714.0527648925781,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.9211297269999932
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 452651.25,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 12598.633884006005,
+                "training.optimizer_s": 0.6761653499999625,
+                "training.step_s": 2.6009169169999495
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.004270835896022618,
+                  "loss:sum": 139.94675064086914,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.9039243230000125
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 36189.8125,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 12602.219928498696,
+                "training.optimizer_s": 0.6931203259999847,
+                "training.step_s": 2.600176809000004
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.2270948439836502,
+                  "loss:sum": 7441.44384765625,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 2.079673022999998
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 7872739.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 11558.053224708778,
+                "training.optimizer_s": 0.7458041689999959,
+                "training.step_s": 2.8350795210000115
+              }
+            }
+          ]
+        },
+        {
+          "context_length": 65536,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 16515.299409000672,
+            "aggregate.updates_per_s": 0.2520034699859722,
+            "aggregate.wall_s": 19.84099663500001,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 16515.299409000672,
+            "clients.step_latency_mean_s": 3.9539375581999936,
+            "clients.step_latency_p50_s": 3.9677536050000413,
+            "clients.step_latency_p95_s": 4.049347098199985,
+            "cost.estimated_gpu_usd": 0.27555176126688014,
+            "cost.estimated_gpu_usd_per_client": 0.27555176126688014,
+            "cost.estimated_gpu_usd_per_client_hour": 49.9968,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 0.8409172401943363,
+            "cost.gpu_hourly_rate_usd": 6.2496,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 160,
+            "sampled.spindle.gpu.memory.used": 47506.0,
+            "sampled.spindle.gpu.utilization.gpu": 0.0,
+            "sampled.spindle.gpu.power.draw": 424.94
+          },
+          "step_s": [
+            3.920692128999974,
+            4.003956383000002,
+            3.816590896999969,
+            4.060694776999981,
+            3.9677536050000413
+          ],
+          "median_step_s": 3.9677536050000413,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.1320655196905136,
+                  "loss:sum": 8655.0458984375,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 3.2104760149999834
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 4355978.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 16715.416014242324,
+                "training.optimizer_s": 0.7079234739999833,
+                "training.step_s": 3.920692128999974
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.6678358912467957,
+                  "loss:sum": 43767.29296875,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 3.263468541000009
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 8884519.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 16367.810668031438,
+                "training.optimizer_s": 0.735152013000004,
+                "training.step_s": 4.003956383000002
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.9544732868671417,
+                  "loss:sum": 62552.361328125,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 3.06315811799999
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 5731508.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 17171.345257757275,
+                "training.optimizer_s": 0.7506535789999589,
+                "training.step_s": 3.816590896999969
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0044242446310818195,
+                  "loss:sum": 289.9472961425781,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 3.238275382999973
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 84589.5078125,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 16139.110078206282,
+                "training.optimizer_s": 0.8035452759999657,
+                "training.step_s": 4.060694776999981
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.04160560201853514,
+                  "loss:sum": 2726.6647338867188,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 3.114967863000004
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 804004.5,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 16517.154673469024,
+                "training.optimizer_s": 0.8499993820000213,
+                "training.step_s": 3.9677536050000413
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": "b-20261117-020141-362d9d1b",
+      "revision": "21dc3936c6fd0b9b8422f4c2d9bad14a7cf6cdcb",
+      "harness_revision": "d801679",
+      "hardware": "H100",
+      "batch_size": 1,
+      "model_weights_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "tp": 2,
+      "cp": 4,
+      "gpus": 8,
+      "trainer_cpu": 32,
+      "trainer_memory_mib": 131072,
+      "trainer_rdma": true,
+      "exclude_reserved_capacity": true,
+      "steps": 5,
+      "warmup_steps": 2,
+      "gpu_hourly_rate_usd": 3.9492,
+      "client_package_versions": {
+        "modal-spindle": "0.1.7",
+        "tinker": "0.33.1",
+        "opentelemetry-sdk": "1.43.0",
+        "transformers": "5.22.2",
+        "numpy": "2.5.4",
+        "httpx": "0.28.1",
+        "modal": "1.6.4"
+      },
+      "trainer_image": "megatron-2d1fa8d",
+      "sequence_parallel": true,
+      "fp32_lm_head": true,
+      "defer_fp32_logits": true,
+      "activation_recomputation": {
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1
+      },
+      "compile_threads": "1",
+      "cuda_device_max_connections": null,
+      "points": [
+        {
+          "context_length": 8192,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 5013.857637832096,
+            "aggregate.updates_per_s": 0.6120431686806758,
+            "aggregate.wall_s": 8.169358397999986,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 5013.857637832096,
+            "clients.step_latency_mean_s": 1.6225577595999994,
+            "clients.step_latency_p50_s": 1.645267662000009,
+            "clients.step_latency_p95_s": 1.660352738399996,
+            "cost.estimated_gpu_usd": 0.07169428930084787,
+            "cost.estimated_gpu_usd_per_client": 0.07169428930084787,
+            "cost.estimated_gpu_usd_per_client_hour": 31.5936,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 1.7503488598839811,
+            "cost.gpu_hourly_rate_usd": 3.9492,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 64,
+            "sampled.spindle.gpu.memory.used": 29287.0,
+            "sampled.spindle.gpu.utilization.gpu": 38.0,
+            "sampled.spindle.gpu.power.draw": 204.74
+          },
+          "step_s": [
+            1.647708951999988,
+            1.5598338960000149,
+            1.663513684999998,
+            1.596464602999987,
+            1.645267662000009
+          ],
+          "median_step_s": 1.645267662000009,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 5.514591574668884,
+                  "loss:sum": 45175.5341796875,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.0972117620000006
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 3078483.5,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 4971.7518315698635,
+                "training.optimizer_s": 0.5476285400000052,
+                "training.step_s": 1.647708951999988
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 2.2403417229652405,
+                  "loss:sum": 18352.87939453125,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.0869110940000155
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 1704825.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 5251.841251178916,
+                "training.optimizer_s": 0.47023421200000826,
+                "training.step_s": 1.5598338960000149
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 6.85630202293396,
+                  "loss:sum": 56166.826171875,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.1256486849999874
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 3430355.75,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 4924.516145474337,
+                "training.optimizer_s": 0.5344837400000131,
+                "training.step_s": 1.663513684999998
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 2.173362135887146,
+                  "loss:sum": 17804.1826171875,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.0733109409999884
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 676139.75,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 5131.338323822559,
+                "training.optimizer_s": 0.5212598519999858,
+                "training.step_s": 1.596464602999987
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 3.2604822516441345,
+                  "loss:sum": 26709.87060546875,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 8192.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 8192.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.125,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 8192.0
+                },
+                "training.forward_backward_s": 1.1303400099999976
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 3572505.75,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 8192,
+                "training.input_tokens_per_s": 4979.129043381122,
+                "training.optimizer_s": 0.5129404420000014,
+                "training.step_s": 1.645267662000009
+              }
+            }
+          ]
+        },
+        {
+          "context_length": 32768,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 16253.571352398007,
+            "aggregate.updates_per_s": 0.4960196335570681,
+            "aggregate.wall_s": 10.080246147000025,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 16253.571352398007,
+            "clients.step_latency_mean_s": 2.014616887600005,
+            "clients.step_latency_p50_s": 2.013078976000031,
+            "clients.step_latency_p95_s": 2.0703550955999956,
+            "cost.estimated_gpu_usd": 0.08846424018607221,
+            "cost.estimated_gpu_usd_per_client": 0.08846424018607221,
+            "cost.estimated_gpu_usd_per_client_hour": 31.5936,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 0.5399428722294447,
+            "cost.gpu_hourly_rate_usd": 3.9492,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 80,
+            "sampled.spindle.gpu.memory.used": 36887.0,
+            "sampled.spindle.gpu.utilization.gpu": 40.0,
+            "sampled.spindle.gpu.power.draw": 335.375
+          },
+          "step_s": [
+            2.084148201000005,
+            1.9741549780000014,
+            2.015182673999959,
+            2.013078976000031,
+            1.9865196090000268
+          ],
+          "median_step_s": 2.013078976000031,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.3959500193595886,
+                  "loss:sum": 12974.490234375,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.5740933080000445
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 1479278.125,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 15722.490360463536,
+                "training.optimizer_s": 0.507126052999979,
+                "training.step_s": 2.084148201000005
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.13656207919120789,
+                  "loss:sum": 4474.8662109375,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.5059288660000334
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 1131541.875,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 16598.494224195594,
+                "training.optimizer_s": 0.4662331729999778,
+                "training.step_s": 1.9741549780000014
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.3144850805401802,
+                  "loss:sum": 10305.047119140625,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.5040553569999702
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 1490733.625,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 16260.560604641574,
+                "training.optimizer_s": 0.5089991769999642,
+                "training.step_s": 2.015182673999959
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.005155565915629268,
+                  "loss:sum": 168.93758392333984,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.5328152590000172
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 39217.23828125,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 16277.55313659363,
+                "training.optimizer_s": 0.47825803699998914,
+                "training.step_s": 2.013078976000031
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.06599524058401585,
+                  "loss:sum": 2162.5320434570312,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.4877605830000107
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 1217800.25,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 16495.18074301554,
+                "training.optimizer_s": 0.49599538600000415,
+                "training.step_s": 1.9865196090000268
+              }
+            }
+          ]
+        },
+        {
+          "context_length": 65536,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 19650.973272994106,
+            "aggregate.updates_per_s": 0.2998500560454423,
+            "aggregate.wall_s": 16.67500105199997,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 19650.973272994106,
+            "clients.step_latency_mean_s": 3.33327634420001,
+            "clients.step_latency_p50_s": 3.319207805000019,
+            "clients.step_latency_p95_s": 3.399840330400002,
+            "cost.estimated_gpu_usd": 0.14633980923235174,
+            "cost.estimated_gpu_usd_per_client": 0.14633980923235174,
+            "cost.estimated_gpu_usd_per_client_hour": 31.5936,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 0.44659365610458907,
+            "cost.gpu_hourly_rate_usd": 3.9492,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 136,
+            "sampled.spindle.gpu.memory.used": 47741.0,
+            "sampled.spindle.gpu.utilization.gpu": 90.5,
+            "sampled.spindle.gpu.power.draw": 422.12
+          },
+          "step_s": [
+            3.3652836520000164,
+            3.2678967580000062,
+            3.30551400600001,
+            3.319207805000019,
+            3.4084794999999986
+          ],
+          "median_step_s": 3.319207805000019,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.002031595999142155,
+                  "loss:sum": 133.14267539978027,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.835140690000003
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 60050.5703125,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 19474.138520552762,
+                "training.optimizer_s": 0.528035702000011,
+                "training.step_s": 3.3652836520000164
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0010502696386538446,
+                  "loss:sum": 68.83047103881836,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.7396992660000024
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 7222.97265625,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 20054.48912655027,
+                "training.optimizer_s": 0.5264612520000469,
+                "training.step_s": 3.2678967580000062
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.001040501596435206,
+                  "loss:sum": 68.19031262397766,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.764774305000003
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 4757.7763671875,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 19826.266015222507,
+                "training.optimizer_s": 0.5387276509999879,
+                "training.step_s": 3.30551400600001
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0012212383226142265,
+                  "loss:sum": 80.03507471084595,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.80931426799998
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 87530.7265625,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 19744.470322489986,
+                "training.optimizer_s": 0.5065186780000204,
+                "training.step_s": 3.319207805000019
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0009430138597963378,
+                  "loss:sum": 61.80135631561279,
+                  "n_sequences:sum": 1.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 1.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.8057060460000116
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 2738.38916015625,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 19227.34169297484,
+                "training.optimizer_s": 0.6008557239999845,
+                "training.step_s": 3.4084794999999986
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": "b-20261117-020506-b01c76a3",
+      "revision": "21dc3936c6fd0b9b8422f4c2d9bad14a7cf6cdcb",
+      "harness_revision": "d801679",
+      "hardware": "B200",
+      "batch_size": 4,
+      "model_weights_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "tp": 2,
+      "cp": 4,
+      "gpus": 8,
+      "trainer_cpu": 32,
+      "trainer_memory_mib": 131072,
+      "trainer_rdma": true,
+      "exclude_reserved_capacity": true,
+      "steps": 5,
+      "warmup_steps": 2,
+      "gpu_hourly_rate_usd": 6.2496,
+      "client_package_versions": {
+        "modal-spindle": "0.1.7",
+        "tinker": "0.33.1",
+        "opentelemetry-sdk": "1.43.0",
+        "transformers": "5.22.2",
+        "numpy": "2.5.4",
+        "httpx": "0.28.1",
+        "modal": "1.6.4"
+      },
+      "trainer_image": "megatron-2d1fa8d",
+      "sequence_parallel": true,
+      "fp32_lm_head": true,
+      "defer_fp32_logits": true,
+      "activation_recomputation": {
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1
+      },
+      "compile_threads": "1",
+      "cuda_device_max_connections": null,
+      "points": [
+        {
+          "context_length": 8192,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 12520.143253394466,
+            "aggregate.updates_per_s": 0.3820844498716573,
+            "aggregate.wall_s": 13.086112249999985,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 12520.143253394466,
+            "clients.step_latency_mean_s": 2.6152701743999955,
+            "clients.step_latency_p50_s": 2.620594550000021,
+            "clients.step_latency_p95_s": 2.6546677773999816,
+            "cost.estimated_gpu_usd": 0.1817399269279998,
+            "cost.estimated_gpu_usd_per_client": 0.1817399269279998,
+            "cost.estimated_gpu_usd_per_client_hour": 49.9968,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 1.1092524836914053,
+            "cost.gpu_hourly_rate_usd": 6.2496,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 0
+          },
+          "step_s": [
+            2.5609026309999763,
+            2.660000514999979,
+            2.6333368269999937,
+            2.620594550000021,
+            2.6015163490000077
+          ],
+          "median_step_s": 2.620594550000021,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 9.889620304107666,
+                  "loss:sum": 324063.078125,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.864437516999999
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 11203963.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 12795.488435733621,
+                "training.optimizer_s": 0.6946914409999749,
+                "training.step_s": 2.5609026309999763
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 8.51607608795166,
+                  "loss:sum": 279054.78125,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.9251625229999831
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 10083739.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 12318.794607451518,
+                "training.optimizer_s": 0.7327724119999743,
+                "training.step_s": 2.660000514999979
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 1.0545845925807953,
+                  "loss:sum": 34556.6279296875,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.9314088360000028
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 4739443.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 12443.527794858914,
+                "training.optimizer_s": 0.7001024099999995,
+                "training.step_s": 2.6333368269999937
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 4.429589152336121,
+                  "loss:sum": 145148.77734375,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.8898684229999958
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 3685453.25,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 12504.032720361009,
+                "training.optimizer_s": 0.7287899130000142,
+                "training.step_s": 2.620594550000021
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.9781432449817657,
+                  "loss:sum": 32051.7978515625,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 32768.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 32768.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 0.5,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 32768.0
+                },
+                "training.forward_backward_s": 1.8908016629999906
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 2062602.125,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 32768,
+                "training.input_tokens_per_s": 12595.730952294662,
+                "training.optimizer_s": 0.7081675079999741,
+                "training.step_s": 2.6015163490000077
+              }
+            }
+          ]
+        },
+        {
+          "context_length": 32768,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 25641.3500544093,
+            "aggregate.updates_per_s": 0.1956279758789772,
+            "aggregate.wall_s": 25.558716628000013,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 25641.3500544093,
+            "clients.step_latency_mean_s": 5.109755075800001,
+            "clients.step_latency_p50_s": 5.077152259000002,
+            "clients.step_latency_p95_s": 5.18704567599998,
+            "cost.estimated_gpu_usd": 0.3549594565296642,
+            "cost.estimated_gpu_usd_per_client": 0.3549594565296642,
+            "cost.estimated_gpu_usd_per_client_hour": 49.9968,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 0.5416251472925785,
+            "cost.gpu_hourly_rate_usd": 6.2496,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 0
+          },
+          "step_s": [
+            5.0469344699999965,
+            5.077152259000002,
+            5.180491200000006,
+            5.055513155000028,
+            5.188684294999973
+          ],
+          "median_step_s": 5.077152259000002,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 2.3788580894470215,
+                  "loss:sum": 311801.6875,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 2.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 131072.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 131072.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 131072.0
+                },
+                "training.forward_backward_s": 4.338824562000013
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 12171296.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 131072,
+                "training.input_tokens_per_s": 25970.61657509496,
+                "training.optimizer_s": 0.7060652349999827,
+                "training.step_s": 5.0469344699999965
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.2989329919219017,
+                  "loss:sum": 39181.7451171875,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 2.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 131072.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 131072.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 131072.0
+                },
+                "training.forward_backward_s": 4.329641815000002
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 4796791.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 131072,
+                "training.input_tokens_per_s": 25816.046735186155,
+                "training.optimizer_s": 0.7453764879999767,
+                "training.step_s": 5.077152259000002
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.8222071826457977,
+                  "loss:sum": 107768.33984375,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 2.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 131072.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 131072.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 131072.0
+                },
+                "training.forward_backward_s": 4.317901092999989
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 6663298.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 131072,
+                "training.input_tokens_per_s": 25301.07569722343,
+                "training.optimizer_s": 0.8607858159999751,
+                "training.step_s": 5.180491200000006
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 2.16920667886734,
+                  "loss:sum": 284322.2578125,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 2.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 131072.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 131072.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 131072.0
+                },
+                "training.forward_backward_s": 4.339865269000029
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 8473175.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 131072,
+                "training.input_tokens_per_s": 25926.547114285822,
+                "training.optimizer_s": 0.7135843259999888,
+                "training.step_s": 5.055513155000028
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.5409692227840424,
+                  "loss:sum": 70905.91796875,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 2.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 131072.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 131072.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 131072.0
+                },
+                "training.forward_backward_s": 4.464913112999966
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 9057956.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 131072,
+                "training.input_tokens_per_s": 25261.12450632356,
+                "training.optimizer_s": 0.7218003709999721,
+                "training.step_s": 5.188684294999973
+              }
+            }
+          ]
+        },
+        {
+          "context_length": 65536,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 24347.50081697836,
+            "aggregate.updates_per_s": 0.09287834479132981,
+            "aggregate.wall_s": 53.833862039999985,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 24347.50081697836,
+            "clients.step_latency_mean_s": 10.764865410399988,
+            "clients.step_latency_p50_s": 10.76400275200001,
+            "clients.step_latency_p95_s": 10.785078870999985,
+            "cost.estimated_gpu_usd": 0.7476446760115197,
+            "cost.estimated_gpu_usd_per_client": 0.7476446760115197,
+            "cost.estimated_gpu_usd_per_client_hour": 49.9968,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 0.5704076202480467,
+            "cost.gpu_hourly_rate_usd": 6.2496,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 0
+          },
+          "step_s": [
+            10.785224358999983,
+            10.784496918999992,
+            10.748386810999989,
+            10.74221621099997,
+            10.76400275200001
+          ],
+          "median_step_s": 10.76400275200001,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0024522996391169727,
+                  "loss:sum": 642.8556365966797,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 9.856769617999987
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 193231.34375,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 24305.845782544875,
+                "training.optimizer_s": 0.9266707499999711,
+                "training.step_s": 10.785224358999983
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.016565110068768263,
+                  "loss:sum": 4342.4442138671875,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 9.856939858999965
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 1397239.875,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 24307.48526972621,
+                "training.optimizer_s": 0.9253328000000351,
+                "training.step_s": 10.784496918999992
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.00077565893298015,
+                  "loss:sum": 203.33433532714844,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 9.864514740999994
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 31364.1953125,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 24389.148307513424,
+                "training.optimizer_s": 0.8811795819999588,
+                "training.step_s": 10.748386810999989
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.002004508307436481,
+                  "loss:sum": 525.4698257446289,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 9.864933751999956
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 95173.59375,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 24403.158049599297,
+                "training.optimizer_s": 0.8752765599999748,
+                "training.step_s": 10.74221621099997
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.002671363647095859,
+                  "loss:sum": 700.2819519042969,
+                  "n_sequences:sum": 4.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 4.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 9.796930745999987
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 127565.6171875,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 24353.765605577555,
+                "training.optimizer_s": 0.9651270150000073,
+                "training.step_s": 10.76400275200001
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": "b-20261117-020823-a403fe2b",
+      "revision": "e8e3d6e4354705aac8196bc968afeb49c0c7426f",
+      "harness_revision": "d801679",
+      "hardware": "B200",
+      "batch_size": 8,
+      "model_weights_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "tp": 2,
+      "cp": 4,
+      "gpus": 8,
+      "trainer_cpu": 32,
+      "trainer_memory_mib": 131072,
+      "trainer_rdma": true,
+      "exclude_reserved_capacity": true,
+      "steps": 5,
+      "warmup_steps": 2,
+      "gpu_hourly_rate_usd": 6.2496,
+      "client_package_versions": {
+        "modal-spindle": "0.1.7",
+        "tinker": "0.33.1",
+        "opentelemetry-sdk": "1.43.0",
+        "transformers": "5.22.2",
+        "numpy": "2.5.4",
+        "httpx": "0.28.1",
+        "modal": "1.6.4"
+      },
+      "trainer_image": "megatron-2d1fa8d",
+      "sequence_parallel": true,
+      "fp32_lm_head": true,
+      "defer_fp32_logits": true,
+      "activation_recomputation": {
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1
+      },
+      "compile_threads": "1",
+      "cuda_device_max_connections": null,
+      "points": [
+        {
+          "context_length": 8192,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 19246.74159912794,
+            "aggregate.updates_per_s": 0.2936819702015372,
+            "aggregate.wall_s": 17.025219480000032,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 19246.74159912794,
+            "clients.step_latency_mean_s": 3.404108197999983,
+            "clients.step_latency_p50_s": 3.397280856000009,
+            "clients.step_latency_p95_s": 3.4898813447999943,
+            "cost.estimated_gpu_usd": 0.23644624813824044,
+            "cost.estimated_gpu_usd_per_client": 0.23644624813824044,
+            "cost.estimated_gpu_usd_per_client_hour": 49.9968,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 0.7215766849921889,
+            "cost.gpu_hourly_rate_usd": 6.2496,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 0
+          },
+          "step_s": [
+            3.397280856000009,
+            3.4014102279999747,
+            3.511999123999999,
+            3.3253482099999587,
+            3.384502571999974
+          ],
+          "median_step_s": 3.397280856000009,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 9.267221927642822,
+                  "loss:sum": 607336.65625,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.718078907000006
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 23278462.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 19290.721838394813,
+                "training.optimizer_s": 0.6779694030000201,
+                "training.step_s": 3.397280856000009
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 7.9410640001297,
+                  "loss:sum": 520425.5703125,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.747006650000003
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 17055732.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 19267.302561895067,
+                "training.optimizer_s": 0.6531627589999971,
+                "training.step_s": 3.4014102279999747
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 1.3606136739253998,
+                  "loss:sum": 89169.177734375,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.7420711710000205
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 8965170.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 18660.596909647753,
+                "training.optimizer_s": 0.7685735000000022,
+                "training.step_s": 3.511999123999999
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 3.6170647740364075,
+                  "loss:sum": 237047.95703125,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.6958713149999767
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 8160025.5,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 19708.011270194413,
+                "training.optimizer_s": 0.627821254999958,
+                "training.step_s": 3.3253482099999587
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 1.1981157064437866,
+                  "loss:sum": 78519.7109375,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 1.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 65536.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 65536.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 8192.0,
+                  "tokens:sum": 65536.0
+                },
+                "training.forward_backward_s": 2.6535937329999797
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 3594335.75,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 65536,
+                "training.input_tokens_per_s": 19363.5544975442,
+                "training.optimizer_s": 0.7296406389999675,
+                "training.step_s": 3.384502571999974
+              }
+            }
+          ]
+        },
+        {
+          "context_length": 32768,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 30083.96965853182,
+            "aggregate.updates_per_s": 0.1147612367955468,
+            "aggregate.wall_s": 43.568718320000016,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 30083.96965853182,
+            "clients.step_latency_mean_s": 8.712849436800003,
+            "clients.step_latency_p50_s": 8.686529802000052,
+            "clients.step_latency_p95_s": 8.84393448979996,
+            "cost.estimated_gpu_usd": 0.6050823600281602,
+            "cost.estimated_gpu_usd_per_client": 0.6050823600281602,
+            "cost.estimated_gpu_usd_per_client_hour": 49.9968,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 0.4616412048554689,
+            "cost.gpu_hourly_rate_usd": 6.2496,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 16,
+            "sampled.spindle.gpu.memory.used": 50018.0,
+            "sampled.spindle.gpu.utilization.gpu": 60.5,
+            "sampled.spindle.gpu.power.draw": 667.5699999999999
+          },
+          "step_s": [
+            8.611985527000002,
+            8.66135652700001,
+            8.871765706999952,
+            8.732609620999995,
+            8.686529802000052
+          ],
+          "median_step_s": 8.686529802000052,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.36226241290569305,
+                  "loss:sum": 94964.91796875,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 7.9444550800000115
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 12511240.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 30439.438057360305,
+                "training.optimizer_s": 0.6662234889999468,
+                "training.step_s": 8.611985527000002
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.15612581744790077,
+                  "loss:sum": 40927.4462890625,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 7.974486232999993
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 9341886.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 30265.92880489559,
+                "training.optimizer_s": 0.6855770479999705,
+                "training.step_s": 8.66135652700001
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.5035402253270149,
+                  "loss:sum": 132000.048828125,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 8.155560031999983
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 12957380.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 29548.120256733626,
+                "training.optimizer_s": 0.7148863489999826,
+                "training.step_s": 8.871765706999952
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0359653290361166,
+                  "loss:sum": 9428.09521484375,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 8.090797027999997
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 4231574.5,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 30018.976156864,
+                "training.optimizer_s": 0.6405273720000082,
+                "training.step_s": 8.732609620999995
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.17985019460320473,
+                  "loss:sum": 47146.6494140625,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 4.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 262144.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 262144.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 32768.0,
+                  "tokens:sum": 262144.0
+                },
+                "training.forward_backward_s": 8.006767456000034
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 11515061.0,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 262144,
+                "training.input_tokens_per_s": 30178.21914795503,
+                "training.optimizer_s": 0.6784917820000373,
+                "training.step_s": 8.686529802000052
+              }
+            }
+          ]
+        },
+        {
+          "context_length": 65536,
+          "metrics": {
+            "aggregate.training_input_tokens_per_s": 27120.548204635066,
+            "aggregate.updates_per_s": 0.051728340539236195,
+            "aggregate.wall_s": 96.658813097,
+            "clients.completed_steps": 5,
+            "clients.completion_skew_s": 0.0,
+            "clients.input_tokens_per_s_mean": 27120.548204635066,
+            "clients.step_latency_mean_s": 19.330675206399984,
+            "clients.step_latency_p50_s": 19.17302333799995,
+            "clients.step_latency_p95_s": 19.827135752600007,
+            "cost.estimated_gpu_usd": 1.342397596291136,
+            "cost.estimated_gpu_usd_per_client": 1.342397596291136,
+            "cost.estimated_gpu_usd_per_client_hour": 49.9968,
+            "cost.estimated_gpu_usd_per_million_input_tokens": 0.5120840439953369,
+            "cost.gpu_hourly_rate_usd": 6.2496,
+            "cost.trainer_gpu_count": 8,
+            "sampled_gpu_records": 776,
+            "sampled.spindle.gpu.memory.used": 50018.0,
+            "sampled.spindle.gpu.utilization.gpu": 96.0,
+            "sampled.spindle.gpu.power.draw": 745.61
+          },
+          "step_s": [
+            18.983035736999966,
+            19.163841648000016,
+            19.399407490999977,
+            19.17302333799995,
+            19.934067818000017
+          ],
+          "median_step_s": 19.17302333799995,
+          "client_records": [
+            {
+              "step": 2,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0019926972745452076,
+                  "loss:sum": 1044.7472686767578,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 8.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 524288.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 524288.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 524288.0
+                },
+                "training.forward_backward_s": 18.321403698999973
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 362142.71875,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 2,
+              "metrics": {
+                "training.input_tokens": 524288,
+                "training.input_tokens_per_s": 27618.764841605742,
+                "training.optimizer_s": 0.6600976489999653,
+                "training.step_s": 18.983035736999966
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0013893358409404755,
+                  "loss:sum": 728.412109375,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 8.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 524288.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 524288.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 524288.0
+                },
+                "training.forward_backward_s": 18.50556066400003
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 157623.09375,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 3,
+              "metrics": {
+                "training.input_tokens": 524288,
+                "training.input_tokens_per_s": 27358.18890753128,
+                "training.optimizer_s": 0.6566342520000035,
+                "training.step_s": 19.163841648000016
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0021791327744722366,
+                  "loss:sum": 1142.4931640625,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 8.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 524288.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 524288.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 524288.0
+                },
+                "training.forward_backward_s": 18.69914894499999
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 350302.40625,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 4,
+              "metrics": {
+                "training.input_tokens": 524288,
+                "training.input_tokens_per_s": 27025.98005857831,
+                "training.optimizer_s": 0.6989694089999716,
+                "training.step_s": 19.399407490999977
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0027042267029173672,
+                  "loss:sum": 1417.7936096191406,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 8.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 524288.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 524288.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 524288.0
+                },
+                "training.forward_backward_s": 18.500034177999964
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 658640.375,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 5,
+              "metrics": {
+                "training.input_tokens": 524288,
+                "training.input_tokens_per_s": 27345.087457380185,
+                "training.optimizer_s": 0.6716167299999825,
+                "training.step_s": 19.17302333799995
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "forward_backward": {
+                  "loss:mean": 0.0025162704405374825,
+                  "loss:sum": 1319.2503967285156,
+                  "n_sequences:sum": 8.0,
+                  "packing_bins:sum": 8.0,
+                  "packing_input_sequences:sum": 8.0,
+                  "packing_padded_tokens:sum": 524288.0,
+                  "packing_padding_fraction:mean": 0.0,
+                  "packing_raw_tokens:sum": 524288.0,
+                  "packing_token_capacity:max": 65536.0,
+                  "packing_utilization:mean": 1.0,
+                  "response_length:mean": 65536.0,
+                  "tokens:sum": 524288.0
+                },
+                "training.forward_backward_s": 19.166631802999973
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "optimizer": {
+                  "grad_norm:mean": 831603.4375,
+                  "update_successful:mean": 1.0
+                }
+              }
+            },
+            {
+              "step": 6,
+              "metrics": {
+                "training.input_tokens": 524288,
+                "training.input_tokens_per_s": 26301.104460303864,
+                "training.optimizer_s": 0.7661299090000284,
+                "training.step_s": 19.934067818000017
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
