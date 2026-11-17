@@ -18,6 +18,7 @@ import modal
 import modal.experimental
 from modal.config import config
 
+from spindle.configuration import GpuType
 from spindle.deployments import DeploymentConfig
 from spindle.inference.serving import (
     SGLANG_ENV,
@@ -156,7 +157,7 @@ def server_placement(region):
     return {"routing_region": region, "compute_region": region}
 
 
-def gpu_request(gpu: str | list[str], count: int) -> str | list[str]:
+def gpu_request(gpu: GpuType | list[GpuType], count: int) -> str | list[str]:
     """Modal tries list entries in order and schedules the first type with capacity."""
     if isinstance(gpu, str):
         return f"{gpu}:{count}"
@@ -223,7 +224,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
             else image_for(recipe.backend, recipe.trainer_image)
         ),
         gpu=gpu_request(recipe.trainer_gpu, recipe.trainer_gpus_per_node),
-        region=platform["modal"]["region"],  # ty: ignore[invalid-argument-type]
+        region=platform["modal"]["region"],
         cpu=recipe.trainer_cpu,
         memory=recipe.trainer_memory_mib,
         ephemeral_disk=recipe.trainer_disk_mib or None,
@@ -233,7 +234,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         single_use_containers=True,
         volumes=volumes_for(platform),
         secrets=secrets_for(platform, training=True),
-        env=env,  # ty: ignore[invalid-argument-type]
+        env=env,
         experimental_options=trainer_experimental_options(rdma, platform),
     )(trainer)
 

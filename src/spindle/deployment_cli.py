@@ -54,7 +54,7 @@ from spindle.usage import attribute_cost, row_from, usage_window
 from spindle.version import __version__, deployment_tag, source_commit
 
 
-RECIPE_FIELDS = frozenset(key for key in vars(BaseConfig) if not key.startswith("_"))
+RECIPE_FIELDS = frozenset(vars(BaseConfig()))
 ADD_POLL_S = 10
 ADD_TIMEOUT_S = 60 * 60
 OVERHEAD_LINES = ("idle", "cold_start", "unattributed")
@@ -768,7 +768,7 @@ def main(argv=None):
                 )
         elif args.command == "deploy":
             console = Console()
-            frontend = args.app or BaseConfig.platform["frontend"]
+            frontend = args.app or BaseConfig().platform["frontend"]
             environment = args.env or os.environ.get("MODAL_ENVIRONMENT")
             chosen = []
             if args.files:
@@ -776,7 +776,7 @@ def main(argv=None):
             elif args.all:
                 paths = deploy_wizard.bundled_config_paths()
             elif interactive():
-                chosen = deploy_wizard.choose(console, frontend, environment)  # ty: ignore[invalid-argument-type]
+                chosen = deploy_wizard.choose(console, frontend, environment)
                 paths = [preset.path for preset in chosen]
             else:
                 raise ValueError(NO_CONFIGS)
@@ -802,10 +802,10 @@ def main(argv=None):
                 else None,
             )
             if chosen:
-                deploy_wizard.show_next_steps(console, chosen, frontend, environment)  # ty: ignore[invalid-argument-type]
+                deploy_wizard.show_next_steps(console, chosen, frontend, environment)
         elif args.command == "stop":
             stop(
-                args.app or BaseConfig.platform["frontend"],
+                args.app or BaseConfig().platform["frontend"],
                 args.env or os.environ.get("MODAL_ENVIRONMENT"),
             )
         elif args.command == "skills":

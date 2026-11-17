@@ -190,7 +190,7 @@ def secret_problem(
 
 
 def check_setup(console: Console, environment: str | None) -> None:
-    names = BaseConfig.platform["secrets"]
+    names = BaseConfig().platform["secrets"]
     table = Table(
         title="Setup check", title_justify="left", show_header=False, box=None
     )
@@ -202,9 +202,9 @@ def check_setup(console: Console, environment: str | None) -> None:
     fixes = []
     with console.status("Checking your Modal secrets..."):
         for secret in REQUIRED_SECRETS:
-            name = names[secret.platform_key]  # ty: ignore[invalid-argument-type]
+            name = names[secret.platform_key]
             label = f"{name} · {', '.join(secret.keys)}"
-            problem = secret_problem(name, secret.keys, environment)  # ty: ignore[invalid-argument-type]
+            problem = secret_problem(name, secret.keys, environment)
             if problem is None:
                 table.add_row("[green]✓[/green]", label, secret.purpose)
             else:
