@@ -2,7 +2,11 @@
 
 from copy import deepcopy
 from dataclasses import MISSING, dataclass, field, fields
-from typing import Any
+from typing import Any, Literal
+
+from spindle.providers.contracts import Parameterization
+
+GpuType = Literal["H100", "H200", "B200", "B300"]
 
 
 def _apply_overrides(values: dict[str, Any], overrides: dict[str, Any]) -> None:
@@ -44,10 +48,10 @@ class BaseConfig:
     # Commit of the weights repo to download; empty follows its default branch.
     weights_revision: str = ""
     max_context_length: int = 16384
-    parameterization: str = "lora"
+    parameterization: Parameterization = "lora"
     backend: str = "miles"
 
-    trainer_gpu: str | list[str] = "H100"
+    trainer_gpu: GpuType | list[GpuType] = "H100"
     trainer_gpus_per_node: int = 1
     trainer_nodes: int = 1
     # Request an RDMA allocation even for a single trainer node.
@@ -67,7 +71,7 @@ class BaseConfig:
     inference_image: str = ""
     sampler_persistence_concurrency: int = 8
 
-    inference_gpu: str | list[str] = "H100"
+    inference_gpu: GpuType | list[GpuType] = "H100"
     inference_gpus_per_node: int = 1
     inference_cpu: int = 8
     inference_memory_mib: int = 32768

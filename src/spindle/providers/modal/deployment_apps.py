@@ -18,6 +18,7 @@ import modal
 import modal.experimental
 from modal.config import config
 
+from spindle.configuration import GpuType
 from spindle.deployments import DeploymentConfig
 from spindle.inference.serving import (
     SGLANG_ENV,
@@ -156,7 +157,7 @@ def server_placement(region):
     return {"routing_region": region, "compute_region": region}
 
 
-def gpu_request(gpu: str | list[str], count: int) -> str | list[str]:
+def gpu_request(gpu: GpuType | list[GpuType], count: int) -> str | list[str]:
     """Modal tries list entries in order and schedules the first type with capacity."""
     if isinstance(gpu, str):
         return f"{gpu}:{count}"
