@@ -172,12 +172,12 @@ that shape. Dense tensors and the sparse CSR encoding produced by the Tinker
 SDK are supported. The `megatron_lora` and `megatron_fft` backends do not support
 2D targets.
 
-The transformer evaluates each input sequence once. When every 2D datum in a
-batch has the same number of candidate columns, the trainer takes one softmax
-over the vocabulary per position and reads every candidate from it, so scoring
-time and memory do not grow with `num_choices`. Batches that mix widths score
-each column separately, and their vocabulary work and memory grow with
-`num_choices`.
+The transformer evaluates each input sequence once. Candidate scoring takes one
+softmax over the vocabulary per position, including in batches that mix candidate
+counts. Candidate columns are padded for scoring and trimmed back to each datum's
+original shape; vocabulary work does not grow with `num_choices`. Context
+parallel batches with 1D targets, CP all-gather, sampling masks, and true-on-policy
+mode keep the per-column scoring path.
 
 # Deterministic Training (Experimental) 
 

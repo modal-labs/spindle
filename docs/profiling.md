@@ -44,17 +44,12 @@ Deploy without `SPINDLE_TORCH_PROFILE_STEP` to turn profiling off again.
 - **CPU and GPU activity**, with Spindle's phases labelled `spindle/forward_backward`,
   `spindle/optim_step`, `spindle/forward_only`, and `spindle/export_slot_peft` so you
   can find them quickly among the kernel names.
-- A separate, CPU-only trace of the trainer's controller process, which covers
-  the post-step sampler-weight save and publish.
 
 Output files, per traced rank:
 
 - `rank<N>.trace.json.gz` — the timeline, in Chrome trace format.
 - `rank<N>.key_averages.txt` — a plain-text table of the top operators by time,
   handy for a first glance without a UI.
-
-plus `controller.trace.json.gz` / `controller.key_averages.txt` for the
-controller process.
 
 ## 3. View the trace in Perfetto
 

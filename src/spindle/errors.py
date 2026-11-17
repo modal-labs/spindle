@@ -38,3 +38,7 @@ class ModelLost(TinkerModalError):
 
 class BackendFailed(RuntimeError):
     """Backend state is unusable; terminate the trainer and recover from a checkpoint."""
+
+
+class TrainerOutOfMemory(RuntimeError):
+    """A training call ran out of GPU memory; the trainer skipped it and keeps serving."""

@@ -166,18 +166,17 @@ class StepPhaseTimer:
 class RankProfiler:
     """Rank-local torch.profiler wrapper usable in any process."""
 
-    def __init__(self, *, activities_cpu_only: bool = False) -> None:
-        self._cpu_only = activities_cpu_only
+    def __init__(self) -> None:
         self._profile: torch.profiler.profile | None = None
 
     def start(self) -> None:
-        activities = [torch.profiler.ProfilerActivity.CPU]
-        if not self._cpu_only:
-            activities.append(torch.profiler.ProfilerActivity.CUDA)
         self._profile = torch.profiler.profile(
-            activities=activities,
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
             record_shapes=True,
-            profile_memory=not self._cpu_only,
+            profile_memory=True,
             with_stack=False,
         )
         self._profile.__enter__()
@@ -185,7 +184,7 @@ class RankProfiler:
     def stop(self, output_dir: str, name: str) -> dict[str, str]:
         if self._profile is None:
             raise RuntimeError("RankProfiler.stop() called without start()")
-        if not self._cpu_only and torch.cuda.is_available():
+        if torch.cuda.is_available():
             torch.cuda.synchronize()
         profile = self._profile
         self._profile = None
@@ -206,7 +205,8 @@ class RankProfiler:
         finally:
             os.unlink(temporary_path)
         table_path = os.path.join(output_dir, f"{name}.key_averages.txt")
-        sort_key = "self_cpu_time_total" if self._cpu_only else "cuda_time_total"
         with open(table_path, "w", encoding="utf-8") as table:
-            table.write(profile.key_averages().table(sort_by=sort_key, row_limit=60))
+            table.write(
+                profile.key_averages().table(sort_by="cuda_time_total", row_limit=60)
+            )
         return {"trace": trace_path, "table": table_path}
