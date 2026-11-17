@@ -14,6 +14,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- Reference runs use flat TOML definitions, an execution index, and flat JSONL outputs. A shared launcher selects the exact deployment for the existing DAPO-Math workload.
+
 - `nemotron35-lightning-30b-a3b-lora-64k` trains on two B300s with one model copy per GPU. The previous two-H200 layout is now `nemotron35-lightning-30b-a3b-lora-64k-h200`; use it when B300s are not available. The 256K recipe and the shared-server recipe keep H200 trainers.
 - MoE LoRA training on the default Miles images gives the expert token permute a scatter-add backward, which is faster than the BF16 index_add it replaces.
 - Miles LoRA training builds the logits gradient once per micro-batch instead of once per row. Steps with many short rows run faster and hold less memory; results are unchanged.
