@@ -491,9 +491,15 @@ def test_declared_compute_settings_reach_modal(builders):
 def test_recipes_select_trainer_images(builders, monkeypatch):
     image_for = deployment_apps.image_for
     assert image_for("miles") is deployment_apps.miles_image
+    assert image_for("megatron") is deployment_apps.megatron_image
     assert image_for("sglang") is deployment_apps.rollout_image
+    assert (
+        image_for("sglang", "sglang-v0.5.23-c4182b2") is deployment_apps.rollout_image
+    )
     with pytest.raises(ValueError, match="unknown trainer image"):
         image_for("miles", "missing")
+    with pytest.raises(ValueError, match="unknown sampler image"):
+        image_for("sglang", "miles-v0.1.1-fdd808c")
 
     trainer_image = object()
     monkeypatch.setitem(deployment_apps.TRAINER_IMAGES, "trainer-x", trainer_image)
@@ -505,9 +511,24 @@ def test_recipes_select_trainer_images(builders, monkeypatch):
     assert trainer["image"] is trainer_image
 
 
+@pytest.mark.parametrize(
+    "path",
+    sorted(config_path("qwen35-9b-lora-16k").parent.glob("[!_]*.py")),
+    ids=lambda path: path.stem,
+)
+def test_bundled_configs_pin_their_own_images(path, monkeypatch):
+    recipe = load(path)
+    declared = vars(type(recipe))
+    # A pin inherited from a parent config would move whenever the parent is upgraded.
+    assert declared.get("trainer_image") and declared.get("inference_image")
+    monkeypatch.setattr(deployment_apps.modal, "is_local", lambda: True)
+    deployment_apps.image_for(recipe.backend, recipe.trainer_image)
+    deployment_apps.image_for("sglang", recipe.inference_image)
+
+
 def test_deepseek_v41_lora_trainer_image_is_registered():
     assert (
-        deployment_apps.image_for("miles", "miles-v0.1.2")
+        deployment_apps.image_for("miles", "miles-v0.1.2-f2f8447")
         is deployment_apps.miles_v012_image
     )
 
