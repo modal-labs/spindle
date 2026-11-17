@@ -535,6 +535,48 @@ def test_sample_endpoint_returns_one_sequence_id_per_requested_sample() -> None:
     asyncio.run(run())
 
 
+def test_invalid_sample_options_are_rejected_before_submission() -> None:
+    class CaptureControlPlane:
+        requests: list[dict] = []
+
+        async def submit_sample(self, request):
+            self.requests.append(request)
+            return "request-a"
+
+    async def run() -> None:
+        plane = CaptureControlPlane()
+        app = create_control_plane_app(plane, DEFINITIONS, api_key=None)
+        client = httpx.AsyncClient(
+            base_url="http://control-plane",
+            transport=httpx.ASGITransport(app=app),
+        )
+        base = {
+            "sampling_session_id": "sample-a",
+            "prompt": {"chunks": [{"type": "encoded_text", "tokens": [1, 2, 3]}]},
+        }
+
+        rejected = await client.post(
+            "/api/v1/asample", json={**base, "seq_id": 0, "prompt_alt_tokens_k": 2}
+        )
+        accepted = await client.post(
+            "/api/v1/asample",
+            json={
+                **base,
+                "seq_id": 1,
+                "prompt_logprobs": True,
+                "prompt_logprobs_last_n": 2,
+            },
+        )
+
+        assert rejected.status_code == 400
+        assert "prompt_alt_tokens_k" in rejected.json()["message"]
+        assert accepted.status_code == 200
+        assert len(plane.requests) == 1
+        await client.aclose()
+
+    asyncio.run(run())
+
+
 def test_full_model_info_is_not_lora() -> None:
     async def run() -> None:
         client = http_client()

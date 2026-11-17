@@ -33,6 +33,11 @@ TCP_KEEPALIVE_OPTIONS = (
     (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5),
 )
 GatewayResolver = Callable[[], Awaitable[tuple[str, ...]]]
+REPLAY_FLAGS = (
+    "return_routed_experts",
+    "return_sampling_mask",
+    "return_sampling_probabilities",
+)
 
 
 def keepalive_transport() -> httpx.AsyncHTTPTransport:
@@ -60,7 +65,7 @@ async def sample_task(
     router: Router | None = None,
 ) -> dict[str, Any]:
     request = task["payload"]
-    prompt = _prompt_tokens(request["prompt"])
+    prompt = prompt_tokens(request["prompt"])
     params = _sampling_params(
         request.get("sampling_params") or {},
         remaining_context=(
@@ -70,16 +75,8 @@ async def sample_task(
         ),
         stop_token_ids_only=stop_token_ids_only,
     )
-    replay_flags = {}
-    for key in (
-        "return_routed_experts",
-        "return_sampling_mask",
-        "return_sampling_probabilities",
-    ):
-        value = request.get(key, False)
-        if type(value) is not bool:
-            raise ValueError(f"{key} must be a boolean")
-        replay_flags[key] = value
+    validate_sample_request(request, prompt)
+    replay_flags = {key: request.get(key, False) for key in REPLAY_FLAGS}
     if replay_flags["return_sampling_probabilities"]:
         replay_flags["return_sampling_mask"] = True
     model_id = task.get("model_id")
@@ -88,20 +85,9 @@ async def sample_task(
     num_samples = int(request.get("num_samples", 1))
     prompt_logprobs = bool(request.get("prompt_logprobs"))
     topk_prompt_logprobs = int(request.get("topk_prompt_logprobs") or 0)
-    if num_samples < 1:
-        raise ValueError("num_samples must be positive")
-    if topk_prompt_logprobs < 0:
-        raise ValueError("topk_prompt_logprobs must be non-negative")
-    # Reject sampling options Spindle does not implement. Newer Tinker SDKs
-    # send them on every request, so only non-default values are rejected.
-    for key in (
-        "topk_sample_logprobs",
-        "target_prompt_logprobs",
-        "prompt_alt_tokens_k",
-        "prompt_logprobs_last_n",
-    ):
-        if request.get(key):
-            raise ValueError(f"{key} is not supported by Spindle")
+    last_n = request.get("prompt_logprobs_last_n")
+    # SGLang leaves the first scored position empty, so start one token early.
+    logprob_start_len = len(prompt) - last_n - 1 if last_n else 0
     if data_parallel_size < 1:
         raise ValueError("data_parallel_size must be positive")
     request_id = str(task["request_id"])
@@ -164,6 +150,7 @@ async def sample_task(
                     replay_flags=replay_flags,
                     prompt_logprobs=prompt_logprobs and index == 0,
                     topk_prompt_logprobs=(topk_prompt_logprobs if index == 0 else 0),
+                    logprob_start_len=logprob_start_len,
                     retry_timeout=retry_timeout,
                     gateway=gateway,
                     on_wait=on_wait,
@@ -208,12 +195,13 @@ async def sample_task(
             version_served_end=meta.get("weight_version_end"),
         )
     response: dict[str, Any] = {"type": "sample", "sequences": sequences}
+    unscored = [None] * logprob_start_len
     if prompt_logprobs:
-        response["prompt_logprobs"] = _logprobs(
+        response["prompt_logprobs"] = unscored + _logprobs(
             (outputs[0].get("meta_info") or {}).get("input_token_logprobs")
         )
     if topk_prompt_logprobs:
-        response["topk_prompt_logprobs"] = _topk_logprobs(
+        response["topk_prompt_logprobs"] = unscored + _topk_logprobs(
             (outputs[0].get("meta_info") or {}).get("input_top_logprobs")
         )
     response["prompt_cache_hit_tokens"] = int(
@@ -238,6 +226,7 @@ async def _sample_one(
     replay_flags: dict[str, bool],
     prompt_logprobs: bool,
     topk_prompt_logprobs: int,
+    logprob_start_len: int,
     retry_timeout: float,
     gateway: str | GatewayResolver,
     on_wait: Callable[[], Awaitable[None]] | None = None,
@@ -268,7 +257,7 @@ async def _sample_one(
     if cache_affinity_id is not None:
         body["session_id"] = cache_affinity_id
     if prompt_logprobs or topk_prompt_logprobs:
-        body["logprob_start_len"] = 0
+        body["logprob_start_len"] = logprob_start_len
     if topk_prompt_logprobs:
         body["top_logprobs_num"] = topk_prompt_logprobs
     if params.get("seed") is not None:
@@ -510,7 +499,35 @@ def _conversation_affinity_id(task: dict[str, Any], prompt: list[int]) -> str | 
     return f"conversation-{digest.hexdigest()[:32]}"
 
 
-def _prompt_tokens(prompt: dict[str, Any]) -> list[int]:
+def validate_sample_request(request: dict[str, Any], prompt: list[int]) -> None:
+    for key in REPLAY_FLAGS:
+        if type(request.get(key, False)) is not bool:
+            raise ValueError(f"{key} must be a boolean")
+    if int(request.get("num_samples", 1)) < 1:
+        raise ValueError("num_samples must be positive")
+    if int(request.get("topk_prompt_logprobs") or 0) < 0:
+        raise ValueError("topk_prompt_logprobs must be non-negative")
+    # Newer Tinker SDKs send these on every request, so only non-default
+    # values are rejected.
+    for key in (
+        "topk_sample_logprobs",
+        "target_prompt_logprobs",
+        "prompt_alt_tokens_k",
+    ):
+        if request.get(key):
+            raise ValueError(f"{key} is not supported by Spindle")
+    last_n = request.get("prompt_logprobs_last_n")
+    if last_n is None:
+        return
+    if not request.get("prompt_logprobs"):
+        raise ValueError("prompt_logprobs_last_n requires prompt_logprobs")
+    if type(last_n) is not int or not 1 <= last_n < len(prompt):
+        raise ValueError(
+            "prompt_logprobs_last_n must be between 1 and the prompt length minus 1"
+        )
+
+
+def prompt_tokens(prompt: dict[str, Any]) -> list[int]:
     tokens: list[int] = []
     for chunk in prompt.get("chunks") or ():
         if not isinstance(chunk, dict) or chunk.get("type") != "encoded_text":

@@ -302,13 +302,47 @@ def test_invalid_cache_affinity_key_is_rejected(key) -> None:
         ("topk_sample_logprobs", 5),
         ("target_prompt_logprobs", {"data": [1], "dtype": "int64"}),
         ("prompt_alt_tokens_k", 2),
-        ("prompt_logprobs_last_n", 4),
     ],
 )
 def test_unsupported_sdk_sampling_options_are_rejected(key, value) -> None:
     request = task()
     request["payload"][key] = value
     with pytest.raises(ValueError, match=f"{key} is not supported"):
+        asyncio.run(sample_task(request, "http://rollout"))
+
+
+def test_prompt_logprobs_last_n_scores_only_the_suffix() -> None:
+    request = task()
+    request["payload"].update(prompt_logprobs=True, prompt_logprobs_last_n=2)
+    request["payload"]["prompt"]["chunks"][0]["tokens"] = [1, 2, 3, 4, 5]
+    body = response(7).json()
+    body["meta_info"]["input_token_logprobs"] = [[None, 3], [-0.4, 4], [-0.5, 5]]
+    sent = {}
+
+    def handle(http_request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(http_request.content))
+        return httpx.Response(200, json=body)
+
+    result = asyncio.run(
+        sample_task(request, "http://rollout", transport=httpx.MockTransport(handle))
+    )
+
+    assert sent["logprob_start_len"] == 2
+    assert result["prompt_logprobs"] == [None, None, None, -0.4, -0.5]
+
+
+@pytest.mark.parametrize(
+    ("update", "message"),
+    [
+        ({"prompt_logprobs_last_n": 1}, "requires prompt_logprobs"),
+        ({"prompt_logprobs": True, "prompt_logprobs_last_n": 0}, "between 1"),
+        ({"prompt_logprobs": True, "prompt_logprobs_last_n": 1}, "between 1"),
+    ],
+)
+def test_invalid_prompt_logprobs_last_n_is_rejected(update, message) -> None:
+    request = task()
+    request["payload"].update(update)
+    with pytest.raises(ValueError, match=message):
         asyncio.run(sample_task(request, "http://rollout"))
 
 

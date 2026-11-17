@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from spindle.engine.api import JSON_OPERATIONS, OperationKind, submit_json_operation
+from spindle.inference.sampling import prompt_tokens, validate_sample_request
 from spindle.errors import (
     EngineSaturated,
     ModelLost,
@@ -629,6 +630,7 @@ def create_control_plane_app(
         request = body.model_dump(mode="json")
         if body.cache_affinity_key is None:
             request.pop("cache_affinity_key")
+        validate_sample_request(request, prompt_tokens(request.get("prompt") or {}))
         request_id = await control_plane.submit_sample(request)
         # Return one sequence id per sample, derived from the idempotent request
         # id so a resubmitted sample gets the same ids. Tinker SDK 0.26 and
