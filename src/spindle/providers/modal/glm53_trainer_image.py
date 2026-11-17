@@ -6,11 +6,14 @@ from .image_dependencies import ignore_config_source
 from .miles_image import BRIDGE_IMPORT_CACHE_INSTALL
 from .miles_release_image import MILES_PATH, release_image
 
+MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
+MILES_BRANCH = "spindle-miles-v0.1.2"
+
 
 def image_at(miles_commit: str) -> modal.Image:
     return release_image.run_commands(
         f"git -C {MILES_PATH} fetch --depth=1"
-        f" https://github.com/modal-projects/miles.git {miles_commit}"
+        f" {MILES_REPOSITORY} {miles_commit}"
         f" && git -C {MILES_PATH} checkout --detach FETCH_HEAD",
         # Miles owns the provider and runtime pins. The installer exposes only GLM
         # model packages from the dependency, retaining the release Bridge core.

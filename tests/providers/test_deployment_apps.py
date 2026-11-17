@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import functools
 import importlib
 import inspect
 import json
@@ -554,18 +555,19 @@ IMAGE_VARIABLE = re.compile(r"\w*image_(\d{2})_([0-9a-f]{7})")
 FULL_COMMIT = re.compile(r"[0-9a-f]{40}")
 
 
-@pytest.mark.parametrize("module", FORK_IMAGE_MODULES, ids=lambda m: m.__name__)
-def test_image_variables_build_the_commit_they_are_named_after(module):
-    sequence = []
+def image_assignments(module):
+    """Yield (variable, pins) for each `image_NN_<short>` assignment in an image module.
+
+    Pins are the full fork commits written in the assignment and the short
+    commits of other `image_NN_<short>` variables it builds on.
+    """
     for node in ast.parse(inspect.getsource(module)).body:
         if not isinstance(node, ast.Assign) or not isinstance(
             node.targets[0], ast.Name
         ):
             continue
-        variable = IMAGE_VARIABLE.fullmatch(node.targets[0].id)
-        if variable is None:
+        if IMAGE_VARIABLE.fullmatch(node.targets[0].id) is None:
             continue
-        number, short = variable.groups()
         pins = [
             leaf.value
             for leaf in ast.walk(node.value)
@@ -575,12 +577,70 @@ def test_image_variables_build_the_commit_they_are_named_after(module):
             for leaf in ast.walk(node.value)
             if isinstance(leaf, ast.Name) and IMAGE_VARIABLE.fullmatch(leaf.id)
         ]
-        assert pins and all(pin.startswith(short) for pin in pins), node.targets[0].id
+        yield node.targets[0].id, pins
+
+
+@pytest.mark.parametrize("module", FORK_IMAGE_MODULES, ids=lambda m: m.__name__)
+def test_image_variables_build_the_commit_they_are_named_after(module):
+    sequence = []
+    for variable, pins in image_assignments(module):
+        number, short = IMAGE_VARIABLE.fullmatch(variable).groups()
+        assert pins and all(pin.startswith(short) for pin in pins), variable
         if (number, short) not in sequence:
             sequence.append((number, short))
     assert [number for number, _ in sequence] == [
         f"{index:02}" for index in range(1, len(sequence) + 1)
     ]
+
+
+@functools.cache
+def fork_branch_head(repository, branch, workdir):
+    subprocess.run(
+        ["git", "fetch", "--quiet", "--filter=tree:0", "--no-tags", repository, branch],
+        cwd=workdir,
+        check=True,
+    )
+    return subprocess.run(
+        ["git", "rev-parse", "FETCH_HEAD"],
+        cwd=workdir,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+@pytest.fixture(scope="module")
+def fork_clone(tmp_path_factory):
+    workdir = tmp_path_factory.mktemp("forks")
+    subprocess.run(["git", "init", "--quiet"], cwd=workdir, check=True)
+    return str(workdir)
+
+
+@pytest.mark.parametrize(
+    ("module", "commit"),
+    [
+        pytest.param(module, pin, id=f"{module.__name__.rsplit('.', 1)[-1]}-{pin[:7]}")
+        for module in FORK_IMAGE_MODULES
+        for _, pins in image_assignments(module)
+        for pin in pins
+        if FULL_COMMIT.fullmatch(pin)
+    ],
+)
+def test_pinned_fork_commits_are_on_the_branch_their_module_names(
+    module, commit, fork_clone
+):
+    names = vars(module)
+    repository = names.get("MILES_REPOSITORY", rollout_image.SGLANG_REPOSITORY)
+    branch = names.get("MILES_BRANCH") or names["SGLANG_BRANCH"]
+    head = fork_branch_head(repository, branch, fork_clone)
+    on_branch = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, head],
+        cwd=fork_clone,
+        capture_output=True,
+    )
+    assert on_branch.returncode == 0, (
+        f"{module.__name__} pins {commit}, which is not on {branch} of {repository}"
+    )
 
 
 @pytest.mark.parametrize(
