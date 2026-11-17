@@ -72,6 +72,7 @@ def test_trainer_declaration_and_executor_configuration(
     builders, monkeypatch, preset, backend, clients, nproc, gpu
 ):
     row = deployment(preset)
+    monkeypatch.setattr(modal, "clustered", lambda **_: lambda fn: fn)
     platform = row.recipe.platform
     platform["storage"]["checkpoints"] = "test-custom-checkpoints"
     image = object()

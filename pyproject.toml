@@ -327,6 +327,15 @@ not-subscriptable = "ignore"
 redundant-condition = "ignore"
 unsupported-operator = "ignore"
 
+# These ignores apply only once torch or the pinned Miles is installed.
+[[tool.ty.overrides]]
+include = [
+    "src/spindle/backends/miles_runtime/actor.py",
+    "src/spindle/backends/miles_runtime/targets.py",
+    "src/spindle/backends/score_centering.py",
+]
+rules = { unused-ignore-comment = "ignore" }
+
 [dependency-groups]
 dev = [
     "matplotlib>=3.10",

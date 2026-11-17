@@ -12,6 +12,7 @@ class Config(BaseConfig):
     trainer_gpus_per_node = 4
     trainer_env = {
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCHINDUCTOR_COMPILE_THREADS": "1",
         "TORCH_ALLOW_TF32_CUBLAS_OVERRIDE": "1",
     }
     backend = "megatron"

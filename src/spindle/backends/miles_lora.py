@@ -152,7 +152,7 @@ class MilesCommandBackend(Backend):
         self.job_to_slot[model_id] = slot
         self.slot_to_job[slot] = model_id
         try:
-            self.runtime.load_slot(slot, state.rank, state.alpha)
+            self.runtime.load_slot(slot, state.rank, state.alpha, seed=state.seed)
         except BaseException:
             self._release(model_id, slot)
             self.jobs.pop(model_id, None)
@@ -617,8 +617,11 @@ class MilesCommandBackend(Backend):
             raise ValueError(
                 f"LoRA rank must be between 1 and {self.config.max_lora_rank}"
             )
-        if state.seed is not None:
-            raise ValueError("Miles multi-LoRA does not support per-model seeds")
+        if state.seed is not None and not self.runtime.supports_seed:
+            raise ValueError(
+                "per-model seeds require Miles load_slot(seed=...); "
+                "update Miles and redeploy the trainer"
+            )
         configured = lora_target_flags(self.config.target_modules)
         requested = (state.train_attn, state.train_mlp, state.train_unembed)
         if requested != configured:
