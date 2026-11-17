@@ -368,3 +368,43 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch):
     assert [o["logprobs"].tolist() for o in outputs] == [[-1.0] * 3, [-2.0] * 2]
     assert outputs[0]["logprobs"].dtype == np.float32
     assert store.removed == [0]
+
+
+@pytest.mark.parametrize("seed", [None, 0, 42])
+@pytest.mark.parametrize("checkpoint", [None, "/saved"])
+def test_slot_seed_precedes_optimizer_and_never_overwrites_checkpoint(seed, checkpoint):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    weights = {0: "default"}
+    optimizer_weights = {}
+
+    async def load(slot, rank, alpha, *, ckpt_path, load_optimizer, seed=None):
+        if ckpt_path is not None:
+            assert seed is None
+            weights[slot] = "checkpoint"
+        elif seed is not None:
+            weights[slot] = seed
+        optimizer_weights[slot] = weights[slot]
+
+    runtime._bridge = SimpleNamespace(load_slot=load)
+    runtime.load_slot(0, 8, 32, seed=seed, checkpoint=checkpoint)
+    expected = "checkpoint" if checkpoint else "default" if seed is None else seed
+    assert weights[0] == optimizer_weights[0] == expected
+
+
+def test_seed_failure_invalidates_runtime_before_optimizer_creation():
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+
+    async def load(*args, **kwargs):
+        return {"error": "seed initialization failed"}
+
+    runtime._bridge = SimpleNamespace(load_slot=load)
+    with pytest.raises(BackendFailed, match="seed initialization failed"):
+        runtime.load_slot(0, 8, 32, seed=42)
+    with pytest.raises(BackendFailed, match="unavailable"):
+        runtime.load_slot(0, 8, 32)

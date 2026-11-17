@@ -91,6 +91,7 @@ class AdapterBridge:
         *,
         ckpt_path: str | None = None,
         load_optimizer: bool = True,
+        seed: int | None = None,
     ) -> dict[str, object] | None:
         source = None
         if ckpt_path is not None:
@@ -99,7 +100,13 @@ class AdapterBridge:
                 load_optimizer=load_optimizer,
                 parametrization_fields=self.fields(rank, alpha),
             )
-        result = await self.bridge.load_slot(slot, rank, alpha, source=source)
+        result = await self.bridge.load_slot(
+            slot,
+            rank,
+            alpha,
+            source=source,
+            **({"seed": seed} if seed is not None and source is None else {}),
+        )
         if result is None:
             self.slots[slot] = (rank, alpha)
         return result

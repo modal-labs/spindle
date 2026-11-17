@@ -137,11 +137,17 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
         alpha: float,
         ckpt_path: str | None = None,
         load_optimizer: bool = True,
+        seed: int | None = None,
     ):
         if ckpt_path:
             _sync_checkpoint_volume("reload")
         result = super().load_slot(
-            slot, rank, alpha, ckpt_path=ckpt_path, load_optimizer=load_optimizer
+            slot,
+            rank,
+            alpha,
+            ckpt_path=ckpt_path,
+            load_optimizer=load_optimizer,
+            **({"seed": seed} if seed is not None and ckpt_path is None else {}),
         )
         if ckpt_path and expert_lora_compat.enabled():
             expert_lora_compat.restore_factory_weights(
