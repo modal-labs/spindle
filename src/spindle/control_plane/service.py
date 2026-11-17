@@ -859,27 +859,31 @@ class ControlPlane:
             self._route_reads.pop(model_id, None)
 
     async def unload_model(self, model_id: str) -> str:
-        model = await self._unload_model(model_id)
-        if self.reconcile_trainers is not None:
+        model, released = await self._unload_model(model_id)
+        if released and self.reconcile_trainers is not None:
             await self.reconcile_trainers(model.engine_definition_id)
         return f"{model.model_id}:unload"
 
-    async def _unload_model(self, model_id: str) -> ModelRecord:
+    async def _unload_model(self, model_id: str) -> tuple[ModelRecord, bool]:
         model = await self.get_model(model_id)
         placement = await self._placement(model.model_id)
+        live = None
         if placement is not None:
             instance = await self.engines.get_instance(placement.engine_instance_id)
             if instance is not None and not instance.terminal:
-                await self.engines.client(instance.instance_id).unload_model(
-                    model.model_id
-                )
+                live = instance
+        if live is not None:
+            await self.engines.client(live.instance_id).unload_model(model.model_id)
+        # First, or a reconcile pass can see it unplaced and start a trainer.
+        await self._forget_demand(model.model_id)
+        if placement is not None:
+            if live is not None:
                 await self._release_placement(
                     placement.model_id, placement.engine_definition_id
                 )
             else:
                 await self.kv.delete(placement_key(model.model_id))
-        await self._forget_demand(model.model_id)
-        return model
+        return model, live is not None
 
     async def retrieve(
         self,
@@ -1873,8 +1877,8 @@ class ControlPlane:
             or instance.terminal
             or placement.engine_boot_id not in ("", instance.boot_id)
         ):
-            await self.kv.delete(placement_key(placement.model_id))
             await self._forget_demand(placement.model_id)
+            await self.kv.delete(placement_key(placement.model_id))
             raise ModelLost(placement.model_id)
         return instance
 

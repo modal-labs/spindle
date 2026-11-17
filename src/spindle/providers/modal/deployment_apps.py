@@ -6,6 +6,7 @@ created on demand with the existing LoRA/FFT pool lifecycle.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import logging
@@ -34,6 +35,7 @@ from spindle.usage import ContainerUsage, poll_busy
 from .app_tags import app_tags
 from .deepseek_v41_image import inference_image as deepseek_v41_sampler_image
 from .deployment import trainer_deployment_env
+from .engines import instance_key
 from .fft_pool import FFTPoolSpec
 from .fft_pool import deploy_pool as deploy_fft
 from .glm53_image import inference_image as glm53_sampler_image
@@ -208,6 +210,11 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         if saved.name != trainer_name:
             raise ValueError("trainer settings do not match the deployed app")
         os.environ["SPINDLE_FRONTEND_APP_ID"] = frontend_app_id
+        if _booted_before(instance_id):
+            print(
+                f"spindle trainer {instance_id} lost its container; not restarting it"
+            )
+            return
         log_scheduled_gpus("trainer")
         run_trainer(saved, instance_id, platform)
 
@@ -308,6 +315,12 @@ def run_trainer(deployment, instance_id, platform=None):
             started_at=startup.origin,
         ),
     )
+
+
+def _booted_before(instance_id: str) -> bool:
+    """Modal reruns an input whose container died, but its models are already lost."""
+    record = asyncio.run(shared_kv().get(instance_key(instance_id)))
+    return isinstance(record, dict) and bool(record.get("boot_id"))
 
 
 def _warm_lora_pool(frontend: str, definition_id: str) -> None:

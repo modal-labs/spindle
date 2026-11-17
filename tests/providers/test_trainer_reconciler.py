@@ -358,3 +358,45 @@ def test_trainer_reconciler_scales_without_a_cap() -> None:
         )
 
     asyncio.run(run())
+
+
+def test_unloading_models_of_a_stopped_trainer_never_starts_one() -> None:
+    async def run() -> None:
+        engines = LocalEnginePlatform(DEFINITION, EchoExecutor, max_models=2)
+
+        async def reconcile(definition_id: str) -> bool:
+            await reconcile_trainers(
+                kv, engines, definition_id, revision=None, maximum_instances=1
+            )
+            return False
+
+        class ReconcileOnEveryDelete(InMemoryKeyValueStore):
+            async def delete(self, key: str) -> None:
+                await super().delete(key)
+                await reconcile(DEFINITION)
+
+        kv = ReconcileOnEveryDelete()
+        plane = ControlPlane(kv, engines, reconcile_trainers=reconcile)
+        session = await plane.create_session()
+        creations = [
+            await plane.create_model(
+                session_id=session.session_id,
+                model_seq_id=index,
+                definition_id=DEFINITION,
+                spec={},
+            )
+            for index in range(2)
+        ]
+        for creation in creations:
+            await plane.retrieve(creation.request_id)
+        (trainer,) = await engines.list_instances()
+        await engines.mark_dead(trainer.instance_id)
+
+        for creation in creations:
+            await plane.unload_model(creation.model.model_id)
+
+        assert await engines.list_instances() == (
+            await engines.get_instance(trainer.instance_id),
+        )
+
+    asyncio.run(run())

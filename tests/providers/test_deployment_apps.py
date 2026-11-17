@@ -22,6 +22,7 @@ from spindle.providers.modal import (
     fft_pool,
     lora_pool,
 )
+from spindle.providers.modal.engines import instance_key
 from spindle.providers.modal.fft_pool import FFTPoolSpec
 from spindle.providers.modal.lora_pool import LoraPoolSpec
 
@@ -88,7 +89,8 @@ def test_trainer_declaration_and_executor_configuration(
     calls = []
     reloaded = []
 
-    monkeypatch.setattr(deployment_apps, "shared_kv", lambda: "store")
+    store = InMemoryKeyValueStore()
+    monkeypatch.setattr(deployment_apps, "shared_kv", lambda: store)
     monkeypatch.setattr(
         deployment_apps,
         "volumes_for",
@@ -103,7 +105,7 @@ def test_trainer_declaration_and_executor_configuration(
     trainer("instance-a", row.model_dump_json(), "ap-frontend")
     assert os.environ["SPINDLE_FRONTEND_APP_ID"] == "ap-frontend"
     args, kwargs = calls[0]
-    assert args == ("store", f"spindle.backends.{backend}:build_executor")
+    assert args == (store, f"spindle.backends.{backend}:build_executor")
     assert kwargs["max_models"] == clients
     assert kwargs["nproc"] == nproc
     assert (
@@ -114,6 +116,11 @@ def test_trainer_declaration_and_executor_configuration(
     assert config[row.recipe.backend]["hf_checkpoint"] == row.asset_path
     assert config["checkpoint_dir"] == "/checkpoints"
     assert reloaded == [True]
+
+    # Modal reruns the input of a container that died; that boot's models are lost.
+    asyncio.run(store.put(instance_key("instance-a"), {"boot_id": "first-boot"}))
+    trainer("instance-a", row.model_dump_json(), "ap-frontend")
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("kind", ["lora", "base", "latest", "pinned"])
