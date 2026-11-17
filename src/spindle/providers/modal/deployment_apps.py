@@ -20,6 +20,7 @@ from modal.config import config
 
 from spindle.deployments import DeploymentConfig
 from spindle.inference.serving import (
+    SGLANG_ENV,
     sglang_busy,
     start_fft_sidecar,
     start_lora_sidecar,
@@ -351,8 +352,9 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         volumes=volumes_for(platform),
         secrets=secrets_for(platform),
         env=deployment_env(
+            SGLANG_ENV
             # Split-K speeds up decode-sized LoRA batches on H200 and B200.
-            ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
+            | ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
             | recipe.inference_env
             | (
                 {

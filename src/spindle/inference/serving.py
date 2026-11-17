@@ -12,6 +12,9 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 
+# Return sampled-token logprobs at temperature 1, as Tinker does and as the trainer scores them.
+SGLANG_ENV = {"SGLANG_RETURN_ORIGINAL_LOGPROB": "1"}
+
 
 def start_sglang(
     model_path: str,
