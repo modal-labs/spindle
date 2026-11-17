@@ -8,7 +8,7 @@ Miles LoRA trainer only; off by default.
 - `SPINDLE_TORCH_PROFILE_RANKS`: default `0` (rank 0); e.g. `0,4` or `all`. ~250 MB per trace.
 - `SPINDLE_TORCH_PROFILE_DIR`: default `/checkpoints/torch-profile/<definition id>`.
 
-Captures one optimizer step (first `forward_backward` of the step to before the next), phases labelled `spindle/forward_backward`, `spindle/optim_step`, `spindle/forward_only`, `spindle/export_slot_peft`, plus a CPU-only `controller.trace.json.gz` for post-step publish. `rank<N>.key_averages.txt` is a no-UI top-ops table.
+Captures one optimizer step (first `forward_backward` of the step to before the next), phases labelled `spindle/forward_backward`, `spindle/optim_step`, `spindle/forward_only`, `spindle/export_slot_peft`. `rank<N>.key_averages.txt` is a no-UI top-ops table.
 
 ## Download and view
 
