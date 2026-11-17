@@ -56,9 +56,7 @@ def main() -> None:
         "--write-config", type=Path, help="write a new deployment Python file and exit"
     )
     destination.add_argument("--output", type=Path, help="new JSONL output file")
-    args, extra = parser.parse_known_args()
-    if extra[:1] == ["--"]:
-        extra = extra[1:]
+    args = parser.parse_args()
     definition = ValidationRunConfig.model_validate(
         tomllib.loads(args.validation.read_text())
     )
@@ -70,8 +68,6 @@ def main() -> None:
         ),
     )
     if args.write_config:
-        if extra:
-            parser.error("script arguments cannot be used with --write-config")
         with args.write_config.open("x") as stream:
             stream.write(
                 "from spindle.configuration import BaseConfig\n\nconfig = BaseConfig(**"
@@ -79,10 +75,9 @@ def main() -> None:
                 + ")\n"
             )
         return
-    script_args = [*definition.script_args, *extra]
     if any(
         arg.split("=", 1)[0] in {"--base-model", "--output", "--tokenizer"}
-        for arg in script_args
+        for arg in definition.script_args
     ):
         parser.error(
             "--base-model, --output and --tokenizer are supplied by the launcher"
@@ -97,7 +92,7 @@ def main() -> None:
         "--tokenizer",
         definition.tokenizer.model,
         definition.tokenizer.revision,
-        *script_args,
+        *definition.script_args,
     ]
     previous_argv, previous_path = sys.argv, sys.path[:]
     try:

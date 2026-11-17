@@ -34,9 +34,10 @@ are declared in `ConfigOverrides` in `run.py`; unknown fields and incorrect
 types are rejected. Omitted fields keep their deployment recipe values.
 Use `inference_gpu = "H100!"` to select exact H100 hardware, or the declared
 `"miles_cfg.max_lora_slots"` key to set adapter capacity. Optional
-`script_args = []` contains literal CLI arguments. Dataset, grading, learning
-rate, batch size and seed stay in the Tinker script. Every definition requires
-a typed `tokenizer` with its Hugging Face model ID and full commit revision.
+`script_args = []` contains the workload's literal CLI arguments. The launcher
+does not forward extra arguments from its own command line. Dataset, grading,
+learning rate, batch size and seed stay in the Tinker script. Every definition
+requires a typed `tokenizer` with its Hugging Face model ID and full commit revision.
 The launcher supplies `--tokenizer MODEL REVISION`, the output path, and
 `--base-model` with the resolved deployment name. Scripts use that deployment
 name in `create_lora_training_client` to select the exact recipe.
@@ -74,11 +75,10 @@ Set `TINKER_BASE_URL` and `TINKER_API_KEY` for that deployment, then:
 ```bash
 uv run python reference_runs/run.py reference_runs/configs/dapo_qwen35_4b.toml \
   --output reference_runs/outputs/my-run.jsonl
-
-# Small smoke run; the extra arguments go directly to the workload script.
-uv run python reference_runs/run.py reference_runs/configs/dapo_qwen35_4b.toml \
-  --output /tmp/dapo-smoke.jsonl -- --smoke
 ```
+
+For a small smoke run, create a separate TOML definition with
+`script_args = ["--smoke"]` at the top level and pass it to the launcher.
 
 The launcher does not deploy, stop or clean up apps. For Modal proxy auth, use
 `examples/shared-server/with_proxy_auth.py` to invoke `reference_runs/run.py`

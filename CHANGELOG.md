@@ -23,6 +23,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- The reference launcher accepts workload arguments only through the TOML definition's `script_args`; extra command-line arguments are rejected.
 - Reference deployment overrides use explicit typed fields and reject undeclared settings.
 - DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
 - Reference runs use flat TOML definitions, a typed execution index, and flat JSONL outputs. A shared launcher selects the exact deployment for the existing DAPO-Math workload.

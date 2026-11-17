@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import tinker
+import toml
 from pydantic import BaseModel, ValidationError
 
 from spindle.configuration import BaseConfig
@@ -79,9 +80,7 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
 
     output = tmp_path / "run.jsonl"
     monkeypatch.setattr(tinker, "reference_test", "sdk-patch-preserved", raising=False)
-    monkeypatch.setattr(
-        sys, "argv", ["run", str(definition), "--output", str(output), "--", "--smoke"]
-    )
+    monkeypatch.setattr(sys, "argv", ["run", str(definition), "--output", str(output)])
     before_path, before_argv = sys.path[:], sys.argv
     launcher.main()
     args, value, sdk_patch = json.loads(output.read_text())
@@ -95,7 +94,6 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         revision,
         "--literal",
         "a value with spaces",
-        "--smoke",
     ]
     assert (value, sdk_patch) == (23, "sdk-patch-preserved")
     assert sys.path == before_path and sys.argv is before_argv
@@ -114,6 +112,34 @@ def test_script_arguments_cannot_replace_selected_config_values(
     arguments: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "run.jsonl"
+    data = tomllib.loads((ROOT / "configs/dapo_qwen35_4b.toml").read_text())
+    data["script_args"] = arguments
+    definition = tmp_path / "invalid.toml"
+    definition.write_text(toml.dumps(data))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run",
+            str(definition),
+            "--output",
+            str(output),
+        ],
+    )
+    with pytest.raises(SystemExit) as error:
+        launcher.main()
+    assert error.value.code == 2
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("arguments", [["--smoke"], ["--", "--smoke"]])
+def test_launcher_rejects_extra_cli_arguments(
+    arguments: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output = tmp_path / "metrics.jsonl"
     monkeypatch.setattr(
         sys,
         "argv",
@@ -122,13 +148,13 @@ def test_script_arguments_cannot_replace_selected_config_values(
             str(ROOT / "configs/dapo_qwen35_4b.toml"),
             "--output",
             str(output),
-            "--",
             *arguments,
         ],
     )
     with pytest.raises(SystemExit) as error:
         launcher.main()
     assert error.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err
     assert not output.exists()
 
 
@@ -322,9 +348,12 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     )
     monkeypatch.setattr(tinker, "ServiceClient", lambda: service)
     output = tmp_path / "metrics.jsonl"
-    monkeypatch.setattr(
-        sys, "argv", ["run", str(validation), "--output", str(output), "--", "--smoke"]
-    )
+    smoke = tmp_path / "smoke.toml"
+    data = tomllib.loads(validation.read_text())
+    data["script"] = str((validation.parent / definition.script).resolve())
+    data["script_args"] = [*definition.script_args, "--smoke"]
+    smoke.write_text(toml.dumps(data))
+    monkeypatch.setattr(sys, "argv", ["run", str(smoke), "--output", str(output)])
     launcher.main()
     records = [json.loads(line) for line in output.read_text().splitlines()]
     assert records[0]["config"]["model"] == expected_model
