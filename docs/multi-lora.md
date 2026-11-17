@@ -179,7 +179,7 @@ both producers run on the replica. `GET /routing-state/compare` shows prefix
 counts, overlap, sample differences, load values, view ages and whether the
 native event subscriber is ready. KV event routing and comparison require a
 sampler image that records adapter names in KV events and supports `/v1/loads`.
-Use `"hook"` with the DeepSeek-V4.1-Flash image.
+Use `"hook"` with the `sglang-v0.5.21-*` sampler images, which the DeepSeek-V4.1-Flash recipes use.
 
 The two views can differ in these ways:
 
@@ -190,4 +190,4 @@ The two views can differ in these ways:
 - KV events are replayed from SGLang's buffer of the last 10,000 event batches. If the sidecar falls further behind than that, or restarts while SGLang keeps running, it rebuilds from the buffer only: cached prefixes whose earlier blocks are no longer buffered stay unlisted until SGLang stores them again. The hook reads the cache itself and has no such limit.
 - KV events do not identify GPU-resident adapters, so `gpu_adapters` is empty and the router ranks a replica with the adapter on its GPU no higher than one that only has it loaded in CPU memory.
 
-With SGLang's default `page_size` of 1, the sidecar keeps about 60 MiB per million cached tokens and spends about 3 microseconds of CPU per cached token. Custom sampler images need `pyzmq` and `msgspec`.
+With SGLang's default `page_size` of 1, the sidecar keeps about 60 MiB per million cached tokens and spends about 3 microseconds of CPU per cached token. The sidecar needs `pyzmq` and `msgspec`, which SGLang images already include.

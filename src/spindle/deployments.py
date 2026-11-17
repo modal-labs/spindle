@@ -151,13 +151,10 @@ class DeploymentConfig(BaseModel):
                     "a LoRA recipe with inference_lora_routing='cache_wait'; "
                     "set inference_lora_routing_source='hook' otherwise"
                 )
-            if (
-                recipe.inference_image
-                == "spindle.providers.modal.deepseek_v41_image:inference_image"
-            ):
+            if recipe.inference_image.startswith("sglang-v0.5.21-"):
                 raise ValueError(
-                    'Use inference_lora_routing_source="hook" with the '
-                    "DeepSeek-V4.1-Flash image"
+                    'Use inference_lora_routing_source="hook" with SGLang v0.5.21 '
+                    "sampler images; their KV events carry no adapter names"
                 )
         if routing == "cache_wait":
             if recipe.inference_routing_balance_absolute is None:

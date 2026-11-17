@@ -265,7 +265,7 @@ def test_deepseek_v051_image_rejects_native_kv_routing(source):
     recipe.inference_lora_routing_source = source
     with pytest.raises(
         ValueError,
-        match=r'Use inference_lora_routing_source="hook" with the DeepSeek-V4.1-Flash image',
+        match=r'Use inference_lora_routing_source="hook" with SGLang v0.5.21',
     ):
         DeploymentConfig.create(recipe)
 

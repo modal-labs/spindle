@@ -679,7 +679,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.39,<2" },
     { name = "protobuf", specifier = ">=5.29" },
     { name = "pydantic", specifier = ">=2.13.4" },
-    { name = "pyzmq", specifier = ">=26" },
+    { name = "pyzmq", specifier = ">=25.1.2" },
     { name = "questionary", specifier = ">=2.1" },
     { name = "stitch", git = "https://github.com/modal-projects/stitch.git?rev=d9f681fd894b02257da129ec3483a977659cd7ab" },
     { name = "tinker", specifier = ">=0.26.0" },
