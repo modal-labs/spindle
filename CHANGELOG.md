@@ -6,6 +6,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Experimental Inkling-2-Small attention and unembedding multi-LoRA on an eight-B300 trainer, with a separate sampler. Routed experts stay frozen; create clients with `train_mlp=False`.
+
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
 
 ### Fixed

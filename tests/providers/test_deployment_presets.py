@@ -33,6 +33,9 @@ def test_all_packaged_recipes_validate_offline(path):
         if expected & set(GDN_INPUT_PROJECTIONS):
             expected = expected - set(GDN_INPUT_PROJECTIONS)
             expected |= {"in_proj_qkvz", "in_proj_ba"}
+        if "model.llm.unembed" in expected:
+            expected.remove("model.llm.unembed")
+            expected.add("lm_head")
         assert expected == set(resolved.inference_settings["lora_target_modules"])
 
 

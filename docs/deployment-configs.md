@@ -197,9 +197,27 @@ To change an image:
 2. Move configs to the new name one at a time. Record a reference run for each config you move.
 3. Once no bundled config, default or reference run uses the old name, remove it and the module that builds it.
 
-`miles-v0.2.0-15afe21` supports single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying it with more than one trainer node or with `raw` is rejected. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
+`miles-v0.2.0-15afe21` supports single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying it with more than one trainer node or with `raw` is rejected. The bridge-mode Miles images train one `lora_A` shared across each fused projection and export a standard PEFT adapter to the samplers.
 
 A checkpoint restores only on a trainer with the same Miles revision as the one that saved it, so keep the original image to restore older checkpoints after switching images.
+
+### Inkling-2-Small LoRA
+
+`inkling2-small-lora-8k-b300` is an experimental 8K recipe with two adapter slots on one eight-B300 trainer and a separate eight-B300 sampler. It uses `miles-v0.2.0-eac7f8c-inkling2-attn` and `sglang-inkling2-a2e3c49`. The checkpoint and base container are pinned by revision and digest.
+
+The recipe trains the six attention projections and the unembedding, with an independent `lora_A` for each projection. Routed experts and attention sinks stay frozen. Create clients with the stock Tinker SDK:
+
+```python
+client = service_client.create_lora_training_client(
+    base_model="thinkingmachines/Inkling-2-Small",
+    rank=32,
+    train_attn=True,
+    train_mlp=False,
+    train_unembed=True,
+)
+```
+
+Training uses TP=CP=PP=1 and EP=8. The sampler keeps multiple adapters loaded but batches one adapter at a time. Native Miles adapter checkpoints retain each slot's optimizer state; they do not restore into the older bridge images. Full-model GPU training and sampling have not been validated for this recipe.
 
 ## Prepare and launch
 

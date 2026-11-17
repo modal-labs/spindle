@@ -130,7 +130,22 @@ def backend_config(spec, asset_path="/assets/pending"):
     if spec.trainer_max_clients_per_instance > config.max_lora_slots:
         raise ValueError("max_clients_per_instance exceeds max_lora_slots")
     if spec.trainer_image.startswith("miles-v0.2.0-"):
-        if config.megatron_to_hf_mode != "bridge":
+        inkling2 = spec.trainer_image == "miles-v0.2.0-eac7f8c-inkling2-attn"
+        if inkling2:
+            if config.model_type != "inkling2" or config.megatron_to_hf_mode != "raw":
+                raise ValueError(
+                    "the Inkling2 trainer requires model_type inkling2 and raw mode"
+                )
+            if any(
+                size != 1
+                for size in (
+                    config.tensor_model_parallel_size,
+                    config.context_parallel_size,
+                    config.expert_tensor_parallel_size,
+                )
+            ):
+                raise ValueError("Inkling2 requires TP=CP=expert-TP=1")
+        elif config.megatron_to_hf_mode != "bridge":
             raise ValueError("miles-v0.2.0 supports only megatron_to_hf_mode bridge")
         if spec.trainer_nodes != 1:
             raise ValueError("miles-v0.2.0 supports only single-node trainers")

@@ -16,6 +16,7 @@ _PEFT_TARGETS = {
     "linear_fc1_up": ("up_proj",),
     "linear_fc2": ("down_proj",),
     "output_layer": ("lm_head",),
+    "unembed": ("lm_head",),
     # SGLang serves the Qwen3.5 linear-attention input projections as in_proj_qkvz and in_proj_ba.
     "in_proj_qkv": ("in_proj_qkvz",),
     "in_proj_z": ("in_proj_qkvz",),
@@ -47,6 +48,12 @@ _ATTN_LEAVES = frozenset(
         "wkv",
         "wq_b",
         "wo_b",
+        "wq_du",
+        "wr_du",
+        "gate_attn",
+        "wk_dv",
+        "wv_dv",
+        "wo_ud",
         *GDN_INPUT_PROJECTIONS,
         "out_proj",
     }
@@ -65,7 +72,7 @@ _MLP_LEAVES = frozenset(
         "w3",
     }
 )
-_UNEMBED_LEAVES = frozenset({"output_layer", "lm_head"})
+_UNEMBED_LEAVES = frozenset({"output_layer", "lm_head", "unembed"})
 
 
 def _peft_names(target: str) -> tuple[str, ...]:
