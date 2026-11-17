@@ -63,6 +63,47 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
 
+### Older Qwen3.5 LoRA checkpoints
+
+The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers. A checkpoint saved by these recipes before that change has no adapters for those layers, so loading it fails with `checkpoint LoRA target_modules do not match the deployment`.
+
+To keep training or sampling from such a checkpoint, deploy a variant with the old target list and the old sampler image:
+
+```python
+from spindle.configs.qwen35_4b_lora_32k import Config as Parent
+
+
+class Config(Parent):
+    name = "qwen35-4b-lora-32k-attn-only"
+    inference_image = "sglang-v0.5.23-c4182b2"
+    overrides = {
+        **Parent.overrides,
+        "miles_cfg.target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",
+        ],
+    }
+
+
+config = Config()
+```
+
+Use the same pattern for the other recipes by changing the parent and `name`. On a running server, add it with `spindle add`.
+
+A checkpoint always restores on the config that saved it, so `create_training_client_from_state` still sends an old checkpoint to the updated recipe. Load it into the variant instead:
+
+1. Create a training client with `base_model` set to the variant's name, and the same rank as the checkpoint.
+2. Call `load_state` or `load_state_with_optimizer` with the old checkpoint path.
+3. To sample from it, call `save_weights_for_sampler` on that client and use the new sampler path. Sampler paths saved before the change also route to the updated recipe.
+
+To train the linear-attention layers, start a new run on the bundled recipe. An old checkpoint can't be extended with the new adapters.
+
 ## Spec decoding
 
 We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 

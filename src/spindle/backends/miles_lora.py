@@ -680,7 +680,10 @@ class MilesCommandBackend(Backend):
         if not legacy and set(saved_modules or ()) != set(modules):
             raise ValueError(
                 "checkpoint LoRA target_modules do not match the deployment: "
-                f"saved {saved_modules or 'none recorded'}, deployment {modules}"
+                f"saved {saved_modules or 'none recorded'}, deployment {modules}. "
+                "Load it into a config whose miles_cfg.target_modules match the "
+                "saved list; see 'Older Qwen3.5 LoRA checkpoints' in "
+                "docs/deployment-configs.md"
             )
         expected_topology = {
             "world_size": self.config.world_size,
