@@ -57,19 +57,19 @@ from .rollout_image import image as rollout_image
 from .serve import run_engine_with_backend
 from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
-
+# Named images are frozen: add a new name instead of editing one. See docs/deployment-configs.md#images.
 TRAINER_IMAGES = {
-    "miles-v0.1.1": miles_image,
-    "miles-v0.1.2": miles_v012_image,
-    "miles-v0.2.0": miles_v020_image,
+    "miles-v0.1.1-fdd808c": miles_image,
+    "miles-v0.1.2-f2f8447": miles_v012_image,
+    "miles-v0.2.0-15afe21": miles_v020_image,
     "megatron-2d1fa8d": megatron_image,
 }
-SAMPLER_IMAGES = {"sglang-v0.5.23": rollout_image}
+SAMPLER_IMAGES = {"sglang-v0.5.23-c4182b2": rollout_image}
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {
-    "miles": "miles-v0.1.1",
+    "miles": "miles-v0.1.1-fdd808c",
     "megatron": "megatron-2d1fa8d",
-    "sglang": "sglang-v0.5.23",
+    "sglang": "sglang-v0.5.23-c4182b2",
 }
 
 

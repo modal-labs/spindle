@@ -5,7 +5,7 @@ class Config(Parent):
     """DeepSeek-V4.1-Flash LoRA with 32K context on B300, where a 32K row fits at TP2."""
 
     name = "deepseek-v41-flash-lora-32k-b300"
-    trainer_image = "miles-v0.1.2"
+    trainer_image = "miles-v0.1.2-f2f8447"
     inference_image = "spindle.providers.modal.deepseek_v41_image:inference_image"
     trainer_gpu = "B300"
     inference_gpu = "B300"

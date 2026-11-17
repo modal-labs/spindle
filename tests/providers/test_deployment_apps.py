@@ -493,11 +493,13 @@ def test_recipes_select_trainer_images(builders, monkeypatch):
     assert image_for("miles") is deployment_apps.miles_image
     assert image_for("megatron") is deployment_apps.megatron_image
     assert image_for("sglang") is deployment_apps.rollout_image
-    assert image_for("sglang", "sglang-v0.5.23") is deployment_apps.rollout_image
+    assert (
+        image_for("sglang", "sglang-v0.5.23-c4182b2") is deployment_apps.rollout_image
+    )
     with pytest.raises(ValueError, match="unknown trainer image"):
         image_for("miles", "missing")
     with pytest.raises(ValueError, match="unknown sampler image"):
-        image_for("sglang", "miles-v0.1.1")
+        image_for("sglang", "miles-v0.1.1-fdd808c")
 
     trainer_image = object()
     monkeypatch.setitem(deployment_apps.TRAINER_IMAGES, "trainer-x", trainer_image)
@@ -526,7 +528,7 @@ def test_bundled_configs_pin_their_own_images(path, monkeypatch):
 
 def test_deepseek_v41_lora_trainer_image_is_registered():
     assert (
-        deployment_apps.image_for("miles", "miles-v0.1.2")
+        deployment_apps.image_for("miles", "miles-v0.1.2-f2f8447")
         is deployment_apps.miles_v012_image
     )
 
