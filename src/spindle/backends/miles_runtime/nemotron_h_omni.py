@@ -1,8 +1,7 @@
 """Train Nemotron-H Omni checkpoints as their Nemotron-H language model.
 
-Nemotron 3.5 Super VL nests the Nemotron 3 Super config under ``llm_config`` and
-stores its tensors under ``language_model.``. Megatron-Bridge releases without a
-bridge for the architecture cannot build or export the trainer model.
+The checkpoint nests that model's config under ``llm_config`` and its tensors
+under ``language_model.``, and Megatron-Bridge has no bridge for the architecture.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Protocol
+from typing import Protocol, cast
 
 ARCHITECTURE = "NemotronH_Omni_Reasoning_V3"
 PREFIX = "language_model."
@@ -26,7 +25,7 @@ def install(hf_checkpoint: str) -> None:
     config = Path(hf_checkpoint, "config.json")
     if not config.is_file():
         return
-    if ARCHITECTURE not in json.loads(config.read_text()).get("architectures", ()):
+    if ARCHITECTURE not in (json.loads(config.read_text()).get("architectures") or ()):
         return
     # Megatron-Bridge and Miles exist only in the trainer image.
     import miles_plugins.megatron_bridge  # noqa: F401
@@ -45,21 +44,23 @@ def install(hf_checkpoint: str) -> None:
         for bridge in NemotronHBridge.__subclasses__()
         if bridge.__name__ == "MilesNemotronHBridge"
     ]
-    MegatronModelBridge.register_bridge(source=ARCHITECTURE, target=MambaModel)(
-        language_model_bridge(miles_bridge, MegatronMappingRegistry)
+    # Bridge annotates this decorator as taking a bridge instance.
+    register = cast(
+        "Callable[[type], object]",
+        MegatronModelBridge.register_bridge(source=ARCHITECTURE, target=MambaModel),
     )
+    register(language_model_bridge(miles_bridge, MegatronMappingRegistry))
     # AutoBridge accepts only architectures whose names end in a listed suffix.
     auto_bridge.SUPPORTED_HF_ARCHITECTURES += (ARCHITECTURE,)
-    auto_bridge.SUPPORTED_HF_ARCHITECTURES_DISPLAY += f" or '{ARCHITECTURE}'"
 
 
 def language_model_bridge(
-    nemotron_h_bridge: type, mapping_registry: Callable[..., object]
+    nemotron_h_bridge: type, registry: Callable[..., object]
 ) -> type:
     class NemotronHOmniBridge(nemotron_h_bridge):  # ty: ignore[unsupported-base]
         def provider_bridge(self, hf_pretrained: object) -> object:
-            config = getattr(hf_pretrained, "config", hf_pretrained)
-            return super().provider_bridge(SimpleNamespace(config=config.llm_config))
+            language_model = SimpleNamespace(config=hf_pretrained.config.llm_config)
+            return super().provider_bridge(language_model)
 
         def mapping_registry(self) -> object:
             omni_config = self.hf_config
@@ -68,7 +69,7 @@ def language_model_bridge(
                 mappings = super().mapping_registry().mappings
             finally:
                 self.hf_config = omni_config
-            return mapping_registry(*map(_under_language_model, mappings))
+            return registry(*map(_under_language_model, mappings))
 
     return NemotronHOmniBridge
 
