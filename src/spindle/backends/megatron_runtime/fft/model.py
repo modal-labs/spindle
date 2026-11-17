@@ -22,7 +22,7 @@ def create_fft_model_and_optimizer(config: EngineModelConfig):
         config,
         distributed_optimizer=config.use_distributed_optimizer,
     )
-    if config.fp32_lm_head:
+    if config.fp32_lm_head and config.logprob_chunk_tokens is None:
         for chunk in model:
             apply_fp32_lm_head(chunk)
     optimizer = create_fft_optimizer(config, model)

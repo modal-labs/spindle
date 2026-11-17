@@ -62,6 +62,8 @@ class EngineModelConfig:
     cross_entropy_loss_fusion: bool = False
     defer_fp32_logits: bool = False
     fp32_lm_head: bool = False
+    # Tokens per LM-head chunk when computing target log-probs; None keeps full logits.
+    logprob_chunk_tokens: int | None = None
     provider_overrides: dict[str, object] = field(default_factory=dict)
     optimizer_overrides: dict[str, object] = field(default_factory=dict)
     distributed_overrides: dict[str, object] = field(default_factory=dict)
@@ -139,6 +141,11 @@ class EngineModelConfig:
             and self.max_tokens_per_microbatch < 1
         ):
             raise ValueError("max_tokens_per_microbatch must be at least 1")
+        if self.logprob_chunk_tokens is not None:
+            if self.logprob_chunk_tokens < 1:
+                raise ValueError("logprob_chunk_tokens must be at least 1")
+            if self.tensor_model_parallel_size != 1:
+                raise ValueError("logprob_chunk_tokens requires tensor_model_parallel_size 1")
         if self.max_lora_slots < 1:
             raise ValueError("max_lora_slots must be at least 1")
         if self.max_lora_rank < 1:
