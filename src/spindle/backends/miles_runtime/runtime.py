@@ -319,7 +319,8 @@ class MilesRuntime:
                 ignore_reinit_error=False,
                 include_dashboard=False,
                 log_to_driver=True,
-                num_cpus=max(4, self.config.world_size * 2),
+                # Control workers cannot use CPUs reserved by trainer placement groups.
+                num_cpus=max(8, self.config.world_size * 2),
                 num_gpus=self.config.world_size,
             )
         self._owns_ray = True
