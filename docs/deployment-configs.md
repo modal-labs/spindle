@@ -63,6 +63,76 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
 
+### Older Qwen3.5 LoRA checkpoints
+
+The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers. A checkpoint saved by these recipes before that change has no adapters for those layers, so loading it fails with `checkpoint LoRA target_modules do not match the deployment`.
+
+To keep training or sampling from such a checkpoint, deploy a variant with the old target list and the old sampler image:
+
+```python
+from spindle.configs.qwen35_4b_lora_32k import Config as Parent
+
+
+class Config(Parent):
+    name = "qwen35-4b-lora-32k-attn-only"
+    inference_image = "sglang-v0.5.23-c4182b2"
+    overrides = {
+        **Parent.overrides,
+        "miles_cfg.target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",
+        ],
+    }
+
+
+config = Config()
+```
+
+Use the same pattern for the other recipes by changing the parent and `name`. On a running server, add it with `spindle add`.
+
+A checkpoint always restores on the config that saved it, so `create_training_client_from_state` still sends an old checkpoint to the updated recipe. Load it into the variant instead:
+
+1. Create a training client with `base_model` set to the variant's name, and the same rank as the checkpoint.
+2. Call `load_state` or `load_state_with_optimizer` with the old checkpoint path.
+3. To sample from it, call `save_weights_for_sampler` on that client and use the new sampler path. Sampler paths saved before the change also route to the updated recipe.
+
+To train the linear-attention layers, start a new run on the bundled recipe. An old checkpoint can't be extended with the new adapters.
+
+## Spec decoding
+
+We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 
+
+The following LoRA recipes enable speculative decoding by default:
+
+| Recipe | Method | Draft checkpoint |
+| --- | --- | --- |
+| `qwen35-4b-lora-32k` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
+| `qwen3-8b-lora-32k` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
+| `qwen35-9b-instruct-lora-32k` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
+| `qwen38-27b-lora-32k` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
+| `glm53-flash-lora-32k` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |
+| `nemotron35-lightning-30b-a3b-lora-64k` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
+
+Deploy a recipe by passing its Python path to `spindle deploy`, for example:
+
+```sh
+spindle deploy src/spindle/configs/qwen35_4b_lora_32k.py
+```
+
+For a separate drafter, set `inference_draft_model` and
+`inference_draft_model_revision`, and select the algorithm in `sglang_cfg`.
+Spindle downloads the draft alongside the target and supplies its local path to
+SGLang. With `NEXTN` and no separate draft, Spindle supplies the resolved target
+checkpoint instead. The GLM recipe retains its parent's BF16 target weights and
+eight inference GPUs. Reference runs and benchmark artifacts are maintained
+separately from these deployment recipes.
+
 ## Recommended configuration for eval jobs
 
 The defaults suit training loops. An eval sends one short batch, and any replica it starts takes a few minutes to load, so it arrives after the work is done and then sits idle. For eval-only configs:
@@ -111,15 +181,27 @@ Miles argument conversion lives in [miles_arguments.py](../src/spindle/backends/
 
 Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, the default, or `raw`), `lora_type` (`lora`, the default, or `canonical_lora`) and `dynamic_batch_size`.
 
-For Miles native canonical multi-LoRA, set `trainer_image = "miles-v0.2.0"`, `miles_cfg.megatron_to_hf_mode = "raw"` and `miles_cfg.lora_type = "canonical_lora"`. Miles builds the model and attaches independent adapter factors to each Q/K/V and MLP gate/up projection. It still uses Megatron-Core; model loading in raw mode uses Miles' mbridge integration instead of Megatron-Bridge's model provider. The Qwen3-8B, Qwen3-4B, Qwen2.5-3B and Qwen2.5-7B-Instruct recipes use this path.
+For Miles native canonical multi-LoRA, set `trainer_image = "miles-v0.2.0-15afe21"`, `miles_cfg.megatron_to_hf_mode = "raw"` and `miles_cfg.lora_type = "canonical_lora"`. Miles builds the model and attaches independent adapter factors to each Q/K/V and MLP gate/up projection. It still uses Megatron-Core; model loading in raw mode uses Miles' mbridge integration instead of Megatron-Bridge's model provider. The single-node dense Qwen2.5, Qwen3, Qwen3.5 and Qwen3.8 LoRA recipes use this path.
 
 Native slots support dense projections and the output head on registered Miles architectures. Grouped expert adapters are unsupported. GDN `in_proj` and GLM-5.3 KDA slots require context parallel size 1. Miles rejects unsupported targets or model architectures; the other bundled recipes keep their existing adapter implementation.
 
 ### Images
 
-`trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1 (the default), v0.1.2 (`miles-v0.1.2`), and v0.2.0 (`miles-v0.2.0`).
+`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53`, `miles-v0.2.0-15afe21` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2`, `sglang-v0.5.23-c4182b2-glm53`, `sglang-v0.5.23-803bccb` and `sglang-v0.5.23-e003cf9` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. Use a `module:attribute` path for an image you define in your own code.
 
-`miles-v0.2.0` supports single-node trainers in Bridge or native mode. Native mode requires `canonical_lora`. The older images support only the `lora` layout, which shares one `lora_A` across each fused projection. Sampler snapshots use Miles' SGLang adapter export.
+Every bundled config sets both images itself rather than inheriting them, so upgrading SGLang or Miles for one config doesn't change any other. If you leave a field empty in your own config, it uses the backend default (`miles-v0.1.1-fdd808c`, `megatron-2d1fa8d` or `sglang-v0.5.23-c4182b2`), and that default can change in a later Spindle release. Set both fields to keep a config on the images it was tested with.
+
+#### Changing an image
+
+Never change a named image in place. That includes its fork commit, base image, packages and build steps. Configs that use the name were validated on its exact contents, and an edit would change them all at once without a test.
+
+To change an image:
+
+1. Add a new image under a new name, in a new module if the build differs. Name it after the release and the fork commit it installs, such as `sglang-v0.5.24-<commit>`. If only the build steps change, add a short suffix that says what changed.
+2. Move configs to the new name one at a time. Record a reference run for each config you move.
+3. Once no bundled config, default or reference run uses the old name, remove it and the module that builds it.
+
+`miles-v0.2.0-15afe21` supports single-node trainers in Bridge or native mode. Native mode requires `canonical_lora`. The older Miles images support the fused `lora` layout.
 
 A checkpoint restores only on a trainer with the same Miles revision and adapter layout as the one that saved it. Checkpoints without a recorded layout are treated as `lora`. Keep the original image and layout to restore older checkpoints after switching a recipe to native canonical adapters.
 

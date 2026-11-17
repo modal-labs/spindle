@@ -23,6 +23,7 @@ from .contract import (
 )
 from .megatron_config import parse_backend_config
 from .megatron_runtime.common.checkpoint_io import reload_checkpoint_volume
+from .megatron_runtime.common.chunked_logprobs import defer_output_layer
 from .megatron_runtime.common.config import EngineModelConfig
 from .megatron_runtime.common.distributed import initialize_megatron
 from .megatron_runtime.common.forward_backward import (
@@ -81,6 +82,11 @@ class FFTMegatronBackend(Backend):
     def _create_model(self) -> None:
         self.model, self.optimizer, self.bridge = create_fft_model_and_optimizer(
             self.config
+        )
+        self.deferred_output = (
+            defer_output_layer(self.model)
+            if self.config.logprob_chunk_tokens is not None
+            else None
         )
 
     def _reset_model(self) -> None:
@@ -145,6 +151,9 @@ class FFTMegatronBackend(Backend):
             forward_only=batch.forward_only,
             route_adapters=False,
             defer_fp32_logits=self.config.defer_fp32_logits,
+            deferred_output=self.deferred_output,
+            logprob_chunk_tokens=self.config.logprob_chunk_tokens,
+            fp32_logits=self.config.fp32_lm_head,
         )
         output_collector, metric_collector = synchronize_collectors(
             output_collector,

@@ -29,6 +29,7 @@ from spindle.providers.modal.checkpoint_storage import ModalCheckpointStorage
 
 
 class FakeMilesRuntime:
+    supports_seed = True
     revision = "a" * 40
     checkpoint_format = "miles_torch_dist"
 
@@ -44,7 +45,9 @@ class FakeMilesRuntime:
         *,
         checkpoint=None,
         restore_optimizer=True,
+        seed=None,
     ):
+        self.last_seed = seed
         self.calls.append(
             ("load_slot", slot, rank, alpha, checkpoint, restore_optimizer)
         )
@@ -157,9 +160,9 @@ def _datum(tokens, final_token) -> Datum:
     )
 
 
-def _backend(tmp_path, runtime=None) -> MilesCommandBackend:
+def _backend(tmp_path, runtime=None, **overrides) -> MilesCommandBackend:
     return MilesCommandBackend(
-        _config(),
+        _config(**overrides),
         checkpoint_dir=tmp_path / "checkpoints",
         capture_dir=tmp_path / "captures",
         base_model="Qwen/Qwen3-4B",
@@ -626,6 +629,56 @@ def test_checkpoint_restore_rejects_different_lora_targets(
         backend.load_checkpoint("model-a", str(uri))
 
 
+GDN_TARGETS = (
+    "linear_qkv",
+    "linear_proj",
+    "linear_fc1",
+    "linear_fc2",
+    "output_layer",
+    "in_proj_qkv",
+    "in_proj_z",
+    "in_proj_b",
+    "in_proj_a",
+    "out_proj",
+)
+
+
+@pytest.mark.parametrize(
+    "saved_modules, deployment_modules, accepted",
+    [
+        (None, None, True),
+        (None, GDN_TARGETS, False),
+        (list(GDN_TARGETS), None, False),
+        (list(reversed(GDN_TARGETS)), GDN_TARGETS, True),
+    ],
+)
+def test_checkpoint_restore_checks_target_modules(
+    tmp_path, saved_modules, deployment_modules, accepted
+) -> None:
+    source = _backend(tmp_path / "source")
+    source.accept_model("model-a", _spec())
+    source.capture_checkpoint(
+        "model-a", "capture-a", destination="step-1", include_optimizer=False
+    )
+    uri = Path(source.persist_checkpoint("capture-a", "step-1"))
+    metadata = json.loads((uri / "metadata.json").read_text())
+    if saved_modules is None:
+        del metadata["lora_config"]["target_modules"]
+    else:
+        metadata["lora_config"]["target_modules"] = saved_modules
+    overrides = (
+        {} if deployment_modules is None else {"target_modules": deployment_modules}
+    )
+    target = _backend(tmp_path / "target", **overrides)
+    target.accept_model("model-a", _spec())
+
+    if accepted:
+        target._validate_checkpoint(metadata, target.jobs["model-a"], False)
+    else:
+        with pytest.raises(ValueError, match="target_modules do not match"):
+            target._validate_checkpoint(metadata, target.jobs["model-a"], False)
+
+
 def test_checkpoint_topology_defaults_legacy_data_parallel_size(tmp_path) -> None:
     backend = _backend(tmp_path)
     backend.accept_model("model-a", _spec())
@@ -727,15 +780,26 @@ def test_sampler_snapshots_persist_concurrently_without_crossing_adapters(
     assert not backend._sampler_captures
 
 
-def test_backend_rejects_unsupported_per_model_miles_options(tmp_path) -> None:
-    backend = _backend(tmp_path)
-    with pytest.raises(ValueError, match="per-model seeds"):
+@pytest.mark.parametrize("seed", [None, 0, 7])
+def test_backend_accepts_per_model_seed(tmp_path, seed) -> None:
+    runtime = FakeMilesRuntime()
+    backend = _backend(tmp_path, runtime)
+    spec = ModelSpec(
+        base_model="Qwen/Qwen3-4B",
+        parameterization="lora",
+        lora_config=LoraConfig(rank=8, seed=seed),
+    )
+    backend.accept_model("model-a", spec)
+    backend.accept_model("model-a", spec)
+    assert backend.jobs["model-a"].seed == runtime.last_seed == seed
+    assert len(runtime.calls) == 1
+    with pytest.raises(ValueError, match="different specification"):
         backend.accept_model(
             "model-a",
             ModelSpec(
-                base_model="Qwen/Qwen3-4B",
+                base_model=spec.base_model,
                 parameterization="lora",
-                lora_config=LoraConfig(rank=8, seed=7),
+                lora_config=LoraConfig(rank=8, seed=42),
             ),
         )
 
@@ -1064,3 +1128,22 @@ def test_native_checkpoint_rejects_incompatible_adapter_before_slot_load(
     with pytest.raises(ValueError):
         backend.load_checkpoint("model-a", str(checkpoint), restore_optimizer=True)
     assert runtime.calls == previous
+
+
+def test_seed_on_older_image_is_rejected_without_touching_live_slots(tmp_path):
+    runtime = FakeMilesRuntime()
+    runtime.supports_seed = False
+    backend = _backend(tmp_path, runtime)
+    backend.accept_model("existing", _spec())
+    previous = list(runtime.calls)
+    with pytest.raises(ValueError, match=r"Miles load_slot\(seed="):
+        backend.accept_model(
+            "seeded",
+            ModelSpec(
+                base_model="Qwen/Qwen3-4B",
+                parameterization="lora",
+                lora_config=LoraConfig(rank=8, seed=0),
+            ),
+        )
+    assert runtime.calls == previous
+    assert set(backend.jobs) == {"existing"}

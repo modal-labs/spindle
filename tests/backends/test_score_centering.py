@@ -13,7 +13,7 @@ from spindle.backends.megatron_runtime.common.forward_backward import (
     _loss,
     build_sequence_batches,
     pack_microbatches,
-    shard_microbatches,
+    pad_microbatches,
 )
 from spindle.backends.score_centering import replay_logprobs
 from spindle.backends.miles_runtime.data import prepare_batch
@@ -118,7 +118,7 @@ def test_packing_context_partition_and_dummy_padding_preserve_support():
     permuted = logits.detach()[order].requires_grad_()
     native_loss(permuted, selected).backward()
     torch.testing.assert_close(permuted.grad, expected[order])
-    dummy = shard_microbatches([batch], data_parallel_rank=1, data_parallel_size=2)[0]
+    (dummy,) = pad_microbatches([], 1, source=batch, dummy_tokens=4)
     dummy_logits = logits.detach().clone().requires_grad_()
     native_loss(dummy_logits, dummy).backward()
     assert torch.count_nonzero(dummy_logits.grad) == 0

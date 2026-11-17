@@ -50,7 +50,9 @@ def test_native_restore_preserves_slot_configuration_and_optimizer_intent(
             rank: int,
             alpha: float,
             source: dict[str, object] | None = None,
+            seed: int | None = None,
         ) -> dict[str, object] | None:
+            assert seed == (None if source is not None else 0)
             if source is not None:
                 assert source["load_optimizer"] is restore_optimizer
                 assert source["path"] == "/checkpoint/miles"
@@ -65,10 +67,15 @@ def test_native_restore_preserves_slot_configuration_and_optimizer_intent(
     bridge = api.AdapterBridge(NativeBridge(), args)
 
     async def run() -> None:
-        await bridge.load_slot(0, 4, 8)
-        await bridge.load_slot(1, 8, 16)
+        await bridge.load_slot(0, 4, 8, seed=0)
+        await bridge.load_slot(1, 8, 16, seed=0)
         await bridge.load_slot(
-            0, 4, 8, ckpt_path="/checkpoint/miles", load_optimizer=restore_optimizer
+            0,
+            4,
+            8,
+            ckpt_path="/checkpoint/miles",
+            load_optimizer=restore_optimizer,
+            seed=99,
         )
 
     asyncio.run(run())
@@ -83,6 +90,7 @@ def test_rejected_native_load_keeps_slot_configuration(api: ModuleType) -> None:
             rank: int,
             alpha: float,
             source: dict[str, object] | None = None,
+            seed: int | None = None,
         ) -> dict[str, object] | None:
             return {"error": "incompatible checkpoint", "error_category": "user"}
 

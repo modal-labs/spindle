@@ -9,8 +9,8 @@ from .image_dependencies import (
 
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
-SGLANG_BRANCH = "codex/qwen35-native-lora-aliases"
-SGLANG_REVISION = "ca6f7e1a9661e5bdcb96673090c59ba63add4d37"
+SGLANG_BRANCH = "spindle-sglang-v0.5.23"
+SGLANG_REVISION = "c4182b22139a5730c9f18907cc0b178a305bb0f1"
 # v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
 CORE_SAMPLER_PACKAGES = (
     *(p for p in CORE_PACKAGES if not p.startswith("opentelemetry-")),
@@ -70,3 +70,20 @@ runtime_image = runtime_image_for(
     core_packages=CORE_SAMPLER_PACKAGES,
 )
 image = runtime_image.add_local_python_source("spindle", ignore=ignore_config_source)
+
+# Serves LoRA on all Qwen3.5 linear-attention projections, including in_proj_b and in_proj_a.
+gdn_lora_image = runtime_image_for(
+    image=SGLANG_IMAGE,
+    branch=SGLANG_BRANCH,
+    revision="803bccbcb947d3041f5b57e11c986f8523a0cb56",
+    core_packages=CORE_SAMPLER_PACKAGES,
+).add_local_python_source("spindle", ignore=ignore_config_source)
+
+
+# Canonical GDN adapters use the merged target aliases.
+native_lora_image = runtime_image_for(
+    image=SGLANG_IMAGE,
+    branch=SGLANG_BRANCH,
+    revision="e003cf90c44c78249ce4ed3db3cf2f768af724a8",
+    core_packages=CORE_SAMPLER_PACKAGES,
+).add_local_python_source("spindle", ignore=ignore_config_source)

@@ -117,7 +117,6 @@ def test_presets_context_topology_and_backend_options():
     assert large.max_context_length == 65536
     assert backend_config(large)["miles"]["actor_num_gpus_per_node"] == 8
     fft = backend_config(recipe("qwen35-4b-fft-64k"))["megatron"]
-    assert (fft["tensor_model_parallel_size"], fft["context_parallel_size"]) == (2, 2)
     assert fft["provider_overrides"]["recompute_granularity"] == "full"
 
 
@@ -147,6 +146,25 @@ def test_no_model_catalog_required():
         ({"sglang_cfg": {"tp_size": 2}}, "replica GPU"),
         ({"trainer_max_clients_per_instance": 7}, "max_lora_slots"),
         ({"trainer_max_clients_per_batch": 0}, "trainer_max_clients_per_batch"),
+        (
+            {
+                "miles_cfg__lora_type": "lora",
+                "miles_cfg__target_modules": ["q_proj", "in_proj_qkv", "in_proj_z"],
+            },
+            "list all of in_proj_qkv, in_proj_z, in_proj_b, in_proj_a",
+        ),
+        (
+            {
+                "miles_cfg__lora_type": "lora",
+                "miles_cfg__target_modules": [
+                    "*.in_proj_qkv",
+                    "in_proj_z",
+                    "in_proj_b",
+                    "in_proj_a",
+                ],
+            },
+            "by name",
+        ),
     ],
 )
 def test_invalid_integrations_fail_when_building_backend_settings(changes, match):
@@ -154,6 +172,15 @@ def test_invalid_integrations_fail_when_building_backend_settings(changes, match
     with pytest.raises(ValueError, match=match):
         backend_config(spec)
         serving_options(spec)
+
+
+def test_canonical_gdn_targets_do_not_require_fused_gate_adapters():
+    spec = recipe(miles_cfg__target_modules=["q_proj", "in_proj_qkv", "in_proj_z"])
+    definition = DeploymentConfig.create(spec)
+    assert definition.inference_settings["lora_target_modules"] == [
+        "q_proj",
+        "in_proj_qkvz",
+    ]
 
 
 def test_deepseek_v41_lora_recipe():
@@ -187,7 +214,7 @@ def test_deepseek_v41_lora_recipe():
     assert serving["disable_shared_experts_fusion"] is True
     assert row.recipe.inference_env["SGLANG_DSV4_FP4_DEQUANT"] == "1"
     assert serving["weight_loader_disable_mmap"] is False
-    assert row.recipe.trainer_image == "miles-v0.1.2"
+    assert row.recipe.trainer_image == "miles-v0.1.2-f2f8447"
     assert row.model == "deepseek-ai/DeepSeek-V4.1-Flash"
     assert row.asset_path == "/assets/deepseek-ai/DeepSeek-V4.1-Flash"
     assert json.loads(serving["json_model_override_args"])["vision_n_layers"] == 0
@@ -726,16 +753,19 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
 @pytest.mark.parametrize(
     "changes, match",
     [
-        ({"miles_cfg__megatron_to_hf_mode": "raw"}, "canonical_lora"),
+        (
+            {"miles_cfg__megatron_to_hf_mode": "raw", "miles_cfg__lora_type": "lora"},
+            "canonical_lora",
+        ),
         ({"trainer_nodes": 2}, "single-node"),
     ],
 )
 def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
     with pytest.raises(ValueError, match=match):
-        backend_config(recipe(trainer_image="miles-v0.2.0", **changes))
+        backend_config(recipe(trainer_image="miles-v0.2.0-15afe21", **changes))
 
 
-@pytest.mark.parametrize("image", [None, "miles-v0.1.2"])
+@pytest.mark.parametrize("image", ["", "miles-v0.1.2-f2f8447"])
 def test_canonical_slots_require_the_native_capable_image(image):
     with pytest.raises(ValueError, match="canonical_lora requires trainer_image"):
         backend_config(
@@ -1299,3 +1329,55 @@ async def test_a_config_another_frontend_container_just_added_shows_at_once(read
     await writer.add(other)
     async with client_for(reader) as client:
         assert await read(client) & {other.name, other.model}
+
+
+@pytest.mark.parametrize("algorithm", ["DFLASH", "NEXTN"])
+def test_speculative_draft_model_is_downloaded_asset_and_sglang_path(algorithm):
+    row = resolved(
+        recipe(
+            inference_draft_model="org/model-dflash",
+            inference_draft_model_revision="draft-revision",
+            sglang_cfg={"speculative_algorithm": algorithm},
+        )
+    )
+    assert row.draft_asset_path.startswith("/assets/.drafts/org/model-dflash/")
+    assert (
+        row.inference_settings["speculative_draft_model_path"] == row.draft_asset_path
+    )
+
+
+def test_speculative_draft_model_cannot_replace_base_model():
+    with pytest.raises(ValueError, match="different from the base model"):
+        resolved(recipe(inference_draft_model="Qwen/Qwen3.5-9B-Base"))
+
+
+def test_draft_revisions_have_separate_download_directories():
+    def draft(revision):
+        return resolved(
+            recipe(
+                inference_draft_model="org/draft",
+                inference_draft_model_revision=revision,
+            )
+        )
+
+    first, second = draft("revision-a"), draft("revision-b")
+    assert first.asset_path == second.asset_path
+    assert first.draft_asset_path != second.draft_asset_path
+    assert first.draft_asset_path == draft("revision-a").draft_asset_path
+    assert (
+        first.inference_settings["speculative_draft_model_path"]
+        == first.draft_asset_path
+    )
+
+
+@pytest.mark.parametrize("weights", ["", "org/custom-target"])
+def test_native_mtp_reuses_the_resolved_target_checkpoint(weights):
+    row = resolved(
+        recipe(
+            weights_revision="target-revision",
+            model_weights=weights,
+            sglang_cfg={"speculative_algorithm": "NEXTN"},
+        )
+    )
+    assert row.draft_asset_path is None
+    assert row.inference_settings["speculative_draft_model_path"] == row.asset_path

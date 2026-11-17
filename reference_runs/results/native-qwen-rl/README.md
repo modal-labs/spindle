@@ -96,3 +96,26 @@ formatting, lint, and type checks. With CI's CPU Torch 2.10.0 and the built
 router extension, the CPU suite reports 1,340 passed, 8 skipped, and one failure:
 `test_add_cli_validation_fails_before_http` for `--=1`. Argparse exits 2 rather
 than the expected 1; the PR already records the same failure on its base.
+
+## Config migration audit
+
+After integrating Spindle main `a3fd861`, the bundled set contains 53 LoRA
+recipes and five full-parameter recipes. The architecture IDs were read from
+the public Hugging Face configs and compared with the native registry in the
+current Miles pin `384d73b`. Twenty single-node dense Qwen recipes select
+`raw` / `canonical_lora`; their other resolved settings are preserved.
+
+The other recipes cannot all be switched by changing config flags:
+
+| Blocker | Recipes |
+| --- | ---: |
+| Missing `nemotron_h` native architecture | 9 |
+| Missing `gpt_oss` native architecture | 4 |
+| Selected routed expert adapters unsupported | 12 |
+| Spindle v0.2.0 single-node restriction | 8 |
+
+These are disjoint primary blockers; some recipes have additional restrictions.
+[`config-support.json`](config-support.json) records each config and actual HF
+architecture ID. Qwen3.8-27B uses `qwen3_5` internally. The 20 candidates are
+not covered by the earlier six-model results above on the final merged source.
+The new sampler image uses merged SGLang `e003cf9`, preserving older named images.

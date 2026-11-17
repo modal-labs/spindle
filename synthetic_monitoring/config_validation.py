@@ -110,8 +110,19 @@ def with_local_sources(image: modal.Image) -> modal.Image:
 
 probe_image = with_local_sources(base_image)
 # The nightly clients keep the locked Tinker SDK; only regression runs use the cookbook.
+# Work around thinking-machines-lab/tinker-cookbook#1017 until the next release.
 regression_image = with_local_sources(
     base_image.uv_pip_install("tinker-cookbook==0.6.1", "tinker==0.39.0")
+    .add_local_file(
+        str(REPO_ROOT / "synthetic_monitoring/guess_number.patch"),
+        "/opt/guess_number.patch",
+        copy=True,
+    )
+    .run_commands(
+        "python -c 'import site, subprocess; "
+        'subprocess.run(["git", "-C", site.getsitepackages()[0], '
+        '"apply", "/opt/guess_number.patch"], check=True)\''
+    )
 )
 
 slack_secret = modal.Secret.from_name("spindle-bot-slack", environment_name=MODAL_ENV)
@@ -137,7 +148,13 @@ def guess_number_renderer(model: str) -> str | None:
     try:
         names = get_recommended_renderer_names(model)
     except (KeyError, ValueError):
-        return None
+        # Cookbook 0.6.1 omits these models; their existing renderers apply.
+        return {
+            "Qwen/Qwen2.5-3B": "role_colon",
+            "Qwen/Qwen2.5-7B-Instruct": "qwen3_instruct",
+            "Qwen/Qwen3-4B": "qwen3_disable_thinking",
+            "Qwen/Qwen3.5-2B": "qwen3_5_disable_thinking",
+        }.get(model)
     for preferred in ("disable_thinking", "low_reasoning"):
         for name in names:
             if preferred in name:

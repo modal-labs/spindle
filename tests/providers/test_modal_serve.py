@@ -1,6 +1,7 @@
 import asyncio
 import json
 import signal
+from pathlib import Path
 
 import httpx
 import pytest
@@ -10,6 +11,41 @@ from spindle.engine.backend_http import HttpBackendClient
 from spindle.providers.modal import serve
 
 
+@pytest.mark.slow
+def test_backend_socket_serves_commands_and_is_removed_on_exit(monkeypatch):
+    paths = []
+    popen = serve.subprocess.Popen
+
+    def start(args, **kwargs):
+        paths.append(Path(args[-1]))
+        return popen(args, **kwargs)
+
+    async def serving(kv, make_server, **kwargs):
+        engine = await make_server()
+        try:
+            assert paths[0].is_socket()
+            await engine.accept_model(
+                "model-a", {"base_model": "test/model", "parameterization": "full"}
+            )
+            assert await engine.model_ids() == ("model-a",)
+        finally:
+            await engine.close()
+
+    monkeypatch.setattr(serve.subprocess, "Popen", start)
+    monkeypatch.setattr(serve, "serve_engine", serving)
+    serve.run_engine_with_backend(
+        None,
+        "tests.support:EchoExecutor",
+        definition_id="test",
+        revision="test",
+        instance_id="test",
+        startup_timeout=10,
+    )
+    assert len(paths) == 1
+    assert not paths[0].exists()
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize("error_type", [httpx.ReadError, httpx.ReadTimeout])
 def test_backend_transport_failure_terminates_ranks_and_exits_engine(
     monkeypatch, error_type
@@ -43,9 +79,8 @@ def test_backend_transport_failure_terminates_ranks_and_exits_engine(
         return httpx.Response(200, json={"result": None})
 
     def executor(url, **kwargs):
-        return HttpBackendClient(
-            url, transport=httpx.MockTransport(transport), **kwargs
-        )
+        kwargs["transport"] = httpx.MockTransport(transport)
+        return HttpBackendClient(url, **kwargs)
 
     async def serving(kv, make_server, **kwargs):
         engine = await make_server()

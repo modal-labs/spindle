@@ -29,6 +29,7 @@ from .contract import (
     SamplerPublication,
 )
 from .miles_config import (
+    GDN_INPUT_PROJECTIONS,
     MilesBackendConfig,
     lora_target_flags,
     parse_backend_config,
@@ -151,7 +152,7 @@ class MilesCommandBackend(Backend):
         self.job_to_slot[model_id] = slot
         self.slot_to_job[slot] = model_id
         try:
-            self.runtime.load_slot(slot, state.rank, state.alpha)
+            self.runtime.load_slot(slot, state.rank, state.alpha, seed=state.seed)
         except BaseException:
             self._release(model_id, slot)
             self.jobs.pop(model_id, None)
@@ -331,6 +332,7 @@ class MilesCommandBackend(Backend):
                 "train_attn": state.train_attn,
                 "train_mlp": state.train_mlp,
                 "train_unembed": state.train_unembed,
+                "target_modules": list(self.config.target_modules),
             },
             "optimizer_step": state.optimizer_step,
             "has_optimizer": include_optimizer,
@@ -346,8 +348,6 @@ class MilesCommandBackend(Backend):
                 "pipeline_model_parallel_size": 1,
             },
         }
-        if self._native:
-            metadata["lora_config"]["target_modules"] = list(self.config.target_modules)
         (capture_path / "metadata.json").write_text(
             json.dumps(metadata, sort_keys=True),
             encoding="utf-8",
@@ -618,8 +618,11 @@ class MilesCommandBackend(Backend):
             raise ValueError(
                 f"LoRA rank must be between 1 and {self.config.max_lora_rank}"
             )
-        if state.seed is not None:
-            raise ValueError("Miles multi-LoRA does not support per-model seeds")
+        if state.seed is not None and not self.runtime.supports_seed:
+            raise ValueError(
+                "per-model seeds require Miles load_slot(seed=...); "
+                "update Miles and redeploy the trainer"
+            )
         configured = lora_target_flags(self.config.target_modules)
         requested = (state.train_attn, state.train_mlp, state.train_unembed)
         if requested != configured:
@@ -664,11 +667,6 @@ class MilesCommandBackend(Backend):
             or float(lora.get("alpha", 0)) != state.alpha
         ):
             raise ValueError("checkpoint LoRA configuration does not match the model")
-        # Checked here because a target mismatch found by Miles disables the whole trainer.
-        if self._native and lora.get("target_modules") != list(
-            self.config.target_modules
-        ):
-            raise ValueError("checkpoint LoRA configuration does not match the model")
         expected_targets = {
             "train_attn": state.train_attn,
             "train_mlp": state.train_mlp,
@@ -676,6 +674,23 @@ class MilesCommandBackend(Backend):
         }
         if any(lora.get(name) != value for name, value in expected_targets.items()):
             raise ValueError("checkpoint LoRA targets do not match the model")
+        saved_modules = lora.get("target_modules")
+        modules = list(self.config.target_modules)
+        # Legacy checkpoints lack the field and never trained linear-attention adapters.
+        legacy = (
+            saved_modules is None
+            and not self._native
+            and not set(modules) & set(GDN_INPUT_PROJECTIONS)
+        )
+        # Checked here because a target mismatch found by Miles disables the whole trainer.
+        if not legacy and set(saved_modules or ()) != set(modules):
+            raise ValueError(
+                "checkpoint LoRA target_modules do not match the deployment: "
+                f"saved {saved_modules or 'none recorded'}, deployment {modules}. "
+                "Load it into a config whose miles_cfg.target_modules match the "
+                "saved list; see 'Older Qwen3.5 LoRA checkpoints' in "
+                "docs/deployment-configs.md"
+            )
         expected_topology = {
             "world_size": self.config.world_size,
             "data_parallel_size": self.config.data_parallel_size,

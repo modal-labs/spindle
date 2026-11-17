@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import model as qwen3_vl_model
@@ -35,7 +37,18 @@ except ImportError:
 
     from . import tinker_cp
 
-from . import allgather_cp_lora, expert_lora_compat, host_syncs
+from spindle.patching import same_signature
+
+from . import (
+    allgather_cp_lora,
+    expert_grouped_gemm,
+    expert_lora_compat,
+    gradient_accumulation,
+    host_syncs,
+    mamba_packing,
+    moe_permute,
+    response_logits,
+)
 from .actor_shared import (
     ProfiledActor,
     install_replay_patches,
@@ -56,6 +69,7 @@ except ImportError as error:
 if tinker_cp is not None:
     tinker_cp.install()
 
+gradient_accumulation.install(lora_model)
 install_replay_patches(
     megatron_model=megatron_model,
     lora_model=lora_model,
@@ -72,6 +86,10 @@ install_qwen3_vl_cp_position_ids(
 
 host_syncs.install()
 allgather_cp_lora.install(megatron_model)
+mamba_packing.install(megatron_model)
+moe_permute.install()
+response_logits.install(logit_processors)
+expert_grouped_gemm.install()
 
 
 def _publish_checkpoints_across_nodes() -> None:
@@ -88,7 +106,7 @@ def _sync_checkpoint_volume(action: str) -> None:
 class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
     """Upstream multi-LoRA actor with Qwen MTP and weights-only save support."""
 
-    def init(self, args, role, **kwargs):
+    def init(self, args, role, **kwargs):  # ty: ignore[incompatible-method-override]
         _use_distributed_timeout_for_gloo(args.distributed_timeout_minutes)
         # Miles's LoRA builder inherits checkpoint MTP heads without honoring
         # enable_mtp_training. Qwen3.5 then injects an auxiliary backward loss
@@ -99,6 +117,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             return result
         original = AutoBridge.to_megatron_provider
 
+        @same_signature(original)
         def provider_without_mtp(bridge, *provider_args, **provider_kwargs):
             provider = original(bridge, *provider_args, **provider_kwargs)
             provider.mtp_num_layers = None
@@ -120,11 +139,17 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
         alpha: float,
         ckpt_path: str | None = None,
         load_optimizer: bool = True,
+        seed: int | None = None,
     ):
         if ckpt_path:
             _sync_checkpoint_volume("reload")
         result = super().load_slot(
-            slot, rank, alpha, ckpt_path=ckpt_path, load_optimizer=load_optimizer
+            slot,
+            rank,
+            alpha,
+            ckpt_path=ckpt_path,
+            load_optimizer=load_optimizer,
+            **({"seed": seed} if seed is not None and ckpt_path is None else {}),
         )
         if ckpt_path and expert_lora_compat.enabled():
             expert_lora_compat.restore_factory_weights(
@@ -175,6 +200,8 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
         weights = checkpoint._slot_weights_sharded_state_dict(self.model, slot)
         sharded = {checkpoint._WEIGHTS_KEY: weights}
         checkpoint._canonicalize_slot_keys(sharded, slot)
-        checkpoint_io.write_checkpoint_dir(
-            path, lambda temporary: dist_checkpointing.save(sharded, str(temporary))
-        )
+
+        def _save(temporary: Path) -> None:
+            dist_checkpointing.save(sharded, str(temporary))
+
+        checkpoint_io.write_checkpoint_dir(path, _save)

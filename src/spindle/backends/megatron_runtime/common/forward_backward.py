@@ -20,6 +20,7 @@ from spindle.replay import REPLAY_FIELDS
 from spindle.telemetry import backend as telemetry
 
 from ...contract import ForwardBatch
+from .chunked_logprobs import chunked_logprobs, materialize_logits
 
 
 def log_packing(
@@ -127,6 +128,8 @@ def _loss_config(loss_name: str, config: dict[str, float]) -> dict[str, float]:
         raise ValueError("tv_threshold must be non-negative")
     return values
 
+
+DUMMY_TOKENS = 128
 
 RL_LOSSES = frozenset(
     {
@@ -398,16 +401,93 @@ def pack_microbatches(
     return packed
 
 
-def shard_microbatches(
-    microbatches: list[dict[str, Any]],
-    *,
-    data_parallel_rank: int,
+def _short_dummy(source: dict[str, Any], tokens: int) -> dict[str, Any]:
+    dummy = {
+        "job_ids": source["job_ids"][:1],
+        "output_indices": (-1,),
+        "starts": (0,),
+        "original_lengths": (tokens,),
+        "is_dummy": (True,),
+        "tokens": torch.zeros(tokens, dtype=source["tokens"].dtype),
+        "labels": torch.full((tokens,), -100, dtype=source["labels"].dtype),
+        "loss_mask": torch.zeros(tokens, dtype=source["loss_mask"].dtype),
+        "sampling_logprobs": torch.zeros(
+            tokens, dtype=source["sampling_logprobs"].dtype
+        ),
+        "advantages": torch.zeros(tokens, dtype=source["advantages"].dtype),
+        "position_ids": torch.arange(tokens),
+        "token_indices": torch.arange(tokens),
+        "loss_name": source["loss_name"],
+        "loss_config": source["loss_config"],
+        "cu_seqlens": torch.tensor([0, tokens], dtype=torch.int32),
+        "max_seqlen": tokens,
+    }
+    if "adapter_token_counts" in source:
+        counts = torch.zeros_like(source["adapter_token_counts"])
+        counts[int(source["adapter_token_counts"].argmax())] = tokens
+        dummy["adapter_token_counts"] = counts
+    return dummy
+
+
+def balance_by_tokens(
+    items: list[dict[str, Any]],
     data_parallel_size: int,
+) -> list[list[dict[str, Any]]]:
+    """Split items across data-parallel ranks with near-equal token counts.
+
+    Longest first, each to the rank with the fewest tokens so far. Every rank
+    computes the same split, so no communication is needed.
+    """
+    groups: list[list[dict[str, Any]]] = [[] for _ in range(data_parallel_size)]
+    loads = [0] * data_parallel_size
+    for item in sorted(
+        items, key=lambda item: int(item["tokens"].numel()), reverse=True
+    ):
+        rank = loads.index(min(loads))
+        groups[rank].append(item)
+        loads[rank] += int(item["tokens"].numel())
+    return groups
+
+
+def assign_microbatches(
+    sequences: list[dict[str, Any]],
+    data_parallel_size: int,
+    pack,
+) -> list[list[dict[str, Any]]]:
+    """Pack sequences into each data-parallel rank's micro-batches.
+
+    Balancing sequences before packing evens out tokens best, but can need an
+    extra micro-batch when the batch nearly fills every rank. Keep the plan
+    with fewer micro-batches, then the one with the lighter busiest rank.
+    """
+
+    def cost(groups):
+        return (
+            max(len(group) for group in groups),
+            max(sum(int(mb["tokens"].numel()) for mb in group) for group in groups),
+        )
+
+    by_sequence = [
+        pack(group) for group in balance_by_tokens(sequences, data_parallel_size)
+    ]
+    by_bin = balance_by_tokens(pack(sequences), data_parallel_size)
+    return min(by_sequence, by_bin, key=cost)
+
+
+def pad_microbatches(
+    local: list[dict[str, Any]],
+    count: int,
+    *,
+    source: dict[str, Any],
+    dummy_tokens: int,
 ) -> list[dict[str, Any]]:
-    local = list(microbatches[data_parallel_rank::data_parallel_size])
-    target_count = math.ceil(len(microbatches) / data_parallel_size)
-    while len(local) < target_count:
-        source = microbatches[0]
+    """Pad a rank's micro-batches to ``count`` with dummies that carry no loss."""
+    local = list(local)
+    while len(local) < count:
+        if "sampling_mask_offsets" not in source:
+            local.append(_short_dummy(source, dummy_tokens))
+            continue
+        # Replay losses index the support tensors per token, so copy a real batch.
         dummy = {
             key: value.clone() if torch.is_tensor(value) else value
             for key, value in source.items()
@@ -513,6 +593,9 @@ def make_forward_step(
     *,
     route_adapters: bool = True,
     defer_fp32_logits: bool = False,
+    deferred_output: dict | None = None,
+    logprob_chunk_tokens: int | None = None,
+    fp32_logits: bool = False,
 ):
     from megatron.bridge.training.utils.packed_seq_utils import (
         get_packed_seq_cp_partition_indices,
@@ -542,9 +625,10 @@ def make_forward_step(
                 batch["cu_seqlens"].numel(),
                 device=device,
             ),
-            "max_seqlen": torch.tensor(batch["max_seqlen"], device=device),
         }
         packed_seq_params = get_packed_seq_params(packed_metadata)
+        packed_seq_params.max_seqlen_q = batch["max_seqlen"]
+        packed_seq_params.max_seqlen_kv = batch["max_seqlen"]
 
         context_parallel_size = parallel_state.get_context_parallel_world_size()
         if context_parallel_size > 1:
@@ -584,7 +668,11 @@ def make_forward_step(
             if context_parallel_size > 1:
                 batch["adapter_token_counts"] //= context_parallel_size
             set_tokens_per_adapter_slot(model, batch["adapter_token_counts"])
-        model_kwargs = {"fp32_output": False} if defer_fp32_logits else {}
+        model_kwargs = (
+            {"fp32_output": False}
+            if defer_fp32_logits or deferred_output is not None
+            else {}
+        )
         logits = model(
             input_ids=batch["tokens"].unsqueeze(0),
             position_ids=batch["position_ids"].unsqueeze(0),
@@ -595,7 +683,22 @@ def make_forward_step(
 
         def loss_func(output):
             diagnostics = {}
-            if "sampling_mask_offsets" in batch:
+            temperature = batch["loss_config"].get("sampling_temperature", 1.0)
+            replay = "sampling_mask_offsets" in batch
+            if logprob_chunk_tokens is not None and not replay:
+                logprobs = chunked_logprobs(
+                    output,
+                    deferred_output["weight"],
+                    batch["labels"],
+                    chunk=logprob_chunk_tokens,
+                    fp32=fp32_logits,
+                    temperature=temperature,
+                )
+            elif replay:
+                if deferred_output is not None:
+                    output = materialize_logits(
+                        output, deferred_output["weight"], fp32=fp32_logits
+                    )
                 logprobs, batch["score_correction"], diagnostics = replay_logprobs(
                     output,
                     batch,
@@ -604,7 +707,6 @@ def make_forward_step(
                     tp_group=parallel_state.get_tensor_model_parallel_group(),
                 )
             else:
-                temperature = batch["loss_config"].get("sampling_temperature", 1.0)
                 logprobs = _vocab_parallel_logprobs(
                     output if temperature == 1.0 else output / temperature,
                     batch["labels"],
@@ -867,12 +969,21 @@ def prepare_microbatches(
     input_sequences = len(sequences)
     context_parallel_size = parallel_state.get_context_parallel_world_size()
     token_capacity = config.packed_token_capacity()
-    packed = pack_microbatches(
-        sequences,
-        max_tokens=token_capacity,
-        pad_to_multiple=(2 * context_parallel_size if context_parallel_size > 1 else 1),
-        total_pad_to_multiple=config.sequence_padding_multiple(),
+    pad_to_multiple = 2 * context_parallel_size if context_parallel_size > 1 else 1
+    data_parallel_size = parallel_state.get_data_parallel_world_size(
+        with_context_parallel=False,
     )
+    groups = assign_microbatches(
+        sequences,
+        data_parallel_size,
+        lambda items: pack_microbatches(
+            items,
+            max_tokens=token_capacity,
+            pad_to_multiple=pad_to_multiple,
+            total_pad_to_multiple=config.sequence_padding_multiple(),
+        ),
+    )
+    packed = [microbatch for group in groups for microbatch in group]
     packing_metrics = log_packing(
         batch,
         packed,
@@ -881,15 +992,14 @@ def prepare_microbatches(
         token_capacity=token_capacity,
         rank=rank,
     )
+    unit = config.sequence_padding_multiple()
+    local = groups[parallel_state.get_data_parallel_rank(with_context_parallel=False)]
     return (
-        shard_microbatches(
-            packed,
-            data_parallel_rank=parallel_state.get_data_parallel_rank(
-                with_context_parallel=False,
-            ),
-            data_parallel_size=parallel_state.get_data_parallel_world_size(
-                with_context_parallel=False,
-            ),
+        pad_microbatches(
+            local,
+            max(len(group) for group in groups),
+            source=packed[0],
+            dummy_tokens=unit * math.ceil(DUMMY_TOKENS / unit),
         ),
         packing_metrics,
     )
@@ -903,6 +1013,9 @@ def run_megatron_pipeline(
     forward_only: bool,
     route_adapters: bool,
     defer_fp32_logits: bool = False,
+    deferred_output: dict | None = None,
+    logprob_chunk_tokens: int | None = None,
+    fp32_logits: bool = False,
 ) -> tuple[
     dict[str, list[dict[str, torch.Tensor]]],
     dict[str, dict[str, torch.Tensor]],
@@ -917,6 +1030,9 @@ def run_megatron_pipeline(
         metric_collector,
         route_adapters=route_adapters,
         defer_fp32_logits=defer_fp32_logits,
+        deferred_output=deferred_output,
+        logprob_chunk_tokens=logprob_chunk_tokens,
+        fp32_logits=fp32_logits,
     )
     model_config = get_model_config(model[0])
     model_config.grad_scale_func = optimizer.scale_loss

@@ -1,7 +1,6 @@
 import asyncio
 import json
 import re
-import socket
 import subprocess
 import sys
 import threading
@@ -198,22 +197,22 @@ def test_backend_shutdown_is_idempotent() -> None:
     asyncio.run(run())
 
 
-def test_backend_runner_serves_executor_in_subprocess() -> None:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+def test_backend_runner_serves_executor_in_subprocess(tmp_path) -> None:
+    socket_path = str(tmp_path / "backend.sock")
     backend = subprocess.Popen(
         [
             sys.executable,
             "-m",
             "spindle.engine.backend_http",
             "tests.support:EchoExecutor",
-            str(port),
+            socket_path,
         ]
     )
 
     async def run() -> None:
-        executor = HttpBackendClient(f"http://127.0.0.1:{port}")
+        executor = HttpBackendClient(
+            "http://backend", transport=httpx.AsyncHTTPTransport(uds=socket_path)
+        )
         deadline = time.time() + 10
         while True:
             assert backend.poll() is None, "backend exited"

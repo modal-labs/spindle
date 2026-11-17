@@ -3,18 +3,26 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "qwen35-4b-fft-64k"
+    trainer_image = "megatron-2d1fa8d"
+    inference_image = "sglang-v0.5.23-c4182b2"
     parameterization = "full"
     model = "Qwen/Qwen3.5-4B"
     max_context_length = 65536
-    trainer_gpu = "H100"
+    trainer_gpu = ["B300", "B200"]
     trainer_gpus_per_node = 4
+    trainer_env = {
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCHINDUCTOR_COMPILE_THREADS": "1",
+        "TORCH_ALLOW_TF32_CUBLAS_OVERRIDE": "1",
+    }
     backend = "megatron"
     megatron_cfg = {
-        "tensor_model_parallel_size": 2,
-        "context_parallel_size": 2,
-        "sequence_parallel": True,
+        "tensor_model_parallel_size": 1,
+        "context_parallel_size": 1,
+        "sequence_parallel": False,
         "micro_batch_size": 1,
         "max_tokens_per_microbatch": 65536,
+        "logprob_chunk_tokens": 8192,
         "defer_fp32_logits": True,
         "fp32_lm_head": True,
         "use_distributed_optimizer": True,

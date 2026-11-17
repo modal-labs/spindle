@@ -3,6 +3,7 @@ import json
 import pytest
 
 from spindle.backends.deployment import backend_config, serving_options
+from spindle.backends.miles_config import GDN_INPUT_PROJECTIONS
 from spindle.control_plane.deployments import FrontendSettings
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.modal.deployment_configs import (
@@ -24,17 +25,49 @@ def test_all_packaged_recipes_validate_offline(path):
     if spec.parameterization == "lora":
         resolved = DeploymentConfig.create(spec)
         # Legacy Megatron selectors also match vision layers in current Bridge.
-        # Samplers match the path after a wildcard as a module-name suffix.
-        assert {
+        # Samplers match the path after a wildcard as a module-name suffix, and
+        # serve the Qwen3.5 linear-attention input projections fused.
+        expected = {
             target.rsplit("*.", 1)[-1] for target in spec.miles_cfg["target_modules"]
-        } == set(resolved.inference_settings["lora_target_modules"])
+        }
+        if expected & set(GDN_INPUT_PROJECTIONS):
+            expected = expected - set(GDN_INPUT_PROJECTIONS)
+            expected |= {"in_proj_qkvz", "in_proj_ba"}
+        assert expected == set(resolved.inference_settings["lora_target_modules"])
+
+
+@pytest.mark.parametrize(
+    "preset,algorithm,draft",
+    [
+        ("qwen3-8b-lora-32k", "DFLASH", "z-lab/Qwen3-8B-DFlash-b16"),
+        ("qwen35-9b-instruct-lora-32k", "DFLASH", "modal-labs/Qwen3.5-9B-DFlash"),
+        ("qwen38-27b-lora-32k", "DFLASH", "incoai/Qwen3.8-27B-DFlash2"),
+        ("glm53-flash-lora-32k", "DFLASH", "modal-labs/GLM-5.3-Flash-DFlash"),
+        ("qwen35-4b-lora-32k", "NEXTN", ""),
+        ("qwen3-4b-lora-32k", None, ""),
+        ("qwen25-7b-instruct-lora-32k", None, ""),
+        ("qwen25-3b-lora-32k", None, ""),
+        ("qwen35-2b-lora-32k", None, ""),
+    ],
+)
+def test_speculative_defaults_use_model_specific_drafts(preset, algorithm, draft):
+    spec = load(config_path(preset))
+    deployment = DeploymentConfig.create(spec)
+    assert spec.inference_draft_model == draft
+    serving = deployment.inference_settings
+    assert serving.get("speculative_algorithm") == algorithm
+    if draft:
+        assert serving["speculative_draft_model_path"] == deployment.draft_asset_path
+    elif algorithm == "NEXTN":
+        assert serving["speculative_draft_model_path"] == deployment.asset_path
+    else:
+        assert "speculative_draft_model_path" not in serving
+        assert spec.inference_gpu == "H100"
 
 
 @pytest.mark.parametrize("preset", ["qwen35-35b-a3b-fft-64k", "qwen36-35b-a3b-fft-64k"])
 def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
     config = backend_config(load(config_path(preset)))["megatron"]
-    assert config["tensor_model_parallel_size"] == 4
-    assert config["context_parallel_size"] == 2
     assert config["expert_model_parallel_size"] == 8
     assert config["provider_overrides"]["moe_token_dispatcher_type"] == "alltoall"
 
@@ -42,16 +75,33 @@ def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
 @pytest.mark.parametrize(
     "preset",
     [
-        "qwen3-8b-lora-32k",
-        "qwen3-4b-lora-32k",
         "qwen25-3b-lora-32k",
         "qwen25-7b-instruct-lora-32k",
+        "qwen35-2b-lora-32k",
+        "qwen35-4b-lora-32k",
+        "qwen35-9b-instruct-lora-16k",
+        "qwen35-9b-instruct-lora-16k-dp2",
+        "qwen35-9b-instruct-lora-256k",
+        "qwen35-9b-instruct-lora-32k",
+        "qwen35-9b-lora-128k",
+        "qwen35-9b-lora-16k",
+        "qwen35-9b-lora-16k-single",
+        "qwen35-9b-lora-2k",
+        "qwen35-9b-lora-64k",
+        "qwen38-27b-lora-128k",
+        "qwen38-27b-lora-16k",
+        "qwen38-27b-lora-16k-b200",
+        "qwen38-27b-lora-32k",
+        "qwen38-27b-lora-64k",
+        "qwen3-4b-lora-32k",
+        "qwen3-8b-lora-32k",
     ],
 )
 def test_dense_qwen_recipes_use_native_canonical_slots(preset):
     spec = load(config_path(preset))
     trainer = backend_config(spec)["miles"]
-    assert spec.trainer_image == "miles-v0.2.0"
+    assert spec.trainer_image == "miles-v0.2.0-15afe21"
+    assert spec.inference_image == "sglang-v0.5.23-e003cf9"
     assert trainer["megatron_to_hf_mode"] == "raw"
     assert trainer["lora_type"] == "canonical_lora"
 
