@@ -74,7 +74,7 @@ image = runtime_image.add_local_python_source("spindle", ignore=ignore_config_so
 # Serves LoRA on all Qwen3.5 linear-attention projections, including in_proj_b and in_proj_a.
 gdn_lora_image = runtime_image_for(
     image=SGLANG_IMAGE,
-    branch="spindle-sglang-v0.5.23-gdn-lora",
+    branch=SGLANG_BRANCH,
     revision="803bccbcb947d3041f5b57e11c986f8523a0cb56",
     core_packages=CORE_SAMPLER_PACKAGES,
 ).add_local_python_source("spindle", ignore=ignore_config_source)
