@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import logging
+import os
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
@@ -404,12 +408,7 @@ class HttpBackendClient:
 
 
 def main() -> None:
-    import asyncio
-    import importlib
-    import os
-    import sys
-
-    reference, port = sys.argv[1], int(sys.argv[2])
+    reference, socket_path = sys.argv[1:3]
     module_name, _, attr = reference.partition(":")
     startup = timeline(BACKEND_COMPONENT, rank=int(os.environ.get("RANK", "0")))
     startup.mark("backend_process_started")
@@ -420,11 +419,9 @@ def main() -> None:
     if int(os.environ.get("RANK", "0")) > 0:
         executor.run_follower_loop()
         return
-    import uvicorn
-
     app = create_backend_app(executor, startup=startup)
     try:
-        uvicorn.run(app, host="127.0.0.1", port=port)
+        uvicorn.run(app, uds=socket_path)
     finally:
         if not app.state.executor_closed:
             asyncio.run(executor.close())

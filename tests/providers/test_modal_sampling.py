@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import modal
 
+from spindle.control_plane.deployments import RegistryUnavailable
 from spindle.providers import SamplingTask, SamplingTaskStatus
 from spindle.providers.local import InMemorySessionKeyValueStores
 from spindle.providers.modal.kv import (
@@ -115,6 +116,7 @@ def test_retrieve_maps_modal_call_outcomes() -> None:
         assert transient.status == SamplingTaskStatus.PENDING
 
         assert await retrieve_with(modal.exception.NotFoundError("gone")) is None
+        assert await retrieve_with(RegistryUnavailable("rate limit exceeded")) is None
 
         failed = await retrieve_with(RuntimeError("bad request"))
         assert failed.status == SamplingTaskStatus.FAILED

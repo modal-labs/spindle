@@ -1,7 +1,7 @@
-from spindle.configs.qwen3_8b_lora_32k import Config as Parent
+from spindle.configs._qwen3_lora import Qwen3Lora32k
 
 
-class Config(Parent):
+class Config(Qwen3Lora32k):
     name = "qwen25-7b-instruct-lora-32k"
     model = "Qwen/Qwen2.5-7B-Instruct"
     inference_gpus_per_node = 1

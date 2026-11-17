@@ -103,6 +103,12 @@ def _distributed_actor(monkeypatch, identities: list[str], via_task_id: bool = T
 
 def _load_actor(monkeypatch):
     importlib.import_module("spindle.backends.miles_runtime")
+    # These need real torch; import them before torch is stubbed below.
+    importlib.import_module("spindle.backends.miles_runtime.replay_data")
+    importlib.import_module("spindle.backends.score_centering")
+    monkeypatch.delitem(
+        sys.modules, "spindle.backends.miles_runtime.actor_shared", raising=False
+    )
     _module(monkeypatch, "modal")
     torch = _module(monkeypatch, "torch")
     _module(monkeypatch, "torch.distributed")
@@ -250,7 +256,9 @@ def test_gloo_group_waits_as_long_as_the_distributed_timeout(
 ) -> None:
     actor = _load_actor(monkeypatch)
     groups = []
-    actor.dist.new_group = lambda **kwargs: groups.append(kwargs) or "gloo"
+    sys.modules["torch.distributed"].new_group = lambda **kwargs: (
+        groups.append(kwargs) or "gloo"
+    )
     actor._use_distributed_timeout_for_gloo(minutes)
     assert sys.modules["miles.ray.train_actor"].init_gloo_group() == "gloo"
     assert groups == [{"backend": "gloo", "timeout": timedelta(minutes=expected)}]
@@ -265,8 +273,8 @@ def test_checkpoint_is_published_from_committed_state(monkeypatch, tmp_path) -> 
     actor.volumes.modal.Volume = types.SimpleNamespace(
         from_name=lambda name: _FakeVolume(events)
     )
-    actor.dist.is_available = lambda: False
-    actor.dist.is_initialized = lambda: False
+    sys.modules["torch.distributed"].is_available = lambda: False
+    sys.modules["torch.distributed"].is_initialized = lambda: False
 
     def original(path, write_shards, *args, **kwargs):
         raise AssertionError("miles' rank-0 rename cannot see other nodes' shards")
@@ -309,8 +317,8 @@ def test_publishing_leaves_rank_zero_its_own_files(monkeypatch, tmp_path) -> Non
     actor.volumes.modal.Volume = types.SimpleNamespace(
         from_name=lambda name: _FakeVolume(events, extra=("rank00000",))
     )
-    actor.dist.is_available = lambda: False
-    actor.dist.is_initialized = lambda: False
+    sys.modules["torch.distributed"].is_available = lambda: False
+    sys.modules["torch.distributed"].is_initialized = lambda: False
     actor.checkpoint_io.write_checkpoint_dir = lambda *args, **kwargs: None
     actor._publish_checkpoints_across_nodes()
     monkeypatch.setattr(actor.volumes, "sync_checkpoint_volume", lambda action: None)
@@ -351,8 +359,8 @@ def test_a_checkpoint_missing_a_peer_shard_is_not_published(
     actor.volumes.modal.Volume = types.SimpleNamespace(
         from_name=lambda name: _FakeVolume([])
     )
-    actor.dist.is_available = lambda: False
-    actor.dist.is_initialized = lambda: False
+    sys.modules["torch.distributed"].is_available = lambda: False
+    sys.modules["torch.distributed"].is_initialized = lambda: False
     actor.checkpoint_io.write_checkpoint_dir = lambda *args, **kwargs: None
     actor._publish_checkpoints_across_nodes()
     monkeypatch.setattr(actor.volumes, "sync_checkpoint_volume", lambda action: None)
