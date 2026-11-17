@@ -55,7 +55,35 @@ def trainer() -> None:
         [sys.executable, "-c", "import spindle.backends.miles_runtime.actor_v020"],
         check=True,
     )
+    miles_regressions()
     parse_training_config()
+
+
+def miles_regressions() -> None:
+    for suite, cutoff in [
+        (
+            ["tests/fast/backends/megatron_utils/lora/native"],
+            "tests/fast/backends/megatron_utils/lora/native",
+        ),
+        (
+            ["tests/fast/launch_scripts", "tests/manual/launch_scripts"],
+            "tests/fast/launch_scripts",
+        ),
+    ]:
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-o",
+                "addopts=",
+                f"--confcutdir={cutoff}",
+                *suite,
+            ],
+            cwd="/root/miles",
+            check=True,
+        )
 
 
 def parse_training_config() -> None:

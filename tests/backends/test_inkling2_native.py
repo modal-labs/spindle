@@ -143,14 +143,14 @@ def test_inkling2_mixed_slots_match_independent_adapters_and_keep_sink_frozen(
 
 def test_inkling2_native_targets_reject_experts() -> None:
     config = {"model_type": "inkling2", "text_config": {"n_shared_experts": 0}}
-    targets = resolve_hf_lora_targets(config)
+    targets = resolve_hf_lora_targets(config, target_modules=["attn", "unembed"])
     options = dict(
         hf_modules=[], lora_type="canonical_lora", experts_shared_outer_loras=False
     )
     served = resolve_adapter_targets(config, targets, **options)
     assert "lm_head" in served
     assert not any("experts" in name for name in targets)
-    with pytest.raises(AssertionError, match="unexpected"):
+    with pytest.raises(AssertionError, match="shared-outer expert adapters"):
         resolve_adapter_targets(
             config, [*targets, "model.llm.layers.*.mlp.experts.down_proj"], **options
         )

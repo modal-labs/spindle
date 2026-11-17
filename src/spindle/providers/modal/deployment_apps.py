@@ -70,7 +70,7 @@ TRAINER_IMAGES = {
     "miles-v0.1.2-f2f8447": miles_v012_image,
     "miles-v0.1.2-464efc9-glm53": glm53_trainer_image,
     "miles-v0.2.0-15afe21": miles_v020_image,
-    "miles-v0.2.0-eac7f8c-inkling2-attn": inkling2_trainer_image,
+    "miles-v0.2.0-e186d97-inkling2-attn": inkling2_trainer_image,
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {

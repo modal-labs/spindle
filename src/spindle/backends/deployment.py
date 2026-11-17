@@ -130,7 +130,7 @@ def backend_config(spec, asset_path="/assets/pending"):
     if spec.trainer_max_clients_per_instance > config.max_lora_slots:
         raise ValueError("max_clients_per_instance exceeds max_lora_slots")
     if spec.trainer_image.startswith("miles-v0.2.0-"):
-        inkling2 = spec.trainer_image == "miles-v0.2.0-eac7f8c-inkling2-attn"
+        inkling2 = spec.trainer_image == "miles-v0.2.0-e186d97-inkling2-attn"
         if inkling2:
             if config.model_type != "inkling2" or config.megatron_to_hf_mode != "raw":
                 raise ValueError(
