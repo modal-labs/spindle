@@ -187,7 +187,7 @@ def test_deepseek_v41_lora_recipe():
     assert serving["disable_shared_experts_fusion"] is True
     assert row.recipe.inference_env["SGLANG_DSV4_FP4_DEQUANT"] == "1"
     assert serving["weight_loader_disable_mmap"] is False
-    assert row.recipe.trainer_image == "miles-v0.1.2"
+    assert row.recipe.trainer_image == "miles-v0.1.2-f2f8447"
     assert row.model == "deepseek-ai/DeepSeek-V4.1-Flash"
     assert row.asset_path == "/assets/deepseek-ai/DeepSeek-V4.1-Flash"
     assert json.loads(serving["json_model_override_args"])["vision_n_layers"] == 0
@@ -732,7 +732,7 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
 )
 def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
     with pytest.raises(ValueError, match=match):
-        backend_config(recipe(trainer_image="miles-v0.2.0", **changes))
+        backend_config(recipe(trainer_image="miles-v0.2.0-15afe21", **changes))
 
 
 def test_backend_dispatch_rejects_unknown_backend():

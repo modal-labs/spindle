@@ -3,6 +3,8 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "nemotron3-nano-30b-a3b-lora-64k"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
     max_context_length = 65536
     trainer_gpu = "H200"
