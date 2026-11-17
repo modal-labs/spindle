@@ -43,11 +43,11 @@ def test_failed_pass_keeps_earlier_gradients(monkeypatch):
         zero_grad_buffer=lambda: buffer.grad_data.zero_(),
     )
 
-    def run_forward_backward(*args):
+    def run_forward_backward_pass(*args):
         buffer.grad_data.add_(4.0)
         raise torch.OutOfMemoryError("CUDA out of memory")
 
-    lora_model = SimpleNamespace(run_forward_backward=run_forward_backward)
+    lora_model = SimpleNamespace(run_forward_backward_pass=run_forward_backward_pass)
     gradient_accumulation.install(lora_model)
     args = Namespace(
         tensor_model_parallel_size=1,
@@ -55,7 +55,7 @@ def test_failed_pass_keeps_earlier_gradients(monkeypatch):
         expert_tensor_parallel_size=1,
     )
     with pytest.raises(torch.OutOfMemoryError):
-        lora_model.run_forward_backward(args, 0, [chunk], "batch")
+        lora_model.run_forward_backward_pass(args, None, None, [chunk], 1)
     assert buffer.grad_data.item() == 8.0
 
 

@@ -19,17 +19,17 @@ def run_pass(expert_parallel: int, *, sequence_parallel_adapter: bool = False) -
         params_with_grad=[adapter],
     )
 
-    def run_forward_backward(*args: object) -> None:
+    def run_forward_backward_pass(*args: object) -> None:
         expert_buffer.grad_data.add_(4.0).mul_(0.25)
 
-    lora_model = SimpleNamespace(run_forward_backward=run_forward_backward)
+    lora_model = SimpleNamespace(run_forward_backward_pass=run_forward_backward_pass)
     gradient_accumulation.install(lora_model)
     args = Namespace(
         tensor_model_parallel_size=2,
         expert_model_parallel_size=expert_parallel,
         expert_tensor_parallel_size=1,
     )
-    lora_model.run_forward_backward(args, 0, [chunk], "batch")
+    lora_model.run_forward_backward_pass(args, None, None, [chunk], 1)
     return expert_buffer.grad_data.item()
 
 

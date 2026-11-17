@@ -139,6 +139,7 @@ def _load_actor(monkeypatch):
     checkpoint = _module(monkeypatch, "miles.backends.megatron_utils.lora.checkpoint")
     lora_model = _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
     lora_model.run_forward_backward = lambda *args, **kwargs: None
+    lora_model.run_forward_backward_pass = lambda *args, **kwargs: None
     lora_model.aggregate_train_losses = lambda *args, **kwargs: {}
     _module(
         monkeypatch, "miles.backends.training_utils.replay_data"
@@ -260,8 +261,8 @@ class _FakeVolume:
 
 def test_training_passes_keep_earlier_gradients(monkeypatch) -> None:
     _load_actor(monkeypatch)
-    run = sys.modules["miles.backends.megatron_utils.lora.model"].run_forward_backward
-    assert run.__spindle_gradient_accumulation__
+    lora_model = sys.modules["miles.backends.megatron_utils.lora.model"]
+    assert lora_model.run_forward_backward_pass.__spindle_gradient_accumulation__
 
 
 @pytest.mark.parametrize("minutes, expected", [(120, 120), (10, 30)])
