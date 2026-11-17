@@ -33,7 +33,8 @@ class Config(BaseConfig):
     sglang_cfg = {
         "tp_size": 1,
         "mem_fraction_static": 0.85,
-        "max_running_requests": 32,
+        "max_running_requests": 64,
+        "cuda_graph_max_bs_decode": 64,
         "max_queued_requests": 4,
         "weight_update_max_compile_group_gb": 16,
     }
