@@ -212,6 +212,7 @@ ignore = [
 "tests/backends/test_miles.py" = ["ANN"]
 "tests/backends/test_miles_actor.py" = ["ANN"]
 "tests/backends/test_miles_data.py" = ["ANN"]
+"tests/backends/test_miles_out_of_memory.py" = ["ANN"]
 "tests/backends/test_miles_runtime.py" = ["ANN"]
 "tests/backends/test_miles_score_centering.py" = ["ANN"]
 "tests/backends/test_multi_targets.py" = ["ANN"]
