@@ -22,6 +22,7 @@ is relative to the TOML file.
 ```toml
 config = "qwen35-4b-lora-32k"
 script = "../scripts/dapo_math.py"
+tokenizer = { model = "Qwen/Qwen3.5-4B", revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a" }
 ```
 
 The existing H100 reference pins its hardware and client capacity in
@@ -29,14 +30,17 @@ The existing H100 reference pins its hardware and client capacity in
 existing dotted config override mechanism,
 for example `inference_gpu = "H100!"` to select exact H100 hardware. Optional
 `script_args = []` contains literal CLI arguments. Dataset, grading, learning
-rate, batch size and seed stay in the Tinker script. The launcher supplies
-`--base-model` with the resolved deployment name and passes the output path;
-scripts use that value directly in `create_lora_training_client` to select the
-exact recipe. Script arguments cannot override these two values.
+rate, batch size and seed stay in the Tinker script. Every definition requires
+a typed `tokenizer` with its Hugging Face model ID and full commit revision.
+The launcher supplies `--tokenizer MODEL REVISION`, the output path, and
+`--base-model` with the resolved deployment name. Scripts use that deployment
+name in `create_lora_training_client` to select the exact recipe.
+Script arguments cannot override these values. Direct callers of
+`dapo_math.py` must also pass `--tokenizer MODEL REVISION`; it has no default.
 
 `dapo_qwen38_27b_multinode.toml` uses the same workload with a pinned Qwen3.8-27B
-tokenizer, selected by `--tokenizer MODEL REVISION`. It inherits the committed
-`qwen38-27b-lora-256k` topology: two eight-H200 trainer nodes, TP2/CP8, and two
+tokenizer in its definition. It inherits the committed `qwen38-27b-lora-256k`
+topology: two eight-H200 trainer nodes, TP2/CP8, and two
 four-H200 sampler replicas. Reference overrides select the registered Miles
 v0.2.0 trainer image, exact H200 hardware and one training client/adapter slot.
 The workload generates at most 2,048 response tokens; it does not validate 256K

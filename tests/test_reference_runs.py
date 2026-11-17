@@ -54,9 +54,11 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         "Path(output).write_text(json.dumps([sys.argv[1:], VALUE, tinker.reference_test]))\n"
     )
     definition = folder / "run.toml"
+    revision = "a" * 40
     definition.write_text(
         'config = "qwen35-4b-lora-32k"\nscript = "workload.py"\n'
         'script_args = ["--literal", "a value with spaces"]\n'
+        f'tokenizer = {{ model = "test/tokenizer", revision = "{revision}" }}\n'
         '[config_overrides]\nname = "reference-test"\ntrainer_gpu = "H100!"\n'
         '"miles_cfg.max_lora_slots" = 2\n'
     )
@@ -88,6 +90,9 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         prepared.name,
         "--output",
         str(output),
+        "--tokenizer",
+        "test/tokenizer",
+        revision,
         "--literal",
         "a value with spaces",
         "--smoke",
@@ -97,9 +102,15 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
 
 
 @pytest.mark.parametrize(
-    "arguments", [["--base-model", "wrong"], ["--output=other.jsonl"]]
+    "arguments",
+    [
+        ["--base-model", "wrong"],
+        ["--output=other.jsonl"],
+        ["--tokenizer", "wrong", "a" * 40],
+        ["--tokenizer=wrong"],
+    ],
 )
-def test_script_arguments_cannot_replace_selected_target_or_output(
+def test_script_arguments_cannot_replace_selected_config_values(
     arguments: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "run.jsonl"
@@ -118,6 +129,37 @@ def test_script_arguments_cannot_replace_selected_target_or_output(
     with pytest.raises(SystemExit) as error:
         launcher.main()
     assert error.value.code == 2
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "tokenizer",
+    [
+        None,
+        {"model": "model"},
+        {"model": "model", "revision": "main"},
+        {"model": "model", "revision": "a" * 40, "typo": True},
+    ],
+)
+def test_reference_requires_pinned_tokenizer(tokenizer: dict | None) -> None:
+    data = {"config": "recipe", "script": "workload.py"}
+    if tokenizer is not None:
+        data["tokenizer"] = tokenizer
+    with pytest.raises(ValidationError, match="tokenizer"):
+        launcher.ValidationRunConfig.model_validate(data)
+
+
+def test_direct_workload_requires_tokenizer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "metrics.jsonl"
+    monkeypatch.setattr(
+        sys, "argv", ["dapo_math", "--base-model", "recipe", "--output", str(output)]
+    )
+    with pytest.raises(SystemExit) as error:
+        runpy.run_path(str(ROOT / "scripts/dapo_math.py"), run_name="__main__")
+    assert error.value.code == 2
+    assert "--tokenizer" in capsys.readouterr().err
     assert not output.exists()
 
 
@@ -238,8 +280,8 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     expected_model = recipe.model
 
     def load_tokenizer(model: str, *, revision: str) -> SimpleNamespace:
-        assert model == expected_model
-        assert len(revision) == 40
+        assert model == expected_model == definition.tokenizer.model
+        assert revision == definition.tokenizer.revision
         return tokenizer
 
     monkeypatch.setattr(
@@ -262,6 +304,7 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     launcher.main()
     records = [json.loads(line) for line in output.read_text().splitlines()]
     assert records[0]["config"]["model"] == expected_model
+    assert records[0]["config"]["tokenizer_revision"] == definition.tokenizer.revision
     assert records[0]["config"]["updates"] == 2
     assert records[0]["recipe"] == definition.config_overrides["name"]
     assert [r["step"] for r in records if r["event"] == "update"] == [1, 2]

@@ -13,11 +13,19 @@ from spindle.configuration import BaseConfig
 from spindle.deployments import config_path, load
 
 
+class TokenizerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(min_length=1)
+    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
 class ValidationRunConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     config: str
     script: str
+    tokenizer: TokenizerConfig
     config_overrides: dict[str, object] = Field(default_factory=dict)
     script_args: list[str] = Field(default_factory=list)
 
@@ -52,8 +60,13 @@ def main() -> None:
             )
         return
     script_args = [*definition.script_args, *extra]
-    if any(arg.split("=", 1)[0] in {"--base-model", "--output"} for arg in script_args):
-        parser.error("--base-model and --output are supplied by the launcher")
+    if any(
+        arg.split("=", 1)[0] in {"--base-model", "--output", "--tokenizer"}
+        for arg in script_args
+    ):
+        parser.error(
+            "--base-model, --output and --tokenizer are supplied by the launcher"
+        )
     script = (parent / definition.script).resolve()
     arguments = [
         str(script),
@@ -61,6 +74,9 @@ def main() -> None:
         recipe.name,
         "--output",
         str(args.output),
+        "--tokenizer",
+        definition.tokenizer.model,
+        definition.tokenizer.revision,
         *script_args,
     ]
     previous_argv, previous_path = sys.argv, sys.path[:]
