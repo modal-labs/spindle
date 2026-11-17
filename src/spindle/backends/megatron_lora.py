@@ -81,6 +81,10 @@ class LoraMegatronBackend(Backend):
         self.base_model = base_model
         self.rank = dist.get_rank()
         self.persistence_group = persistence_group
+        if config.logprob_chunk_tokens is not None:
+            raise ValueError(
+                "logprob_chunk_tokens is only supported for full fine-tuning"
+            )
         initialize_megatron(config)
 
         self.model, self.optimizers, self.bridge = create_model_and_optimizer(config)

@@ -60,6 +60,7 @@ def backend_state(model_id: str | None = None) -> FFTMegatronBackend:
     backend._delta_writer = None
     backend._sampler_captures = {}
     backend._checkpoint_captures = {}
+    backend.deferred_output = None
     backend.config = EngineModelConfig(hf_checkpoint="/model")
     backend.model = [SimpleNamespace(zero_grad_buffer=lambda: None)]
     backend.optimizer = SimpleNamespace(zero_grad=lambda: None)
@@ -115,6 +116,8 @@ def test_full_backend_dummy_dp_rank_contributes_zero_tokens(monkeypatch) -> None
         packed_token_capacity=lambda: 8,
         sequence_padding_multiple=lambda: 1,
         defer_fp32_logits=False,
+        logprob_chunk_tokens=None,
+        fp32_lm_head=False,
     )
     backend._zero_grad = lambda: None
     tensor = SimpleNamespace(numel=lambda: 4)

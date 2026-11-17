@@ -588,7 +588,11 @@ def make_forward_step(
             if context_parallel_size > 1:
                 batch["adapter_token_counts"] //= context_parallel_size
             set_tokens_per_adapter_slot(model, batch["adapter_token_counts"])
-        model_kwargs = {"fp32_output": False} if defer_fp32_logits else {}
+        model_kwargs = (
+            {"fp32_output": False}
+            if defer_fp32_logits or deferred_output is not None
+            else {}
+        )
         logits = model(
             input_ids=batch["tokens"].unsqueeze(0),
             position_ids=batch["position_ids"].unsqueeze(0),
@@ -600,11 +604,8 @@ def make_forward_step(
         def loss_func(output):
             diagnostics = {}
             temperature = batch["loss_config"].get("sampling_temperature", 1.0)
-            if deferred_output is not None and "sampling_mask_offsets" in batch:
-                output = materialize_logits(
-                    output, deferred_output["weight"], fp32=fp32_logits
-                )
-            if deferred_output is not None and "sampling_mask_offsets" not in batch:
+            replay = "sampling_mask_offsets" in batch
+            if deferred_output is not None and not replay:
                 logprobs = chunked_logprobs(
                     output,
                     deferred_output["weight"],
@@ -613,7 +614,11 @@ def make_forward_step(
                     fp32=fp32_logits,
                     temperature=temperature,
                 )
-            elif "sampling_mask_offsets" in batch:
+            elif replay:
+                if deferred_output is not None:
+                    output = materialize_logits(
+                        output, deferred_output["weight"], fp32=fp32_logits
+                    )
                 logprobs, batch["score_correction"], diagnostics = replay_logprobs(
                     output,
                     batch,
