@@ -18,6 +18,7 @@ CORE_SAMPLER_PACKAGES = (
 )
 
 
+# Editing this rebuilds every image below; add a new builder instead.
 def runtime_image_for(*, image: str, branch: str, revision: str, core_packages):
     """Build a matched SGLang image/source pair, including the fork's Rust binding."""
     return (

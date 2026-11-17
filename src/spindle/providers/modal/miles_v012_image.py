@@ -12,6 +12,7 @@ MILES_BRANCH = "spindle-miles-v0.1.2"
 
 # Pinned by commit: Modal caches this layer by command, so fetching the branch
 # by name would keep serving an older head.
+# Editing this rebuilds every image below; add a new builder instead.
 def image_at(miles_commit: str) -> modal.Image:
     return release_image.run_commands(
         f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {miles_commit}"
@@ -21,6 +22,7 @@ def image_at(miles_commit: str) -> modal.Image:
     ).add_local_python_source("spindle", ignore=ignore_config_source)
 
 
+# Editing this rebuilds every image below; add a new builder instead.
 def glm53_image_at(miles_commit: str) -> modal.Image:
     """Miles-pinned GLM model dependency with the release Bridge core preserved."""
     return release_image.run_commands(

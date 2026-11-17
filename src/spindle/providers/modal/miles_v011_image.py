@@ -117,6 +117,7 @@ DSA_KERNEL_INSTALL = (
 )
 
 
+# Editing this rebuilds every image below; add a new builder instead.
 release_image = (
     miles_base_image(
         BASE_IMAGE,
@@ -135,6 +136,7 @@ release_image = (
 )
 
 
+# Editing this rebuilds every image below; add a new builder instead.
 def image_at(miles_commit: str) -> modal.Image:
     return (
         release_image.run_commands(

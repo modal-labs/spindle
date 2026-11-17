@@ -197,7 +197,7 @@ To change an image:
 2. Move configs to the new name one at a time. Record a reference run for each config you move.
 3. Once no bundled config, default or reference run uses the old name, remove it and the module that builds it.
 
-The `miles-v0.2.0` images support single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying it with more than one trainer node or with `raw` is rejected. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
+The `miles-v0.2.0` images support single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying one with more than one trainer node or with `raw` is rejected. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
 
 A checkpoint restores only on a trainer with the same Miles revision as the one that saved it, so keep the original image to restore older checkpoints after switching images.
 

@@ -651,13 +651,14 @@ def test_pinned_fork_commits_are_on_the_branch_their_module_names(
 )
 def test_image_names_match_the_fork_commit_they_install(name):
     image = {**deployment_apps.TRAINER_IMAGES, **deployment_apps.SAMPLER_IMAGES}[name]
-    [variable] = [
-        variable
+    [path] = [
+        f"{module.__name__}.{variable}"
         for module in FORK_IMAGE_MODULES
         for variable, value in vars(module).items()
         if value is image
     ]
-    assert IMAGE_VARIABLE.fullmatch(variable)[2] in name.split("-")
+    assert IMAGE_VARIABLE.fullmatch(path.rsplit(".", 1)[1])[2] in name.split("-")
+    assert name.endswith("-glm53") == ("glm53" in path)
 
 
 def test_gpu_type_lists_become_modal_fallbacks(builders):

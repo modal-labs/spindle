@@ -16,6 +16,7 @@ MILES_BRANCH = "spindle-miles-v0.2.0"
 BASE_IMAGE = "radixark/miles:v0.2.0@sha256:c5e9ebe1dbb02faa094cf5036b57c4f3aadac9a53992f4d143823a6c20fb377c"
 
 
+# Editing this rebuilds every image below; add a new builder instead.
 def image_at(miles_commit: str) -> modal.Image:
     return (
         modal.Image.from_registry(BASE_IMAGE)

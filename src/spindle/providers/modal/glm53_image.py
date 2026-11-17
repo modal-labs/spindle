@@ -3,6 +3,7 @@
 from .image_dependencies import ignore_config_source
 from .rollout_image import runtime_image_01_c4182b2
 
+# Fork commits in ancestry order, each a descendant of the one before. Append new commits; never edit an entry.
 image_01_c4182b2 = runtime_image_01_c4182b2.env(
     {
         "SPINDLE_GLM_ASYNC_LORA_LOADING": "1",
