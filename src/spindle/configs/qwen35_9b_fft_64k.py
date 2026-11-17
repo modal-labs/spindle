@@ -13,6 +13,7 @@ class Config(Parent):
         "trainer_cpu": 8,
         "trainer_memory_mib": 32768,
         "megatron_cfg.context_parallel_size": 2,
+        "megatron_cfg.max_tokens_per_microbatch": 65536,
         "trainer_env": {
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
             "TORCHINDUCTOR_COMPILE_THREADS": "1",

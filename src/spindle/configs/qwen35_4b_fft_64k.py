@@ -23,7 +23,7 @@ class Config(BaseConfig):
         "context_parallel_size": 4,
         "sequence_parallel": True,
         "micro_batch_size": 1,
-        "max_tokens_per_microbatch": 65536,
+        "max_tokens_per_microbatch": 262144,
         "defer_fp32_logits": True,
         "fp32_lm_head": True,
         "use_distributed_optimizer": True,
