@@ -15,12 +15,12 @@ def test_inkling2_recipe_preserves_target_groups_and_serving_head_alias() -> Non
     assert config.world_size == config.expert_model_parallel_size == 8
     assert config.max_lora_slots == recipe.trainer_max_clients_per_instance == 2
     assert sampler["lora_target_modules"] == [
-        "attn.wq_du",
-        "attn.wr_du",
-        "attn.gate_attn",
-        "attn.wk_dv",
-        "attn.wv_dv",
-        "attn.wo_ud",
+        "model.llm.layers.*.attn.wq_du",
+        "model.llm.layers.*.attn.wr_du",
+        "model.llm.layers.*.attn.gate_attn",
+        "model.llm.layers.*.attn.wk_dv",
+        "model.llm.layers.*.attn.wv_dv",
+        "model.llm.layers.*.attn.wo_ud",
         "lm_head",
     ]
     assert sampler["max_loras_per_batch"] == 1

@@ -146,6 +146,8 @@ def sampler() -> None:
 def parse_sampling_config() -> None:
     # SGLang is installed only in the sampler image.
     from sglang.srt.configs.model_config import ModelConfig
+    from sglang.srt.lora.utils import get_normalized_target_modules
+    from sglang.srt.models.inkling2 import Inkling2ForConditionalGeneration
     from sglang.srt.server_args import ServerArgs
 
     recipe = Config()
@@ -159,6 +161,10 @@ def parse_sampling_config() -> None:
         args = ServerArgs(model_path=checkpoint, **serving_options(recipe))
         config = ModelConfig.from_server_args(args)
         assert config.quantization == "inkling2"
+        miles = MilesBackendConfig(**backend_config(recipe)["miles"])
+        assert get_normalized_target_modules(
+            miles.peft_target_modules, Inkling2ForConditionalGeneration
+        ) == {"qkvr", "wo_ud", "lm_head"}
 
 
 @app.local_entrypoint()

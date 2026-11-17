@@ -94,7 +94,12 @@ def main(rank: int, context_length: int) -> None:
         return sampler
 
     before_b = timed("adapter_b_initial_forward", lambda: loss(b))
-    publish_and_sample(b, "inkling-b-before")
+    frozen_sampler = publish_and_sample(b, "inkling-b-before")
+    scoring_prompt = types.ModelInput.from_ints(tokens)
+    baseline_logprobs = timed(
+        "base_sampling_logprobs",
+        lambda: frozen_sampler.compute_logprobs(scoring_prompt).result(),
+    )
     for step in range(2):
         timed(f"adapter_a_backward_{step}", lambda: loss(a, True))
         timed(
@@ -103,7 +108,28 @@ def main(rank: int, context_length: int) -> None:
         )
     after_b = timed("adapter_b_isolation_forward", lambda: loss(b))
     assert abs(before_b - after_b) < 1e-5, (before_b, after_b)
-    publish_and_sample(a, "inkling-a-trained")
+    trained_sampler = publish_and_sample(a, "inkling-a-trained")
+    trained_logprobs = timed(
+        "trained_sampling_logprobs",
+        lambda: trained_sampler.compute_logprobs(scoring_prompt).result(),
+    )
+    frozen_logprobs = timed(
+        "frozen_sampling_logprobs",
+        lambda: frozen_sampler.compute_logprobs(scoring_prompt).result(),
+    )
+    comparisons = [
+        (before, trained, frozen)
+        for before, trained, frozen in zip(
+            baseline_logprobs, trained_logprobs, frozen_logprobs, strict=True
+        )
+        if before is not None and trained is not None and frozen is not None
+    ]
+    assert comparisons
+    assert all(math.isfinite(x) for row in comparisons for x in row)
+    delta = max(abs(trained - before) for before, trained, _ in comparisons)
+    assert delta > 1e-6, comparisons
+    assert max(abs(frozen - before) for before, _, frozen in comparisons) < 1e-5
+    print(json.dumps({"sampler_logprob_delta": delta}), flush=True)
     saved_loss = timed("adapter_a_saved_forward", lambda: loss(a))
     assert abs(saved_loss - before_b) > 1e-6, (saved_loss, before_b)
     checkpoint = timed("save_state", lambda: a.save_state("inkling-a-state").result())
@@ -150,9 +176,9 @@ def main(rank: int, context_length: int) -> None:
         result = timed(
             "full_context_sample",
             lambda: sampler.sample(
-                prompt=types.ModelInput.from_ints(long_tokens[: context_length - 1]),
+                prompt=types.ModelInput.from_ints(long_tokens[: context_length - 6]),
                 num_samples=1,
-                sampling_params=types.SamplingParams(max_tokens=1, temperature=0),
+                sampling_params=types.SamplingParams(max_tokens=6, temperature=0),
             ).result(),
         )
         assert result.sequences[0].tokens and result.sequences[0].logprobs

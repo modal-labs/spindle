@@ -147,7 +147,13 @@ class MilesBackendConfig(BaseModel):
     def peft_target_modules(self) -> tuple[str, ...]:
         targets: list[str] = []
         for target in self.target_modules:
-            for name in _peft_names(target):
+            # Inkling2's fused-attention resolver needs the parent before .attn.
+            names = (
+                (target,)
+                if self.model_type == "inkling2" and "*" in target
+                else _peft_names(target)
+            )
+            for name in names:
                 if name not in targets:
                     targets.append(name)
         return tuple(targets)

@@ -31,7 +31,10 @@ def test_all_packaged_recipes_validate_offline(path):
         # Samplers match the path after a wildcard as a module-name suffix, and
         # serve the Qwen3.5 linear-attention input projections fused.
         expected = {
-            target.rsplit("*.", 1)[-1] for target in spec.miles_cfg["target_modules"]
+            target
+            if spec.miles_cfg.get("model_type") == "inkling2"
+            else target.rsplit("*.", 1)[-1]
+            for target in spec.miles_cfg["target_modules"]
         }
         if expected & set(GDN_INPUT_PROJECTIONS):
             expected = expected - set(GDN_INPUT_PROJECTIONS)
