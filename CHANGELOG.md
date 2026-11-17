@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Added
+
+- `nemotron35-lightning-30b-a3b-lora-64k-b300`: Nemotron 3.5 Lightning LoRA with 64K context on two B300s, one model copy per GPU.
+
 ### Fixed
 
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
