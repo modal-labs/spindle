@@ -1,5 +1,6 @@
 import gzip
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -193,7 +194,7 @@ def test_backend_starts_and_stops_torch_profile(tmp_path, monkeypatch) -> None:
     assert len([c for c in runtime.calls if c[0] == "torch_profile_stop"]) == 1
 
 
-def test_backend_stops_torch_profile_after_publish_on_another_thread(
+def test_backend_stops_torch_profile_once_across_command_and_publish_threads(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv("SPINDLE_TORCH_PROFILE_STEP", "1")
@@ -201,27 +202,37 @@ def test_backend_stops_torch_profile_after_publish_on_another_thread(
     monkeypatch.setenv("SPINDLE_BULLETIN_ROOT", str(tmp_path / "bulletin"))
     monkeypatch.delenv("SPINDLE_BULLETIN_VOLUME", raising=False)
     monkeypatch.delenv("SPINDLE_CHECKPOINT_VOLUME", raising=False)
-    runtime = FakeMilesRuntime()
+    stopping = threading.Event()
+    release = threading.Event()
+
+    class SlowStopRuntime(FakeMilesRuntime):
+        def torch_profile_stop(self, output_dir):
+            stopping.set()
+            release.wait(timeout=10)
+            return super().torch_profile_stop(output_dir)
+
+    runtime = SlowStopRuntime()
     backend = _backend(tmp_path, runtime)
     # The engine runs commands and sampler publishes on different threads.
     commands = ThreadPoolExecutor(1)
     publishes = ThreadPoolExecutor(1)
     commands.submit(backend.accept_model, "model-a", _spec()).result()
-
     commands.submit(_step, backend).result()
-    commands.submit(_step, backend).result()  # profiled step; the run ends here
-    assert backend._profiling_active
-
+    commands.submit(_step, backend).result()  # profiled step
     commands.submit(
         backend.capture_sampler_snapshot, "model-a", "capture-a", 2
     ).result()
-    publishes.submit(backend.publish_sampler_snapshot, "capture-a").result()
 
-    assert not backend._profiling_active
-    assert not commands.submit(torch.autograd._profiler_enabled).result()
+    publish = publishes.submit(backend.publish_sampler_snapshot, "capture-a")
+    assert stopping.wait(timeout=10)
+    commands.submit(_step, backend).result(timeout=10)  # next step overlaps the stop
+    release.set()
+    publish.result(timeout=10)
+
     assert [c for c in runtime.calls if c[0] == "torch_profile_stop"] == [
         ("torch_profile_stop", str(tmp_path / "traces"))
     ]
+    assert not commands.submit(torch.autograd._profiler_enabled).result()
 
 
 def test_trainer_deployment_env_forwards_profile_vars(monkeypatch) -> None:

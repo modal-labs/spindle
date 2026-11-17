@@ -80,6 +80,8 @@ class MilesCommandBackend(Backend):
         self._profile = TorchProfileConfig.from_env()
         self._profiling_active = False
         self._profile_step_done = False
+        # The command and sampler-publish threads can both reach the stop.
+        self._profile_stop_lock = threading.Lock()
         self._firsts: set[str] = set()
         self._closed = False
         if self._profile.enabled:
@@ -528,6 +530,11 @@ class MilesCommandBackend(Backend):
             )
 
     def _stop_profiling(self) -> None:
+        with self._profile_stop_lock:
+            if not self._profiling_active:
+                return
+            self._profiling_active = False
+            self._profile_step_done = True
         files: list[str] = []
         try:
             results = self.runtime.torch_profile_stop(self._profile.output_dir)
@@ -546,9 +553,6 @@ class MilesCommandBackend(Backend):
                 ),
                 flush=True,
             )
-        finally:
-            self._profiling_active = False
-            self._profile_step_done = True
         if files:
             print(
                 json.dumps(
