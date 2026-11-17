@@ -10,9 +10,10 @@ import sys
 import modal
 from huggingface_hub import snapshot_download
 
-from spindle.backends.deployment import backend_config
+from spindle.backends.deployment import backend_config, serving_options
 from spindle.backends.miles_arguments import defer_config_overrides
 from spindle.backends.miles_config import MilesBackendConfig
+from spindle.configs.inkling2_small_lora_8k_b300 import Config
 
 from spindle.providers.modal.inkling2_image import (
     inference_image,
@@ -92,7 +93,6 @@ def miles_regressions() -> None:
 
 def parse_training_config() -> None:
     # These trainer-only dependencies are absent from the sampler image.
-    from spindle.configs.inkling2_small_lora_8k_b300 import Config
     from miles.utils.arguments import parse_args
     from miles.utils.external_utils.model_args_utils import load_model_args
     from spindle.backends.miles_runtime.runtime import _configure_args, _temporary_argv
@@ -123,7 +123,7 @@ def parse_training_config() -> None:
 
 
 @app.function(
-    image=inference_image,
+    image=inference_image.add_local_python_source("spindle"),
     gpu="B300:8",
     cpu=8,
     memory=65536,
@@ -140,6 +140,25 @@ def sampler() -> None:
         ],
         check=True,
     )
+    parse_sampling_config()
+
+
+def parse_sampling_config() -> None:
+    # SGLang is installed only in the sampler image.
+    from sglang.srt.configs.model_config import ModelConfig
+    from sglang.srt.server_args import ServerArgs
+
+    recipe = Config()
+    with tempfile.TemporaryDirectory() as checkpoint:
+        snapshot_download(
+            recipe.model,
+            revision=recipe.weights_revision,
+            local_dir=checkpoint,
+            allow_patterns=["*.json", "*.jinja", "*.py", "*.tiktoken"],
+        )
+        args = ServerArgs(model_path=checkpoint, **serving_options(recipe))
+        config = ModelConfig.from_server_args(args)
+        assert config.quantization == "inkling2"
 
 
 @app.local_entrypoint()

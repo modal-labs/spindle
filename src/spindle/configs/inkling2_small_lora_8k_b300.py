@@ -68,6 +68,9 @@ class Config(BaseConfig):
     inference_startup_timeout_s = 7200
     inference_max_replicas = 1
     sglang_cfg = {
+        "quantization": "inkling2",
+        # The embedded legacy tag hides hf_quant_config.json's per-parameter precision.
+        "json_model_override_args": '{"quantization_config": null}',
         "tp_size": 8,
         "ep_size": 8,
         "attention_backend": "fa4",
