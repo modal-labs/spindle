@@ -26,7 +26,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - Synthetic guess-number regressions select existing cookbook renderers for Qwen2.5-3B/7B-Instruct, Qwen3-4B and Qwen3.5-2B instead of skipping them when cookbook model metadata is missing.
 
-- Single-node dense Qwen2.5, Qwen3, Qwen3.5 and Qwen3.8 LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Older checkpoints require their original trainer image and adapter layout.
+- Single-node dense Qwen2.5, Qwen3, Qwen3.5, Qwen3.8 and Nemotron-3 Nano LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Nano uses FP32 expert reductions and deterministic kernels so repeated scores and optimizer replay agree. Older checkpoints require their original trainer image and adapter layout.
 
 - Reference runs use flat TOML definitions, a typed execution index, and flat JSONL outputs. A shared launcher selects the exact deployment for the existing DAPO-Math workload.
 - Miles multi-target scoring shares one vocabulary softmax across mixed candidate counts in supported scoring modes, preserving each datum's output shape and batch order.

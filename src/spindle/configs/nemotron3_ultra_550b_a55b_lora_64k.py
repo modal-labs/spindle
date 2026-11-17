@@ -19,6 +19,9 @@ class Config(Parent):
     inference_startup_timeout_s = 3600
     inference_memory_mib = 1048576
     inference_cpu = 32
+    # Use the shared defaults without Nano's native backend overrides.
+    miles_cfg = Parent.miles_cfg
+    trainer_env = Parent.trainer_env
     overrides = {
         "trainer_env.TORCHINDUCTOR_CACHE_DIR": "/tmp/spindle-inductor",
         "miles_cfg.model_type": "nemotron-3-ultra-550b-a55b",

@@ -100,7 +100,7 @@ def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
 def test_dense_qwen_recipes_use_native_canonical_slots(preset):
     spec = load(config_path(preset))
     trainer = backend_config(spec)["miles"]
-    assert spec.trainer_image == "miles-v0.2.0-5e37a66"
+    assert spec.trainer_image == "miles-v0.2.0-e814245"
     assert spec.inference_image == "sglang-v0.5.23-e003cf9"
     assert trainer["megatron_to_hf_mode"] == "raw"
     assert trainer["lora_type"] == "canonical_lora"
@@ -169,3 +169,45 @@ def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
     )
     monkeypatch.setenv(FRONTEND_SETTINGS_ENV, json.dumps(settings.__dict__))
     assert frontend_settings_from_env() == settings
+
+
+def test_native_nano_keeps_its_ungated_expert_topology():
+    spec = load(config_path("nemotron3-nano-30b-a3b-lora-64k"))
+    trainer = backend_config(spec)["miles"]
+    assert spec.trainer_image == "miles-v0.2.0-e814245"
+    assert trainer["megatron_to_hf_mode"] == "raw"
+    assert trainer["lora_type"] == "canonical_lora"
+    assert trainer["tensor_model_parallel_size"] == 2
+    assert trainer["expert_model_parallel_size"] == 2
+    assert trainer["expert_tensor_parallel_size"] == 1
+    assert "gate_proj" not in trainer["target_modules"]
+    assert trainer["cli_options"]["deterministic_mode"] is True
+    assert trainer["cli_options"]["cross_entropy_loss_fusion"] is False
+    assert trainer["cli_options"]["tp_comm_overlap"] is False
+    assert spec.trainer_env["MAMBA_DETERMINISTIC"] == "1"
+    assert spec.trainer_env["NCCL_ALGO"] == "Ring"
+    assert spec.trainer_env["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
+    assert spec.trainer_env["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+
+
+@pytest.mark.parametrize(
+    "preset",
+    [
+        "nemotron3-super-120b-a12b-lora-64k",
+        "nemotron35-lightning-30b-a3b-lora-64k",
+        "nemotron3-ultra-550b-a55b-lora-64k",
+    ],
+)
+def test_legacy_nemotron_does_not_inherit_native_nano_settings(preset):
+    spec = load(config_path(preset))
+    trainer = backend_config(spec)["miles"]
+    assert spec.trainer_image == "miles-v0.1.1-fdd808c"
+    assert trainer["megatron_to_hf_mode"] == "bridge"
+    assert trainer["lora_type"] == "lora"
+    assert "deterministic_mode" not in trainer["cli_options"]
+    assert not {
+        "MAMBA_DETERMINISTIC",
+        "NCCL_ALGO",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
+        "CUBLAS_WORKSPACE_CONFIG",
+    }.intersection(spec.trainer_env)

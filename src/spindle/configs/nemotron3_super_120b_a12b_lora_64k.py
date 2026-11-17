@@ -14,6 +14,9 @@ class Config(Parent):
     inference_gpus_per_node = 4
     inference_max_replicas = 2
     inference_memory_mib = 262144
+    # Use the shared defaults without Nano's native backend overrides.
+    miles_cfg = Parent.miles_cfg
+    trainer_env = Parent.trainer_env
     overrides = {
         "miles_cfg.model_type": "nemotron-3-super-120b-a12b",
         "miles_cfg.expert_model_parallel_size": 8,

@@ -1,4 +1,4 @@
-"""Miles v0.2.0 with native canonical slots and the remaining Spindle trainer fixes."""
+"""Miles v0.2.0 with the remaining Spindle trainer fixes."""
 
 import modal
 

@@ -3,7 +3,7 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "nemotron3-nano-30b-a3b-lora-64k"
-    trainer_image = "miles-v0.1.1-fdd808c"
+    trainer_image = "miles-v0.2.0-e814245"
     inference_image = "sglang-v0.5.23-c4182b2"
     model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
     max_context_length = 65536
@@ -39,6 +39,17 @@ class Config(BaseConfig):
             "recompute_method": "uniform",
             "recompute_num_layers": 1,
         },
+    }
+    overrides = {
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
+        "miles_cfg.cli_options.deterministic_mode": True,
+        "miles_cfg.cli_options.cross_entropy_loss_fusion": False,
+        "miles_cfg.cli_options.tp_comm_overlap": False,
+        "trainer_env.MAMBA_DETERMINISTIC": "1",
+        "trainer_env.NCCL_ALGO": "Ring",
+        "trainer_env.NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+        "trainer_env.CUBLAS_WORKSPACE_CONFIG": ":4096:8",
     }
     trainer_env = {
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
