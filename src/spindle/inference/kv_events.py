@@ -16,6 +16,9 @@ import sys
 import threading
 import time
 from array import array
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Literal, NamedTuple, NotRequired, TypedDict
 
 import msgspec
 import xxhash
@@ -29,7 +32,36 @@ MAX_PREFIXES = 8192
 SUB_RECEIVE_HIGH_WATER_MARK = 20_000  # Twice the publisher's replay buffer.
 SNAPSHOT_INTERVAL_SECONDS = 0.25
 REPLAY_STALL_TIMEOUT_SECONDS = 2.0
-KV_EVENTS_CONFIG = {
+
+
+class PublisherConfig(TypedDict):
+    publisher: Literal["zmq"]
+    endpoint: str
+    bind: bool
+    replay_endpoint: str
+    topic: str
+
+
+class KVEvent(TypedDict):
+    type: Literal["BlockStored", "BlockRemoved", "AllBlocksCleared"]
+    block_hashes: NotRequired[list[int]]
+    parent_block_hash: NotRequired[int | None]
+    token_ids: NotRequired[list[int]]
+    block_size: NotRequired[int]
+    lora_id: NotRequired[int | None]
+    lora_name: NotRequired[str | None]
+    medium: NotRequired[str | None]
+    cache_salt: NotRequired[str | None]
+    session_id: NotRequired[str | None]
+
+
+class KVSnapshot(NamedTuple):
+    ready: bool
+    checked_at: float
+    prefixes: tuple[str, ...]
+
+
+KV_EVENTS_CONFIG: PublisherConfig = {
     "publisher": "zmq",
     "endpoint": "tcp://127.0.0.1:5557",
     "bind": True,
@@ -38,18 +70,21 @@ KV_EVENTS_CONFIG = {
 }
 
 
-def publisher_config() -> dict:
-    return dict(KV_EVENTS_CONFIG)
-
-
 class _BlockIndex:
-    def __init__(self):
+    """Map block hashes to compact chain references."""
+
+    storage: mmap.mmap
+    keys: memoryview
+    refs: memoryview
+    states: memoryview
+
+    def __init__(self) -> None:
         self.wide = False
         self._allocate(1024)
         self.count = 0
         self.occupied = 0
 
-    def _allocate(self, size):
+    def _allocate(self, size: int) -> None:
         width = 8 if self.wide else 4
         self.storage = mmap.mmap(-1, size * (9 + width))
         view = memoryview(self.storage)
@@ -58,16 +93,16 @@ class _BlockIndex:
         self.states = view[size * (8 + width) :]
         view.release()
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.count
 
-    def __contains__(self, key):
+    def __contains__(self, key: int) -> bool:
         return self.get(key) is not None
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[int]:
         return (self.keys[i] for i, state in enumerate(self.states) if state == 1)
 
-    def get(self, key):
+    def get(self, key: int) -> int | None:
         mask = len(self.states) - 1
         slot = hash(key) & mask
         while self.states[slot]:
@@ -76,7 +111,7 @@ class _BlockIndex:
             slot = (slot + 1) & mask
         return None
 
-    def _insert(self, key, ref):
+    def _insert(self, key: int, ref: int) -> None:
         mask = len(self.states) - 1
         slot = hash(key) & mask
         while self.states[slot] == 1:
@@ -88,7 +123,7 @@ class _BlockIndex:
         self.refs[slot] = ref
         self.count += 1
 
-    def insert(self, key, ref):
+    def insert(self, key: int, ref: int) -> None:
         if (self.occupied + 1) * 10 >= len(self.states) * 7:
             self._resize(
                 len(self.states) * 2
@@ -97,7 +132,7 @@ class _BlockIndex:
             )
         self._insert(key, ref)
 
-    def pop(self, key):
+    def pop(self, key: int) -> int | None:
         mask = len(self.states) - 1
         slot = hash(key) & mask
         while self.states[slot]:
@@ -108,7 +143,7 @@ class _BlockIndex:
             slot = (slot + 1) & mask
         return None
 
-    def _resize(self, size):
+    def _resize(self, size: int) -> None:
         old_keys, old_refs, old_states = self.keys, self.refs, self.states
         old_storage = self.storage
         self._allocate(size)
@@ -121,11 +156,11 @@ class _BlockIndex:
         old_states.release()
         old_storage.close()
 
-    def widen(self):
+    def widen(self) -> None:
         self.wide = True
         self._resize(len(self.states))
 
-    def clear(self):
+    def clear(self) -> None:
         self.keys.release()
         self.refs.release()
         self.states.release()
@@ -133,26 +168,36 @@ class _BlockIndex:
         self.__init__()
 
 
+@dataclass(slots=True, init=False)
 class _Chain:
-    __slots__ = (
-        "id",
-        "parent",
-        "adapter",
-        "length",
-        "size",
-        "store_tokens",
-        "start_digest",
-        "storage",
-        "count",
-        "keys",
-        "tokens",
-        "positions",
-        "digests",
-        "prefixes",
-        "endpoint",
-    )
+    """Hold contiguous blocks and their reusable prefix checkpoints."""
 
-    def __init__(self, parent, adapter, length, digest, keys, tokens, size):
+    id: int
+    parent: int | None
+    adapter: str
+    length: int
+    size: int
+    store_tokens: bool
+    start_digest: xxhash._Hasher
+    storage: mmap.mmap | bytearray
+    count: int
+    keys: memoryview
+    tokens: memoryview
+    positions: array
+    digests: list[xxhash._Hasher]
+    prefixes: list[str]
+    endpoint: str | None
+
+    def __init__(
+        self,
+        parent: int | None,
+        adapter: str,
+        length: int,
+        digest: xxhash._Hasher,
+        keys: list[int],
+        tokens: array,
+        size: int,
+    ) -> None:
         self.id = -1
         self.parent = parent
         self.adapter = adapter
@@ -179,7 +224,7 @@ class _Chain:
         self.prefixes = []
         self.endpoint = None
 
-    def truncate(self, count):
+    def truncate(self, count: int) -> None:
         if count == 0:
             self.keys.release()
             self.tokens.release()
@@ -207,7 +252,7 @@ class _Chain:
         view.release()
         self.count = count
 
-    def digest_at(self, block):
+    def digest_at(self, block: int) -> xxhash._Hasher:
         end = (block + 1) * self.size
         checkpoint = bisect.bisect_right(self.positions, end) - 1
         if checkpoint >= 0:
@@ -222,7 +267,9 @@ class _Chain:
 
 
 class KVCache:
-    def __init__(self):
+    """Track device-resident blocks and reusable routing prefixes."""
+
+    def __init__(self) -> None:
         self.blocks = _BlockIndex()
         self.chains: list[_Chain | None] = []
         self.free_chains: list[int] = []
@@ -233,8 +280,8 @@ class KVCache:
         self.branch_keys: dict[int, str] = {}
 
     @property
-    def prefixes(self):
-        selected = {}
+    def prefixes(self) -> list[str]:
+        selected: dict[str, None] = {}
         for group in (self.endpoints, self.branch_points, self.prefix_counts):
             for prefix in reversed(group):
                 selected[prefix] = None
@@ -243,25 +290,25 @@ class KVCache:
         return list(selected)
 
     @staticmethod
-    def _touch(group, prefix):
+    def _touch(group: dict[str, int], prefix: str) -> None:
         group[prefix] = group.pop(prefix, 0) + 1
 
     @staticmethod
-    def _untouch(group, prefix):
+    def _untouch(group: dict[str, int], prefix: str) -> None:
         count = group[prefix] - 1
         if count:
             group[prefix] = count
         else:
             del group[prefix]
 
-    def _deepest_prefix(self, chain, block):
+    def _deepest_prefix(self, chain: _Chain, block: int) -> str | None:
         boundary = bisect.bisect_right(chain.positions, (block + 1) * chain.size)
         if boundary:
             return chain.prefixes[boundary - 1]
         parent = self._chain_ref(chain.parent) if chain.parent is not None else None
         return self._deepest_prefix(*parent) if parent is not None else None
 
-    def _set_endpoint(self, chain):
+    def _set_endpoint(self, chain: _Chain) -> None:
         if chain.endpoint is not None:
             self._untouch(self.endpoints, chain.endpoint)
         chain.endpoint = (
@@ -272,12 +319,12 @@ class KVCache:
         if chain.endpoint is not None:
             self._touch(self.endpoints, chain.endpoint)
 
-    def _drop_branch(self, key):
+    def _drop_branch(self, key: int) -> None:
         prefix = self.branch_keys.pop(key, None)
         if prefix is not None:
             self._untouch(self.branch_points, prefix)
 
-    def clear(self):
+    def clear(self) -> None:
         self.blocks.clear()
         for chain in self.chains:
             if chain is not None:
@@ -290,14 +337,14 @@ class KVCache:
         self.branch_points.clear()
         self.branch_keys.clear()
 
-    def _chain_ref(self, key):
+    def _chain_ref(self, key: int) -> tuple[_Chain, int] | None:
         ref = self.blocks.get(key)
         if ref is None:
             return None
         chain = self.chains[ref >> 16]
         return chain, ref & 65535
 
-    def remove(self, key: int):
+    def remove(self, key: int) -> None:
         found = self._chain_ref(key)
         if found is None:
             return
@@ -358,7 +405,7 @@ class KVCache:
         if not self.blocks:
             self.clear()
 
-    def apply(self, event: dict):
+    def apply(self, event: KVEvent) -> None:
         kind = event["type"]
         if kind == "AllBlocksCleared":
             self.clear()
@@ -391,7 +438,7 @@ class KVCache:
             start = 0
             for index in existing:
                 if start < index:
-                    segment = dict(event)
+                    segment: KVEvent = event.copy()
                     segment["block_hashes"] = keys[start:index]
                     segment["token_ids"] = tokens[start * size : index * size]
                     segment["parent_block_hash"] = parent
@@ -399,7 +446,7 @@ class KVCache:
                 parent = keys[index]
                 start = index + 1
             if start < len(keys):
-                segment = dict(event)
+                segment = event.copy()
                 segment["block_hashes"] = keys[start:]
                 segment["token_ids"] = tokens[start * size :]
                 segment["parent_block_hash"] = parent
@@ -477,26 +524,30 @@ class KVCache:
 
 
 class KVEventSubscriber:
+    """Replay KV events and publish a thread-safe routing snapshot."""
+
     def __init__(
-        self, endpoint="tcp://127.0.0.1:5557", replay_endpoint="tcp://127.0.0.1:5558"
-    ):
+        self,
+        endpoint: str = "tcp://127.0.0.1:5557",
+        replay_endpoint: str = "tcp://127.0.0.1:5558",
+    ) -> None:
         self.endpoint = endpoint
         self.replay_endpoint = replay_endpoint
         self.cache = KVCache()
         self.sequence = -1
-        self.anchor = None
+        self.anchor: bytes | None = None
         self.ready = False
         self.checked_at = 0.0
-        self.snapshot: tuple[bool, float, tuple[str, ...]] = (False, 0.0, ())
+        self.snapshot = KVSnapshot(False, 0.0, ())
         self._thread: threading.Thread | None = None
         self._thread_started = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._run_task: asyncio.Task | None = None
+        self._run_task: asyncio.Task[None] | None = None
         self._last_snapshot_at = 0.0
         self._snapshot_dirty = False
-        self._rebuild_started_at = None
+        self._rebuild_started_at: float | None = None
 
-    def _publish_snapshot(self, force=False):
+    def _publish_snapshot(self, force: bool = False) -> None:
         now = time.monotonic()
         if (
             self.ready
@@ -506,18 +557,18 @@ class KVEventSubscriber:
             self._snapshot_dirty = True
             return
         prefixes = tuple(self.cache.prefixes) if self.ready else ()
-        self.snapshot = (self.ready, self.checked_at, prefixes)
+        self.snapshot = KVSnapshot(self.ready, self.checked_at, prefixes)
         self._last_snapshot_at = now
         self._snapshot_dirty = False
 
-    def start_thread(self):
+    def start_thread(self) -> None:
         self._thread = threading.Thread(target=self._run_thread, daemon=True)
         self._thread.start()
         if not self._thread_started.wait(2) or self._loop is None:
             raise RuntimeError("KV event subscriber thread did not start")
 
-    def _run_thread(self):
-        async def worker():
+    def _run_thread(self) -> None:
+        async def worker() -> None:
             self._loop = asyncio.get_running_loop()
             self._run_task = asyncio.current_task()
             self._thread_started.set()
@@ -539,11 +590,11 @@ class KVEventSubscriber:
             logger.exception("KV event subscriber thread stopped")
         finally:
             self.ready = False
-            self.snapshot = (False, 0.0, ())
+            self.snapshot = KVSnapshot(False, 0.0, ())
             self._loop = None
             self._thread_started.set()
 
-    def stop_thread(self, timeout: float = 2):
+    def stop_thread(self, timeout: float = 2) -> None:
         if self._thread is None:
             return
         if self._loop is not None and self._run_task is not None:
@@ -559,7 +610,7 @@ class KVEventSubscriber:
         else:
             self._thread = None
 
-    def reset(self):
+    def reset(self) -> None:
         self.cache.clear()
         self.sequence = -1
         self.anchor = None
@@ -567,7 +618,7 @@ class KVEventSubscriber:
         self._rebuild_started_at = None
         self._publish_snapshot(force=True)
 
-    def apply(self, sequence: int, payload: bytes, publish=True):
+    def apply(self, sequence: int, payload: bytes, publish: bool = True) -> bool | None:
         if sequence <= self.sequence:
             return
         if sequence != self.sequence + 1:
@@ -590,15 +641,15 @@ class KVEventSubscriber:
             return payload == self.anchor
         return self.apply(sequence, payload)
 
-    async def replay(self, context):
+    async def replay(self, context: zmq.asyncio.Context) -> None:
         socket = context.socket(zmq.DEALER)
         try:
             socket.setsockopt(zmq.LINGER, 0)
             socket.connect(self.replay_endpoint)
 
-            async def fetch(start: int):
+            async def fetch(start: int) -> list[tuple[int, bytes]]:
                 await socket.send_multipart([b"", start.to_bytes(8, "big")])
-                batches = []
+                batches: list[tuple[int, bytes]] = []
                 while True:
                     async with asyncio.timeout(REPLAY_STALL_TIMEOUT_SECONDS):
                         frames = await socket.recv_multipart()
@@ -656,7 +707,7 @@ class KVEventSubscriber:
         finally:
             socket.close(0)
 
-    async def run(self):
+    async def run(self) -> None:
         context = zmq.asyncio.Context()
         socket = None
         try:
@@ -715,7 +766,7 @@ class KVEventSubscriber:
                     await asyncio.sleep(0.5)
         finally:
             self.ready = False
-            self.snapshot = (False, 0.0, ())
+            self.snapshot = KVSnapshot(False, 0.0, ())
             if socket is not None:
                 socket.close(0)
             context.destroy(linger=0)

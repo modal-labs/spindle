@@ -11,7 +11,7 @@ from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import kill_process_tree
 
 from spindle.startup_timing import timeline
-from spindle.inference.kv_events import publisher_config
+from spindle.inference.kv_events import KV_EVENTS_CONFIG
 
 
 def main():
@@ -19,7 +19,7 @@ def main():
     load_plugins()
     settings = json.loads(sys.argv[2])
     if os.environ.get("SGLANG_SPINDLE_ROUTING_SOURCE") in {"kv_events", "compare"}:
-        settings["kv_events_config"] = json.dumps(publisher_config())
+        settings["kv_events_config"] = json.dumps(KV_EVENTS_CONFIG)
     args = ServerArgs(
         model_path=sys.argv[1],
         host="127.0.0.1",
