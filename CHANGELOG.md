@@ -12,6 +12,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
 - `miles-v0.2.0` trainers with two GPUs no longer hang at start-up. Ray now starts with enough CPUs for the extra workers this image runs.
+- `create_lora_training_client` with a rank, `train_attn` or `train_mlp` the deployment can't train now fails right away with a 400 that names the settings to use. Before, the error came only after a trainer had started and loaded the model.
 
 ### Changed
 
