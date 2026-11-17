@@ -106,6 +106,7 @@ def _load_actor(monkeypatch):
     # These need real torch; import them before torch is stubbed below.
     importlib.import_module("spindle.backends.miles_runtime.replay_data")
     importlib.import_module("spindle.backends.score_centering")
+    importlib.import_module("spindle.backends.miles_runtime.moe_permute")
     monkeypatch.delitem(
         sys.modules, "spindle.backends.miles_runtime.actor_shared", raising=False
     )
@@ -130,6 +131,7 @@ def _load_actor(monkeypatch):
     megatron_actor = _module(monkeypatch, "miles.backends.megatron_utils.actor")
     megatron_model = _module(monkeypatch, "miles.backends.megatron_utils.model")
     megatron_model.get_batch = lambda *args, **kwargs: {}
+    megatron_model.get_packed_seq_params = lambda *args, **kwargs: None
     checkpoint = _module(monkeypatch, "miles.backends.megatron_utils.lora.checkpoint")
     _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
     _module(

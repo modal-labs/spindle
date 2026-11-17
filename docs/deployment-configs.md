@@ -141,9 +141,21 @@ Besides the LoRA settings, `miles_cfg` accepts `megatron_to_hf_mode` (`bridge`, 
 
 ### Images
 
-`trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1 (the default), v0.1.2 (`miles-v0.1.2`), and v0.2.0 (`miles-v0.2.0`).
+`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53`, `miles-v0.2.0-15afe21` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2` and `sglang-v0.5.23-c4182b2-glm53` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. Use a `module:attribute` path for an image you define in your own code.
 
-`miles-v0.2.0` supports single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying it with more than one trainer node or with `raw` is rejected. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
+Every bundled config sets both images itself rather than inheriting them, so upgrading SGLang or Miles for one config doesn't change any other. If you leave a field empty in your own config, it uses the backend default (`miles-v0.1.1-fdd808c`, `megatron-2d1fa8d` or `sglang-v0.5.23-c4182b2`), and that default can change in a later Spindle release. Set both fields to keep a config on the images it was tested with.
+
+#### Changing an image
+
+Never change a named image in place. That includes its fork commit, base image, packages and build steps. Configs that use the name were validated on its exact contents, and an edit would change them all at once without a test.
+
+To change an image:
+
+1. Add a new image under a new name, in a new module if the build differs. Name it after the release and the fork commit it installs, such as `sglang-v0.5.24-<commit>`. If only the build steps change, add a short suffix that says what changed.
+2. Move configs to the new name one at a time. Record a reference run for each config you move.
+3. Once no bundled config, default or reference run uses the old name, remove it and the module that builds it.
+
+`miles-v0.2.0-15afe21` supports single-node trainers with `megatron_to_hf_mode` set to `bridge`; deploying it with more than one trainer node or with `raw` is rejected. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
 
 A checkpoint restores only on a trainer with the same Miles revision as the one that saved it, so keep the original image to restore older checkpoints after switching images.
 
