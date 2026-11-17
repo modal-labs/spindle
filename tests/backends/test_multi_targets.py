@@ -158,12 +158,19 @@ def test_candidate_scores_and_gradients_share_logits(nested):
 
 
 @pytest.mark.parametrize("context_parallel_size", [1, 2])
-def test_candidate_columns_share_one_softmax_pass(context_parallel_size):
+@pytest.mark.parametrize("widths", [(3, 3, None), (3, 2, 1), (3, 2, None), (1, 1, 1)])
+def test_candidate_columns_share_one_softmax_pass(context_parallel_size, widths):
     torch.manual_seed(5)
     targets = [
         torch.tensor([[1, 4, 6], [2, 5, 0]]),
         torch.tensor([[3, 3, 7], [6, 1, 2]]),
         torch.tensor([5, 2]),  # DP padding adds a 1-D row
+    ]
+    targets = [
+        (target[:, None] if target.ndim == 1 else target)[:, :width]
+        if width is not None
+        else target
+        for target, width in zip(targets, widths, strict=True)
     ]
     logits = torch.randn(3, 2, 8, requires_grad=True)
     reference_logits = logits.detach().clone().requires_grad_()
@@ -209,8 +216,9 @@ def test_candidate_columns_share_one_softmax_pass(context_parallel_size):
         "target_tokens": targets,
     }
     scores = losses._target_logprobs(args, batch, logits)
-    # One shared pass under CP=1; a 1-D row under CP keeps the per-column path.
-    assert len(calls) == (1 if context_parallel_size == 1 else 3)
+    joint = context_parallel_size == 1 or None not in widths
+    assert len(calls) == (1 if joint else max(width or 1 for width in widths))
+    assert [score.shape for score in scores] == [target.shape for target in targets]
     weights = [torch.randn(target.shape) for target in targets]
     sum(
         (score * weight).sum() for score, weight in zip(scores, weights, strict=True)
