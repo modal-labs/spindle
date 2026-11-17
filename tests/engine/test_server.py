@@ -769,9 +769,17 @@ def test_failed_forward_batch_retries_each_forward_alone() -> None:
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("error", [TrainerOutOfMemory, RuntimeError])
+@pytest.mark.parametrize(
+    ("error", "neighbour_status", "reruns"),
+    [
+        # Each request reruns alone, before the neighbour's next optim_step.
+        (TrainerOutOfMemory, FutureStatus.COMPLETE, [("model-a",), ("model-b",)]),
+        # Other failures may have changed state, so nothing reruns.
+        (RuntimeError, FutureStatus.FAILED, []),
+    ],
+)
 def test_packed_forward_backward_out_of_memory_fails_only_the_oversized_request(
-    error,
+    error, neighbour_status, reruns
 ) -> None:
     async def run() -> None:
         started, release = asyncio.Event(), asyncio.Event()
@@ -808,18 +816,12 @@ def test_packed_forward_backward_out_of_memory_fails_only_the_oversized_request(
         await server.retrieve_future("model-b:2", timeout=1.0)
         assert oversized.status == FutureStatus.FAILED
         assert "out of GPU memory" in oversized.error
-        if error is TrainerOutOfMemory:
-            assert neighbour.status == FutureStatus.COMPLETE
-            # Each request reruns alone, before the neighbour's next optim_step.
-            assert calls[1:] == [
-                ("model-a", "model-b"),
-                ("model-a",),
-                ("model-b",),
-                ("model-b", "optim_step"),
-            ]
-        else:
-            assert neighbour.status == FutureStatus.FAILED
-            assert calls[1:3] == [("model-a", "model-b"), ("model-b", "optim_step")]
+        assert neighbour.status == neighbour_status
+        assert calls[1:] == [
+            ("model-a", "model-b"),
+            *reruns,
+            ("model-b", "optim_step"),
+        ]
         await server.close()
 
     asyncio.run(run())
