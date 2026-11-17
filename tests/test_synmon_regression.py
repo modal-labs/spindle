@@ -90,6 +90,7 @@ def test_checkout_configs_do_not_mutate_source_or_share_writable_run_storage():
             != second.recipe.platform["storage"][storage]
         )
     assert first.recipe.platform["secrets"]["api"] == "sr-first"
+    assert first.recipe.platform["requires_proxy_auth"] is True
     assert first.recipe.platform["modal"]["environment"] == checkout.REGRESSION_ENV
 
 
@@ -100,6 +101,8 @@ def test_checkout_lifecycle_cleans_up_and_rejects_wrong_server(monkeypatch, fail
     recipes = regression_recipes(["Qwen/Qwen3-8B"])
     events = []
     captured = {}
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "test-proxy-id")
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "test-proxy-secret")
     monkeypatch.setattr(checkout, "source_commit", lambda: "checkout-sha")
 
     def create(name, credentials, **kwargs):
@@ -118,6 +121,8 @@ def test_checkout_lifecycle_cleans_up_and_rejects_wrong_server(monkeypatch, fail
             == "https://checkout.example/api/v1/get_server_capabilities"
         )
         assert request.headers["X-API-Key"] == captured["key"]
+        assert request.headers["Modal-Key"] == "test-proxy-id"
+        assert request.headers["Modal-Secret"] == "test-proxy-secret"
         return httpx.Response(
             200,
             json={
@@ -160,7 +165,11 @@ def test_checkout_lifecycle_cleans_up_and_rejects_wrong_server(monkeypatch, fail
         )
 
         def run():
-            with checkout.checkout_server(recipes) as (url, key, commit):
+            with checkout.checkout_server(recipes, checkout.verify_checkout) as (
+                url,
+                key,
+                commit,
+            ):
                 events.append("body")
                 assert (url, key, commit) == (
                     "https://checkout.example",
@@ -205,7 +214,7 @@ def test_regression_uses_checkout_credentials_and_cancels_active_work_on_interru
     monkeypatch.setenv("TINKER_API_KEY", "production-key")
 
     @contextmanager
-    def server(selected):
+    def server(selected, verify):
         assert selected == recipes
         try:
             yield "https://checkout.example", "checkout-key", "checkout-sha"
@@ -226,7 +235,7 @@ def test_regression_uses_checkout_credentials_and_cancels_active_work_on_interru
         env = config_validation.client_env(url, key)
         assert env["TINKER_BASE_URL"] == "https://checkout.example"
         assert env["TINKER_API_KEY"] == "checkout-key"
-        assert "/opt/proxy-auth" not in env.get("PYTHONPATH", "")
+        assert "/opt/proxy-auth" in env.get("PYTHONPATH", "")
         assert commit == "checkout-sha"
         return Call()
 

@@ -1,6 +1,6 @@
 """Deploy checkout recipes behind a temporary regression frontend."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 import secrets
 import uuid
@@ -13,6 +13,7 @@ from spindle.deployment_cli import config_file, deploy, stop
 from spindle.deploy_wizard import bundled_config_paths
 from spindle.deployments import DeploymentConfig, load
 from spindle.version import source_commit
+from spindle.providers.modal.fft_pool import proxy_auth_headers
 
 REGRESSION_ENV = "spindle-ci"
 
@@ -60,7 +61,7 @@ def isolated_configs(
         recipe.platform["frontend"] = frontend
         recipe.platform["modal"]["environment"] = REGRESSION_ENV
         recipe.platform["url_label"] = frontend
-        recipe.platform["requires_proxy_auth"] = False
+        recipe.platform["requires_proxy_auth"] = True
         recipe.platform["secrets"]["api"] = frontend
         recipe.platform["storage"]["checkpoints"] = f"{frontend}-checkpoints"
         recipe.platform["storage"]["bulletin"] = f"{frontend}-bulletin"
@@ -69,11 +70,11 @@ def isolated_configs(
 
 
 def verify_checkout(
-    base_url: str, api_key: str, commit: str, recipes: list[BaseConfig]
+    base_url: str, api_key: str, commit: str, recipes: list[str]
 ) -> None:
     response = httpx.get(
         base_url.rstrip("/") + "/api/v1/get_server_capabilities",
-        headers={"X-API-Key": api_key},
+        headers={"X-API-Key": api_key, **proxy_auth_headers()},
         timeout=120,
     )
     response.raise_for_status()
@@ -83,13 +84,16 @@ def verify_checkout(
             f"Regression server reports {capabilities.get('spindle_commit')!r}; expected {commit!r}"
         )
     served = {model["model_name"] for model in capabilities["supported_models"]}
-    missing = {recipe.name for recipe in recipes} - served
+    missing = set(recipes) - served
     if missing:
         raise ValueError(f"Regression server is missing recipes: {sorted(missing)}")
 
 
 @contextmanager
-def checkout_server(recipes: list[BaseConfig]) -> Iterator[tuple[str, str, str]]:
+def checkout_server(
+    recipes: list[BaseConfig],
+    verify: Callable[[str, str, str, list[str]], None],
+) -> Iterator[tuple[str, str, str]]:
     commit = source_commit()
     if commit is None:
         raise ValueError("Run regression from a Spindle checkout")
@@ -107,7 +111,7 @@ def checkout_server(recipes: list[BaseConfig]) -> Iterator[tuple[str, str, str]]
         ).get_web_url()
         if not url:
             raise RuntimeError("Regression frontend has no URL")
-        verify_checkout(url, api_key, commit, recipes)
+        verify(url, api_key, commit, [recipe.name for recipe in recipes])
         print(f"Regression server: {url} ({commit})", flush=True)
         yield url, api_key, commit
     finally:

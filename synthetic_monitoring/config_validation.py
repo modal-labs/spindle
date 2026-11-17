@@ -34,7 +34,11 @@ from zoneinfo import ZoneInfo
 import modal
 
 from synthetic_monitoring.chart import RunPoint, render_timing_history_chart
-from synthetic_monitoring.checkout import checkout_server, regression_recipes
+from synthetic_monitoring.checkout import (
+    checkout_server,
+    regression_recipes,
+    verify_checkout,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODAL_ENV = "spindle-ci"
@@ -129,6 +133,7 @@ regression_image = with_local_sources(
 
 slack_secret = modal.Secret.from_name("spindle-bot-slack", environment_name=MODAL_ENV)
 api_secret = modal.Secret.from_name("spindle-prod-api", environment_name=MODAL_ENV)
+proxy_secret = modal.Secret.from_name("spindle-proxy", environment_name=MODAL_ENV)
 hf_secret = modal.Secret.from_name("huggingface-secret", environment_name=MODAL_ENV)
 
 app = modal.App("spindle-synmon-launcher")
@@ -137,11 +142,10 @@ app = modal.App("spindle-synmon-launcher")
 def client_env(base_url: str, api_key: str | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["TINKER_BASE_URL"] = base_url
-    if api_key is None:
-        env["PYTHONPATH"] = os.pathsep.join(
-            filter(None, ["/opt/proxy-auth", env.get("PYTHONPATH")])
-        )
-    else:
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, ["/opt/proxy-auth", env.get("PYTHONPATH")])
+    )
+    if api_key is not None:
         env["TINKER_API_KEY"] = api_key
     return env
 
@@ -536,8 +540,16 @@ def regression_renderers(models: list[str]) -> dict[str, str | None]:
     return {model: guess_number_renderer(model) for model in models}
 
 
+@app.function(image=regression_image, secrets=[proxy_secret], timeout=3 * 60)
+def verify_regression_server(
+    base_url: str, api_key: str, commit: str, recipes: list[str]
+) -> None:
+    verify_checkout(base_url, api_key, commit, recipes)
+
+
 @app.function(
     image=regression_image,
+    secrets=[proxy_secret],
     timeout=GUESS_NUMBER["timeout_s"] + 15 * 60,
     single_use_containers=True,
 )
@@ -635,7 +647,11 @@ def regress(
     if not recipes:
         raise SystemExit("No selected recipes have a cookbook renderer")
     failed = False
-    with checkout_server(recipes) as (base_url, api_key, commit):
+    with checkout_server(recipes, verify_regression_server.remote) as (
+        base_url,
+        api_key,
+        commit,
+    ):
         calls = []
         pending = set()
         try:
