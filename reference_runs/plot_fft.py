@@ -17,7 +17,11 @@ def main() -> None:
     data = json.loads(args.measurements.read_text())
     contexts = sorted({p["context_length"] for r in data["runs"] for p in r["points"]})
     layouts = sorted(
-        {(r["hardware"], r["tp"], r["cp"]) for r in data["runs"]}, reverse=True
+        {
+            (r["hardware"], r["tp"], r["cp"], r["max_tokens_per_microbatch"])
+            for r in data["runs"]
+        },
+        reverse=True,
     )
     plots = [
         (
@@ -41,12 +45,18 @@ def main() -> None:
             1, len(contexts), figsize=(14, 4.5), squeeze=False, layout="constrained"
         )
         for axis, context in zip(axes[0], contexts):
-            for device, tp, cp in layouts:
+            for device, tp, cp, capacity in layouts:
                 rows = sorted(
                     [
                         (r["batch_size"], p)
                         for r in data["runs"]
-                        if (r["hardware"], r["tp"], r["cp"]) == (device, tp, cp)
+                        if (
+                            r["hardware"],
+                            r["tp"],
+                            r["cp"],
+                            r["max_tokens_per_microbatch"],
+                        )
+                        == (device, tp, cp, capacity)
                         for p in r["points"]
                         if p["context_length"] == context
                     ],
@@ -64,14 +74,15 @@ def main() -> None:
                     axis.plot(
                         latency,
                         throughput,
-                        marker="o",
-                        label=f"{device} · TP{tp}/CP{cp}",
+                        marker="D" if capacity != 65536 else "o",
+                        label=f"{device} · TP{tp}/CP{cp}"
+                        + (f" · pack {capacity // 1024}K" if capacity != 65536 else ""),
                     )
                     for b, x, y in zip(batch, latency, throughput):
                         axis.annotate(
                             f" b={b}",
                             (x, y),
-                            xytext=(4, 4),
+                            xytext=(4, -14) if capacity != 65536 else (4, 4),
                             textcoords="offset points",
                             fontsize=9,
                         )
@@ -83,9 +94,10 @@ def main() -> None:
                             [v - min(r[1]["step_s"]) for v, r in zip(latency, rows)],
                             [max(r[1]["step_s"]) - v for v, r in zip(latency, rows)],
                         ],
-                        marker="o",
+                        marker="D" if capacity != 65536 else "o",
                         capsize=3,
-                        label=f"{device} · TP{tp}/CP{cp}",
+                        label=f"{device} · TP{tp}/CP{cp}"
+                        + (f" · pack {capacity // 1024}K" if capacity != 65536 else ""),
                     )
                 else:
                     cost = [
@@ -95,7 +107,11 @@ def main() -> None:
                         for r in rows
                     ]
                     axis.plot(
-                        batch, cost, marker="o", label=f"{device} · TP{tp}/CP{cp}"
+                        batch,
+                        cost,
+                        marker="D" if capacity != 65536 else "o",
+                        label=f"{device} · TP{tp}/CP{cp}"
+                        + (f" · pack {capacity // 1024}K" if capacity != 65536 else ""),
                     )
                 if name != "latency-throughput":
                     axis.set_xticks(sorted({r["batch_size"] for r in data["runs"]}))

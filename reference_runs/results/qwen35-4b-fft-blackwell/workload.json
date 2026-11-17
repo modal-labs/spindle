@@ -1,0 +1,47 @@
+{
+  "name": "qwen35-4b-fft-blackwell-batch8",
+  "experiment": "qwen35-4b-fft-blackwell",
+  "suite": "trainer",
+  "model": "Qwen/Qwen3.5-4B",
+  "parameterization": "full",
+  "deployment": "src/spindle/configs/qwen35_4b_fft_64k.py",
+  "clients": [
+    1
+  ],
+  "context_lengths": [
+    8192,
+    32768,
+    65536
+  ],
+  "steps": 5,
+  "warmup_steps": 2,
+  "output_tokens": 128,
+  "batch_size": 8,
+  "rank": 8,
+  "seed": 42,
+  "learning_rate": 0.0001,
+  "timeout_s": 2400.0,
+  "recipe": "dapo",
+  "requests_per_client": 100,
+  "command": [],
+  "recipe_config": {},
+  "deployment_overrides": {
+    "trainer_gpus_per_node": 8,
+    "trainer_nodes": 1,
+    "trainer_rdma": true,
+    "trainer_cpu": 32,
+    "trainer_memory_mib": 131072,
+    "trainer_max_instances": 1,
+    "trainer_max_clients_per_instance": 1,
+    "inference_min_replicas": 0,
+    "inference_max_replicas": 1,
+    "weights_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "platform.requires_proxy_auth": true,
+    "platform.modal.exclude_reserved_capacity": true,
+    "megatron_cfg.context_parallel_size": 4,
+    "trainer_gpu": "B200",
+    "trainer_env.TORCHINDUCTOR_COMPILE_THREADS": "1",
+    "trainer_env.PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "megatron_cfg.max_tokens_per_microbatch": 262144
+  }
+}
