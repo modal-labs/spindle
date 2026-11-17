@@ -25,7 +25,7 @@ BASE_IMAGE = (
 MILES_RELEASE_COMMIT = "2806267d060d51b1d3b62f85a1f9b145047aeef9"
 MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
 MILES_BRANCH = "spindle-miles"
-MILES_COMMIT = "ce494f0259b74fc406629dd44f5467c26e9dcb75"
+MILES_COMMIT = "fdd808c008175d4895fd8c57c95ef4fa5bb6a2a0"
 MILES_PATH = "/root/miles"
 MEGATRON_PATH = "/root/Megatron-LM"
 

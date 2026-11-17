@@ -5,7 +5,7 @@ from .miles_image import BRIDGE_IMPORT_CACHE_INSTALL
 from .miles_release_image import MILES_PATH, release_image
 
 # Merged modal-projects/miles#31 on spindle-miles-v0.1.2.
-MILES_COMMIT = "612703a07c6a1e569ffa5059a66796cc693d95b1"
+MILES_COMMIT = "464efc9781bbf8edf2135f0857f5aa417685eae2"
 
 image = release_image.run_commands(
     f"git -C {MILES_PATH} fetch --depth=1"

@@ -351,7 +351,7 @@ def test_slot_seed_precedes_optimizer_and_never_overwrites_checkpoint(seed, chec
     weights = {0: "default"}
     optimizer_weights = {}
 
-    async def load(slot, rank, alpha, *, ckpt_path, load_optimizer, seed):
+    async def load(slot, rank, alpha, *, ckpt_path, load_optimizer, seed=None):
         if ckpt_path is not None:
             assert seed is None
             weights[slot] = "checkpoint"

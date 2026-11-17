@@ -72,7 +72,12 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             with agree_on_failure_context():
                 validate_adapter(Path(source["path"]), checkpoint=True)
         return MultiLoRATrainRayActor.load_slot(
-            self, slot, rank, alpha, source=source, seed=seed
+            self,
+            slot,
+            rank,
+            alpha,
+            source=source,
+            **({"seed": seed} if seed is not None and source is None else {}),
         )
 
     def save_slot_weights(

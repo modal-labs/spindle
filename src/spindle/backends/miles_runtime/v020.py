@@ -101,7 +101,11 @@ class AdapterBridge:
                 parametrization_fields=self.fields(rank, alpha),
             )
         result = await self.bridge.load_slot(
-            slot, rank, alpha, source=source, seed=seed if source is None else None
+            slot,
+            rank,
+            alpha,
+            source=source,
+            **({"seed": seed} if seed is not None and source is None else {}),
         )
         if result is None:
             self.slots[slot] = (rank, alpha)

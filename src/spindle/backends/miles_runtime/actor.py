@@ -136,7 +136,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             alpha,
             ckpt_path=ckpt_path,
             load_optimizer=load_optimizer,
-            seed=seed,
+            **({"seed": seed} if seed is not None and ckpt_path is None else {}),
         )
         if ckpt_path and expert_lora_compat.enabled():
             expert_lora_compat.restore_factory_weights(

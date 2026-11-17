@@ -12,10 +12,13 @@ from typing import TypedDict, cast
 
 import modal
 
-if os.environ.get("SPINDLE_SEED_MILES_API") == "0.2":
-    from spindle.providers.modal.miles_v020_image import image
-else:
-    from spindle.providers.modal.miles_image import image
+from spindle.providers.modal.miles_seed_images import IMAGES
+
+image = IMAGES[
+    "miles-v0.2.0-384d73b"
+    if os.environ.get("SPINDLE_SEED_MILES_API") == "0.2"
+    else "miles-v0.1.1-ce494f0"
+]
 
 
 class SeedRun(TypedDict):
@@ -251,11 +254,9 @@ def check() -> dict[str, object]:
 
 
 @app.local_entrypoint()
-def main() -> None:
+def main(output: str = "/tmp/spindle-seed-gpu-result.json") -> None:
     result = check.remote()
-    Path("/tmp/spindle-seed-gpu-result.json").write_text(
-        json.dumps(result, indent=2) + "\n"
-    )
+    Path(output).write_text(json.dumps(result, indent=2) + "\n")
     print(
         json.dumps(
             {key: value for key, value in result.items() if key != "runs"}, indent=2

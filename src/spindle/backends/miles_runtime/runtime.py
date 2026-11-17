@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import shlex
 import subprocess
@@ -65,6 +66,10 @@ class MilesRuntime:
                 "MilesRuntime requires Miles and Ray in the trainer image"
             ) from _runtime_import_error
         self.config = config
+        self.supports_seed = (
+            "seed"
+            in inspect.signature(tinker_runtime.MilesBackend.load_slot).parameters
+        )
         self._v020 = None
         if os.environ.get("SPINDLE_MILES_API") == "0.2":
             # This API module requires dependencies absent in legacy trainer images.
@@ -126,7 +131,7 @@ class MilesRuntime:
                 alpha,
                 ckpt_path=checkpoint,
                 load_optimizer=restore_optimizer,
-                seed=seed if checkpoint is None else None,
+                **({"seed": seed} if seed is not None and checkpoint is None else {}),
             )
         )
 

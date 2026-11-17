@@ -29,6 +29,7 @@ from spindle.providers.modal.checkpoint_storage import ModalCheckpointStorage
 
 
 class FakeMilesRuntime:
+    supports_seed = True
     revision = "a" * 40
     checkpoint_format = "miles_torch_dist"
 
@@ -1037,3 +1038,22 @@ def test_native_checkpoint_rejects_incompatible_adapter_before_slot_load(
     with pytest.raises(ValueError):
         backend.load_checkpoint("model-a", str(checkpoint), restore_optimizer=True)
     assert runtime.calls == previous
+
+
+def test_seed_on_older_image_is_rejected_without_touching_live_slots(tmp_path):
+    runtime = FakeMilesRuntime()
+    runtime.supports_seed = False
+    backend = _backend(tmp_path, runtime)
+    backend.accept_model("existing", _spec())
+    previous = list(runtime.calls)
+    with pytest.raises(ValueError, match="seed-enabled Miles trainer image"):
+        backend.accept_model(
+            "seeded",
+            ModelSpec(
+                base_model="Qwen/Qwen3-4B",
+                parameterization="lora",
+                lora_config=LoraConfig(rank=8, seed=0),
+            ),
+        )
+    assert runtime.calls == previous
+    assert set(backend.jobs) == {"existing"}

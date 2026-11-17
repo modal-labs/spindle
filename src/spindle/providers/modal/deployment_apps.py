@@ -55,6 +55,7 @@ from .megatron_image import image as megatron_image
 from .miles_v012_image import image as miles_v012_image
 from .miles_v020_image import image as miles_v020_image
 from .miles_image import image as miles_image
+from .miles_seed_images import IMAGES as SEED_TRAINER_IMAGES
 from .ray_cluster import start_trainer_cluster
 from .rollout_image import image as rollout_image
 from .serve import run_engine_with_backend
@@ -62,6 +63,7 @@ from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
 # Named images are frozen: add a new name instead of editing one. See docs/deployment-configs.md#images.
 TRAINER_IMAGES = {
+    **SEED_TRAINER_IMAGES,
     "miles-v0.1.1-fdd808c": miles_image,
     "miles-v0.1.2-f2f8447": miles_v012_image,
     "miles-v0.1.2-464efc9-glm53": glm53_trainer_image,
