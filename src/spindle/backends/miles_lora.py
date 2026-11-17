@@ -542,7 +542,10 @@ class MilesCommandBackend(Backend):
             self._profile_step_done = True
         files: list[str] = []
         try:
-            results = self.runtime.torch_profile_stop(self._profile.output_dir)
+            # Forking a process that uses RDMA is unverified, so multi-node trainers write in place.
+            results = self.runtime.torch_profile_stop(
+                self._profile.output_dir, fork=self.config.actor_num_nodes == 1
+            )
             for result in results or []:
                 if result:
                     files.extend(result.values())

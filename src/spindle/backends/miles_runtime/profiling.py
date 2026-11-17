@@ -206,8 +206,8 @@ class RankProfiler:
         )
         self._profile.__enter__()
 
-    def stop(self, output_dir: str, name: str) -> dict[str, str]:
-        """Stop on the thread that called ``start``; a child process writes the files."""
+    def stop(self, output_dir: str, name: str, *, fork: bool = True) -> dict[str, str]:
+        """Stop on the thread that called ``start``; a child process writes the files unless ``fork`` is false."""
         if self._profile is None:
             raise RuntimeError("RankProfiler.stop() called without start()")
         if torch.cuda.is_available():
@@ -219,6 +219,9 @@ class RankProfiler:
             "trace": os.path.join(output_dir, f"{name}.trace.json.gz"),
             "table": os.path.join(output_dir, f"{name}.key_averages.txt"),
         }
+        if not fork:
+            _write(profile, output_dir, name, paths)
+            return paths
         # A child process keeps the GIL-bound export off the training thread.
         pid = os.fork()
         if pid == 0:
@@ -230,6 +233,18 @@ class RankProfiler:
         return paths
 
 
+def _write(
+    profile: torch.profiler.profile, output_dir: str, name: str, paths: dict[str, str]
+) -> None:
+    os.makedirs(output_dir, exist_ok=True)
+    partial = os.path.join(output_dir, f".{name}.trace.json.gz")
+    profile.export_chrome_trace(partial)
+    os.replace(partial, paths["trace"])
+    table = profile.key_averages().table(sort_by="cuda_time_total", row_limit=60)
+    with open(paths["table"], "w", encoding="utf-8") as file:
+        file.write(table)
+
+
 def _write_in_child(
     profile: torch.profiler.profile, output_dir: str, name: str, paths: dict[str, str]
 ) -> NoReturn:
@@ -238,13 +253,7 @@ def _write_in_child(
     os.nice(10)
     code = 0
     try:
-        os.makedirs(output_dir, exist_ok=True)
-        partial = os.path.join(output_dir, f".{name}.trace.json.gz")
-        profile.export_chrome_trace(partial)
-        os.replace(partial, paths["trace"])
-        table = profile.key_averages().table(sort_by="cuda_time_total", row_limit=60)
-        with open(paths["table"], "w", encoding="utf-8") as file:
-            file.write(table)
+        _write(profile, output_dir, name, paths)
     except BaseException:
         traceback.print_exc()
         code = 1
