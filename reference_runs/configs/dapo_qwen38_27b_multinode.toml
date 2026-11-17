@@ -1,6 +1,9 @@
 config = "qwen38-27b-lora-256k"
 script = "../scripts/dapo_math.py"
-tokenizer = { model = "Qwen/Qwen3.8-27B", revision = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0" }
+
+[tokenizer]
+model = "Qwen/Qwen3.8-27B"
+revision = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
 
 [config_overrides]
 name = "dapo-math-qwen38-27b-multinode"
