@@ -285,7 +285,7 @@ class Config(Parent):
 config = Config()
 ```
 
-Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Modal accepts the option only on clustered functions, so other trainers and inference pools are unaffected.
+Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Set `inference_rdma=True` to apply the same exclusion to a sampler on a full GPU node. Modal accepts the option only on clustered allocations; other trainers and inference pools are unaffected.
 
 The frontend's URL is `https://<workspace>-<environment>--<frontend>-server.modal.run`. To choose the part after `--`, set `"platform.url_label"`; for example `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. Changing the label changes the URL clients use.
 

@@ -60,6 +60,7 @@ class BaseConfig:
 
     inference_gpu = "H100"
     inference_gpus_per_node = 1
+    inference_rdma = False
     inference_cpu = 8
     inference_memory_mib = 32768
     inference_disk_mib = 0

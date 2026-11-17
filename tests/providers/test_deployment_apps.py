@@ -627,6 +627,38 @@ def test_trainer_can_exclude_reserved_capacity(builders, monkeypatch, rdma):
     )
 
 
+@pytest.mark.parametrize("exclude", [False, True])
+@pytest.mark.parametrize("rdma", [False, True])
+def test_sampler_can_exclude_reserved_capacity(builders, monkeypatch, exclude, rdma):
+    row = deployment()
+    original_identity = row.inference_identity()
+    row.recipe.platform["modal"]["exclude_reserved_capacity"] = exclude
+    row.recipe.inference_rdma = rdma
+    allocations = []
+
+    def clustered(*, size, rdma):
+        allocations.append((size, rdma))
+        return lambda cls: cls
+
+    monkeypatch.setattr(modal, "clustered", clustered)
+    app, _ = deployment_apps.build_rollout_app(
+        row, LoraPoolSpec(row.definition_id), image="test"
+    )
+    settings, _ = app.servers["Server"]
+    assert settings["experimental_options"] == (
+        (
+            {"efa_enabled": True}
+            | ({"exclude_reserved_capacity": True} if exclude else {})
+        )
+        if rdma
+        else {}
+    )
+    assert allocations == ([(1, True)] if rdma else [])
+    restored = DeploymentConfig.model_validate_json(row.model_dump_json())
+    assert restored.recipe.inference_rdma == rdma
+    assert (restored.inference_identity() != original_identity) == rdma
+
+
 def test_multinode_trainer_uses_cluster_launcher(builders, monkeypatch):
     row = deployment("qwen38-27b-lora-256k")
     clusters = []

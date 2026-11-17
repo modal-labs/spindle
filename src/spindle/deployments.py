@@ -239,6 +239,7 @@ class DeploymentConfig(BaseModel):
             recipe.inference_image,
             recipe.inference_gpu,
             recipe.inference_gpus_per_node,
+            recipe.inference_rdma,
             recipe.inference_cpu,
             recipe.inference_memory_mib,
             recipe.inference_disk_mib,

@@ -345,7 +345,7 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         maximum = maximum if pool.max_containers is None else pool.max_containers
         window = window if pool.scaledown_window is None else pool.scaledown_window
 
-    @app.server(
+    server = app.server(
         name="Server",
         serialized=True,
         image=image
@@ -379,8 +379,12 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         startup_timeout=recipe.inference_startup_timeout_s,
         exit_grace_period=300,
         port=8000,
+        experimental_options=trainer_experimental_options(
+            recipe.inference_rdma, platform
+        ),
         **server_placement(platform["modal"]["region"]),
     )
+
     class Server:
         @modal.enter()
         def start(self):
@@ -460,7 +464,10 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
             terminate(self.sidecar)
             terminate(self.sglang)
 
-    return app, Server
+    server_class = (
+        modal.clustered(size=1, rdma=True)(Server) if recipe.inference_rdma else Server
+    )
+    return app, server(server_class)
 
 
 def build_inference_app(deployment, platform=None, *, image=None):
