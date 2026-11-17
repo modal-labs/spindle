@@ -87,9 +87,9 @@ which fail on the parent and pass with the patch. Live runs cover only the dense
 These are short execution checks, not convergence measurements, official
 Tinker parity results, or maximum-context tests. They do not cover MoE expert
 adapters, CP>1, multi-node native trainers, FP32 adapter execution, or seeded
-initialization parity. Qwen3.5 variants do not change the bundled defaults.
+initialization parity. The Qwen3.5 variants in these original runs did not change the bundled defaults.
 
-## CPU checks
+## Original CPU checks
 
 The locked Python 3.12 development environment passes the full pre-commit
 formatting, lint, and type checks. With CI's CPU Torch 2.10.0 and the built
@@ -119,3 +119,63 @@ These are disjoint primary blockers; some recipes have additional restrictions.
 architecture ID. Qwen3.8-27B uses `qwen3_5` internally. The 20 candidates are
 not covered by the earlier six-model results above on the final merged source.
 The new sampler image uses merged SGLang `e003cf9`, preserving older named images.
+
+## Synmon regression on the merged migration
+
+Source: Spindle `913d0c3`, Miles `384d73b`, and SGLang `e003cf9`.
+The stock Tinker SDK 0.39.0 runs cookbook 0.6.1's guess-number GRPO workload
+through the repository's synmon helpers against temporary checkout deployments.
+Deployment isolation uses [`checkout_server` from PR #314](https://github.com/modal-labs/spindle/blob/ae383d32575e156282ca0bd9ee6fc8ef0cd933b5/synthetic_monitoring/checkout.py);
+the workload uses this branch's `run_guess_number` helper.
+Each model takes three steps at rank 32, with batch size 8, group size 4, a
+64-token limit and learning rate 3e-5. The cookbook uses the repository's
+`guess_number.patch`. Every run saves final trainer state and sampler weights.
+
+All nine models completed, for 27 accepted updates. These use one bundled
+recipe per base model; they do not cover every context-length or topology
+variant among the 20 migrated recipes. Sampler settings, target sets and
+speculative decoding follow those recipes. H100 requests allow H200 upgrades.
+
+| Model | Trainer TP × DP | Sampler/trainer KL | Prior synmon KL | Reward first → last |
+| --- | --- | ---: | ---: | ---: |
+| Qwen2.5-3B | 1 × 4 | 0.000608 | — | -7.8438 → -7 |
+| Qwen2.5-7B-Instruct | 2 × 2 | 0.000400 | — | 0.28125 → 0.625 |
+| Qwen3-4B | 1 × 4 | 0.001265 | — | 0.15625 → 0.125 |
+| Qwen3-8B | 2 × 2 | 0.000511 | 0.000709 | 0.0625 → 0.34375 |
+| Qwen3.5-2B | 1 × 4 | 0.000328 | — | -1 → -0.28125 |
+| Qwen3.5-4B | 1 × 4 | 0.000242 | 0.000331 | 0.25 → 0.21875 |
+| Qwen3.5-9B | 1 × 1 | 0.000258 | 0.000417 | 0.21875 → 0.3125 |
+| Qwen3.5-9B-Base | 4 × 1 | 0.000351 | 0.000456 | -4.0938 → -3.3438 |
+| Qwen3.8-27B | 4 × 2 | 0.000041 | 0.000112 | -0.09375 → 1 |
+
+[`synmon-results.json`](synmon-results.json) records the per-model results,
+recipes, GPU requests, timing stages and prior metrics. Prior runs are context
+for the regression, not a controlled performance or convergence comparison.
+The low rewards of base models are retained; completion is an execution check.
+[`native-initialization.json`](native-initialization.json) records native factory
+initialization and actual trainer GPUs for all nine models.
+
+An additional Qwen3-8B attempt on four H200s failed at its first backward
+request, while NCCL reduced the microbatch count over the DP group. It reported
+CUDA error 999 with 126 GB free on the affected GPU. The fresh-allocation retry
+selects H200 explicitly and enables NCCL diagnostic logging; its outcome is in
+the table. The cause of the failed attempt is not established. An earlier H100
+run also completed. The failed attempt remains in `failed_attempts`.
+
+Cookbook's model-name registry omitted four of these models. Synmon now selects
+existing renderers for them. The three chat renderers match the models' HF
+generation-prompt tokens in [`renderer-template-check.json`](renderer-template-check.json).
+Qwen2.5-3B uses the cookbook's generic `role_colon` renderer for base models.
+
+The full CPU suite on the committed source reports 1,482 passed, 10 skipped,
+and the same known `--=1` CLI validation failure as the base. It uses Python
+3.12, locked Tinker 0.26.0, CPU Torch 2.10.0 and the built router extension.
+Formatting, lint, types and package build pass.
+
+These runs do not establish Tinker numerical parity, convergence, maximum
+context support, native multi-node support or native routed expert support.
+The earlier checkpoint/replay results above use their stated older source.
+
+All temporary regression apps and clients stopped, with zero running containers
+and no remaining test volumes, secrets or proxy tokens; see
+[`synmon-cleanup.json`](synmon-cleanup.json).

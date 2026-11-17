@@ -75,9 +75,12 @@ from spindle.configs.qwen35_4b_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "qwen35-4b-lora-32k-attn-only"
+    trainer_image = "miles-v0.1.1-fdd808c"
     inference_image = "sglang-v0.5.23-c4182b2"
     overrides = {
         **Parent.overrides,
+        "miles_cfg.megatron_to_hf_mode": "bridge",
+        "miles_cfg.lora_type": "lora",
         "miles_cfg.target_modules": [
             "q_proj",
             "k_proj",

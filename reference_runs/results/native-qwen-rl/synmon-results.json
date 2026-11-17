@@ -1,0 +1,402 @@
+{
+  "spindle_source": "913d0c367809eb4577d17a59a67a14e947afee57",
+  "miles_revision": "384d73b13da2295dc9bb094da177bb5f4c41b682",
+  "sglang_revision": "e003cf90c44c78249ce4ed3db3cf2f768af724a8",
+  "tinker": "0.39.0",
+  "tinker_cookbook": "0.6.1 with repository guess_number.patch",
+  "workload": {
+    "recipe": "tinker_cookbook.recipes.multiplayer_rl.guess_number.train",
+    "steps": 3,
+    "batch_size": 8,
+    "group_size": 4,
+    "max_tokens": 64,
+    "learning_rate": 3e-05,
+    "rank": 32
+  },
+  "completed_models": 9,
+  "failed_attempts": [
+    {
+      "model": "Qwen/Qwen3-8B",
+      "frontend": "sr-a423ef323a03",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer_gpu": "H200",
+      "tp": 2,
+      "dp": 2,
+      "stage": "first forward_backward: DP num_microbatches all_reduce",
+      "error": "NCCL 2.30.7 ncclUnhandledCudaError: CUDA error 999 (unknown error)",
+      "memory_at_error": {
+        "free_GB": 126.08,
+        "allocated_GB": 10.44
+      },
+      "root_cause": "Not established. Fresh-allocation retry is recorded separately."
+    }
+  ],
+  "results": [
+    {
+      "model": "Qwen/Qwen2.5-3B",
+      "status": "passed",
+      "renderer": "role_colon",
+      "timings": {
+        "startup": 405.1036787553197,
+        "first step": 210.66641677400003,
+        "warm steps": 68.84584361100008
+      },
+      "metrics": {
+        "kl_sample_train_v2": 0.0006083304178901017,
+        "reward_first": -7.84375,
+        "reward_last": -7.0
+      },
+      "duration_s": 684.6173071861267,
+      "config": "qwen25-3b-lora-32k",
+      "frontend": "sr-2100d7be4207",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer": {
+        "gpu_request": "H100",
+        "gpu_count": 4,
+        "tp": 1,
+        "cp": 1,
+        "dp": 4
+      },
+      "sampler": {
+        "gpu_request": "H100",
+        "gpu_count_per_replica": 1,
+        "image": "sglang-v0.5.23-e003cf9"
+      },
+      "prior_synmon": null
+    },
+    {
+      "model": "Qwen/Qwen2.5-7B-Instruct",
+      "status": "passed",
+      "renderer": "qwen3_instruct",
+      "timings": {
+        "startup": 412.1004764210201,
+        "first step": 192.10243503500004,
+        "warm steps": 50.51499954899998
+      },
+      "metrics": {
+        "kl_sample_train_v2": 0.0003995512961409986,
+        "reward_first": 0.28125,
+        "reward_last": 0.625
+      },
+      "duration_s": 654.7187819480896,
+      "config": "qwen25-7b-instruct-lora-32k",
+      "frontend": "sr-2100d7be4207",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer": {
+        "gpu_request": "H100",
+        "gpu_count": 4,
+        "tp": 2,
+        "cp": 1,
+        "dp": 2
+      },
+      "sampler": {
+        "gpu_request": "H100",
+        "gpu_count_per_replica": 1,
+        "image": "sglang-v0.5.23-e003cf9"
+      },
+      "prior_synmon": null
+    },
+    {
+      "model": "Qwen/Qwen3-4B",
+      "status": "passed",
+      "renderer": "qwen3_disable_thinking",
+      "timings": {
+        "startup": 353.5315972125502,
+        "first step": 190.84241079900005,
+        "warm steps": 54.48435514000005
+      },
+      "metrics": {
+        "kl_sample_train_v2": 0.0012648081659184147,
+        "reward_first": 0.15625,
+        "reward_last": 0.125
+      },
+      "duration_s": 598.858903169632,
+      "config": "qwen3-4b-lora-32k",
+      "frontend": "sr-2100d7be4207",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer": {
+        "gpu_request": "H100",
+        "gpu_count": 4,
+        "tp": 1,
+        "cp": 1,
+        "dp": 4
+      },
+      "sampler": {
+        "gpu_request": "H100",
+        "gpu_count_per_replica": 1,
+        "image": "sglang-v0.5.23-e003cf9"
+      },
+      "prior_synmon": null
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "status": "passed",
+      "renderer": "qwen3_disable_thinking",
+      "timings": {
+        "startup": 282.0589124964042,
+        "first step": 267.193420272,
+        "warm steps": 54.37887827399993
+      },
+      "metrics": {
+        "kl_sample_train_v2": 0.00051143143112616,
+        "reward_first": 0.0625,
+        "reward_last": 0.34375
+      },
+      "duration_s": 603.6322705745697,
+      "config": "qwen3-8b-lora-32k",
+      "frontend": "sr-fab6406224c9",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer": {
+        "gpu_request": "H200",
+        "gpu_count": 4,
+        "tp": 2,
+        "cp": 1,
+        "dp": 2,
+        "bundled_gpu_request": "H100"
+      },
+      "validation_overrides": {
+        "trainer_gpu": "H200",
+        "trainer_env.NCCL_DEBUG": "INFO"
+      },
+      "sampler": {
+        "gpu_request": "B300",
+        "gpu_count_per_replica": 1,
+        "image": "sglang-v0.5.23-e003cf9"
+      },
+      "prior_synmon": {
+        "ts": 1794859655.3325305,
+        "metrics": {
+          "kl_sample_train_v2": 0.0007088848700126013,
+          "reward_first": 0.125,
+          "reward_last": 0.34375
+        },
+        "timings": {
+          "startup": 283.40666905220894,
+          "first step": 259.885556126,
+          "warm steps": 88.48881191399994
+        }
+      }
+    },
+    {
+      "model": "Qwen/Qwen3.5-2B",
+      "status": "passed",
+      "renderer": "qwen3_5_disable_thinking",
+      "timings": {
+        "startup": 245.90407207382447,
+        "first step": 277.008522743,
+        "warm steps": 135.99095294699998
+      },
+      "metrics": {
+        "kl_sample_train_v2": 0.00032763980561867356,
+        "reward_first": -1.0,
+        "reward_last": -0.28125
+      },
+      "duration_s": 658.9062414169312,
+      "config": "qwen35-2b-lora-32k",
+      "frontend": "sr-2100d7be4207",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer": {
+        "gpu_request": "H100",
+        "gpu_count": 4,
+        "tp": 1,
+        "cp": 1,
+        "dp": 4
+      },
+      "sampler": {
+        "gpu_request": "H100",
+        "gpu_count_per_replica": 1,
+        "image": "sglang-v0.5.23-e003cf9"
+      },
+      "prior_synmon": null
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "status": "passed",
+      "renderer": "qwen3_5_disable_thinking",
+      "timings": {
+        "startup": 256.97206975530787,
+        "first step": 319.50351335000005,
+        "warm steps": 64.03065750100006
+      },
+      "metrics": {
+        "kl_sample_train_v2": 0.00024187475113042942,
+        "reward_first": 0.25,
+        "reward_last": 0.21875
+      },
+      "duration_s": 640.5068466663361,
+      "config": "qwen35-4b-lora-32k",
+      "frontend": "sr-fd1a62d1f558",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer": {
+        "gpu_request": "B200",
+        "gpu_count": 4,
+        "tp": 1,
+        "cp": 1,
+        "dp": 4
+      },
+      "sampler": {
+        "gpu_request": "B200",
+        "gpu_count_per_replica": 1,
+        "image": "sglang-v0.5.23-e003cf9"
+      },
+      "prior_synmon": {
+        "ts": 1794860293.4682684,
+        "metrics": {
+          "kl_sample_train_v2": 0.00033117517402085167,
+          "reward_first": -0.15625,
+          "reward_last": 0.09375
+        },
+        "timings": {
+          "startup": 231.3070137494019,
+          "first step": 307.29066461499997,
+          "warm steps": 97.43025570999998
+        }
+      }
+    },
+    {
+      "model": "Qwen/Qwen3.5-9B",
+      "status": "passed",
+      "renderer": "qwen3_5_disable_thinking",
+      "timings": {
+        "startup": 192.6351273744745,
+        "first step": 302.786958911,
+        "warm steps": 73.01315612899998
+      },
+      "metrics": {
+        "kl_sample_train_v2": 0.00025822965350622934,
+        "reward_first": 0.21875,
+        "reward_last": 0.3125
+      },
+      "duration_s": 568.4359710216522,
+      "config": "qwen35-9b-instruct-lora-32k",
+      "frontend": "sr-fd1a62d1f558",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer": {
+        "gpu_request": "B200",
+        "gpu_count": 1,
+        "tp": 1,
+        "cp": 1,
+        "dp": 1
+      },
+      "sampler": {
+        "gpu_request": "B200",
+        "gpu_count_per_replica": 1,
+        "image": "sglang-v0.5.23-e003cf9"
+      },
+      "prior_synmon": {
+        "ts": 1794860423.4398456,
+        "metrics": {
+          "kl_sample_train_v2": 0.00041699949845982093,
+          "reward_first": 0.09375,
+          "reward_last": 0.25
+        },
+        "timings": {
+          "startup": 274.41193331931106,
+          "first step": 110.18872358300001,
+          "warm steps": 110.06419237899996
+        }
+      }
+    },
+    {
+      "model": "Qwen/Qwen3.5-9B-Base",
+      "status": "passed",
+      "renderer": "role_colon",
+      "timings": {
+        "startup": 240.69275249655436,
+        "first step": 341.557276947,
+        "warm steps": 72.75347840899997
+      },
+      "metrics": {
+        "kl_sample_train_v2": 0.0003508990533494701,
+        "reward_first": -4.09375,
+        "reward_last": -3.34375
+      },
+      "duration_s": 655.0048859119415,
+      "config": "qwen35-9b-lora-16k",
+      "frontend": "sr-fd1a62d1f558",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer": {
+        "gpu_request": "H100",
+        "gpu_count": 4,
+        "tp": 4,
+        "cp": 1,
+        "dp": 1
+      },
+      "sampler": {
+        "gpu_request": [
+          "B200",
+          "H200"
+        ],
+        "gpu_count_per_replica": 1,
+        "image": "sglang-v0.5.23-e003cf9"
+      },
+      "prior_synmon": {
+        "ts": 1794860922.4451122,
+        "metrics": {
+          "kl_sample_train_v2": 0.00045575533295050263,
+          "reward_first": -4.65625,
+          "reward_last": -6.125
+        },
+        "timings": {
+          "startup": 265.00983590314945,
+          "first step": 241.350961086,
+          "warm steps": 101.9696218360001
+        }
+      }
+    },
+    {
+      "model": "Qwen/Qwen3.8-27B",
+      "status": "passed",
+      "renderer": "qwen3_8_disable_thinking",
+      "timings": {
+        "startup": 299.89443223766614,
+        "first step": 392.930470076,
+        "warm steps": 114.174089891
+      },
+      "metrics": {
+        "kl_sample_train_v2": 4.1313160669057915e-05,
+        "reward_first": -0.09375,
+        "reward_last": 1.0
+      },
+      "duration_s": 806.9996771812439,
+      "config": "qwen38-27b-lora-32k",
+      "frontend": "sr-fd1a62d1f558",
+      "source_commit": "913d0c367809eb4577d17a59a67a14e947afee57",
+      "trainer": {
+        "gpu_request": [
+          "H200",
+          "B300",
+          "B200"
+        ],
+        "gpu_count": 8,
+        "tp": 4,
+        "cp": 1,
+        "dp": 2
+      },
+      "sampler": {
+        "gpu_request": "B200",
+        "gpu_count_per_replica": 2,
+        "image": "sglang-v0.5.23-e003cf9"
+      },
+      "prior_synmon": {
+        "ts": 1794861535.7686317,
+        "metrics": {
+          "kl_sample_train_v2": 0.00011232939808299609,
+          "reward_first": 0.75,
+          "reward_last": 0.9375
+        },
+        "timings": {
+          "startup": 47.31364449666569,
+          "first step": 39.221499572,
+          "warm steps": 98.98815824799998
+        }
+      }
+    }
+  ],
+  "runner": {
+    "workload": "synthetic_monitoring.config_validation.run_guess_number",
+    "isolation_helper_pr": "https://github.com/modal-labs/spindle/pull/314",
+    "isolation_helper_commit": "ae383d32575e156282ca0bd9ee6fc8ef0cd933b5",
+    "isolation_helper_blob": "cb8557da1cb92bbf238dd4e75abb2940ff0cf8b0"
+  }
+}

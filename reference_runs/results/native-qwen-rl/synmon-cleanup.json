@@ -1,0 +1,9 @@
+{
+  "checked_at": "2026-11-17T19:38:56.372213+00:00",
+  "matching_apps_checked": 50,
+  "apps_not_stopped": [],
+  "running_containers": 0,
+  "remaining_test_secrets": [],
+  "remaining_test_volumes": [],
+  "remaining_test_proxy_tokens": []
+}
