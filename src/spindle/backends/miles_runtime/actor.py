@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import model as qwen3_vl_model
@@ -34,6 +36,8 @@ except ImportError:
     from miles.backends.training_utils.replay_data import fill_replay_data
 
     from . import tinker_cp
+
+from spindle.patching import same_signature
 
 from . import (
     allgather_cp_lora,
@@ -100,7 +104,7 @@ def _sync_checkpoint_volume(action: str) -> None:
 class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
     """Upstream multi-LoRA actor with Qwen MTP and weights-only save support."""
 
-    def init(self, args, role, **kwargs):
+    def init(self, args, role, **kwargs):  # ty: ignore[incompatible-method-override]
         _use_distributed_timeout_for_gloo(args.distributed_timeout_minutes)
         # Miles's LoRA builder inherits checkpoint MTP heads without honoring
         # enable_mtp_training. Qwen3.5 then injects an auxiliary backward loss
@@ -111,6 +115,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             return result
         original = AutoBridge.to_megatron_provider
 
+        @same_signature(original)
         def provider_without_mtp(bridge, *provider_args, **provider_kwargs):
             provider = original(bridge, *provider_args, **provider_kwargs)
             provider.mtp_num_layers = None
@@ -187,6 +192,8 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
         weights = checkpoint._slot_weights_sharded_state_dict(self.model, slot)
         sharded = {checkpoint._WEIGHTS_KEY: weights}
         checkpoint._canonicalize_slot_keys(sharded, slot)
-        checkpoint_io.write_checkpoint_dir(
-            path, lambda temporary: dist_checkpointing.save(sharded, str(temporary))
-        )
+
+        def _save(temporary: Path) -> None:
+            dist_checkpointing.save(sharded, str(temporary))
+
+        checkpoint_io.write_checkpoint_dir(path, _save)

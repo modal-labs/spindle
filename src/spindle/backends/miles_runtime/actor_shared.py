@@ -11,6 +11,7 @@ from torch.distributed.constants import default_pg_timeout
 from miles.ray import train_actor
 from miles.utils import distributed_utils
 
+from spindle.patching import same_signature
 from spindle.startup_timing import timeline
 
 from .profiling import RankProfiler, TorchProfileConfig
@@ -53,6 +54,7 @@ def install_replay_patches(
 def use_distributed_timeout_for_gloo(minutes: int) -> None:
     timeout = max(timedelta(minutes=minutes), default_pg_timeout)
 
+    @same_signature(train_actor.init_gloo_group)
     def init_gloo_group() -> object:
         if distributed_utils.GLOO_GROUP is None:
             distributed_utils.GLOO_GROUP = dist.new_group(

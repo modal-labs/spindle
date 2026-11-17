@@ -8,6 +8,8 @@ from functools import wraps
 import torch
 import torch.nn.functional as F
 
+from spindle.patching import same_signature
+
 ENV_FLAG = "SPINDLE_HOST_SYNC_PATCHES"
 BRIDGE_COMMIT = "8cd3466d14d2337c8492827b3712482c2b3e4866"
 # Complete multi_lora_layers.py at BRIDGE_COMMIT; independent of wheel/editable
@@ -57,12 +59,14 @@ def install_multi_lora(layers=None) -> bool:
     dense, expert = layers.MultiLoRALinear, layers.MultiLoRAGroupedExpertLinear
     init_slot, clear_slot = dense.init_adapter_slot, dense.clear_adapter_slot
 
+    @same_signature(init_slot)
     @wraps(init_slot)
     def init_adapter_slot(self, idx, rank, alpha):
         init_slot(self, idx, rank, alpha)
         scaling = self.alpha_values[idx] / self.rank_values[idx]
         _unit_scaling(self)[idx] = bool(scaling.item() == 1.0)
 
+    @same_signature(clear_slot)
     @wraps(clear_slot)
     def clear_adapter_slot(self, idx):
         clear_slot(self, idx)
@@ -70,10 +74,12 @@ def install_multi_lora(layers=None) -> bool:
 
     dense.init_adapter_slot = init_adapter_slot
     dense.clear_adapter_slot = clear_adapter_slot
-    dense.forward = _dense_forward(layers)
-    expert.forward = _expert_forward()
+    dense.forward = same_signature(dense.forward)(_dense_forward(layers))
+    expert.forward = same_signature(expert.forward)(_expert_forward())
     # install_moe_slot_routing looks this up when the model is built.
-    layers._make_slot_routing_hook = _routing_hook_factory(layers)
+    layers._make_slot_routing_hook = same_signature(layers._make_slot_routing_hook)(
+        _routing_hook_factory(layers)
+    )
     setattr(layers, _INSTALLED, True)
     _log("installed", patch="multi_lora", bridge=BRIDGE_COMMIT[:8])
     return True
@@ -95,7 +101,7 @@ def install_geglu(fused=None, experts=None) -> bool:
     if digest != GEGLU_SOURCE_SHA256:
         _log("skipped", patch="geglu", reason=f"source sha256 {digest[:12]} differs")
         return False
-    patched = _geglu(fused)
+    patched = same_signature(original)(_geglu(fused))
     fused.weighted_bias_quick_geglu_impl = patched
     if (
         experts is not None

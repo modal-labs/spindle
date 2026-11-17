@@ -242,6 +242,35 @@ def test_context_parallel_guard_restores_args_and_installs_once(fails):
 
 
 @pytest.mark.parametrize(
+    "context_parallel_size, estimator, rejected",
+    [
+        (4, "ppo", True),
+        (4, "reinforce_plus_plus", True),
+        (1, "ppo", False),
+        (1, "reinforce_plus_plus", False),
+        (4, "reinforce_baseline", False),
+    ],
+)
+def test_context_parallel_guard_rejects_full_length_advantage_estimators(
+    context_parallel_size, estimator, rejected
+):
+    lora_arguments = SimpleNamespace(validate_multi_lora_args=lambda args: None)
+    _allow_context_parallel_multi_lora(lora_arguments)
+    args = SimpleNamespace(
+        context_parallel_size=context_parallel_size, advantage_estimator=estimator
+    )
+    if rejected:
+        with pytest.raises(
+            ValueError, match=f"--advantage-estimator {estimator}"
+        ) as err:
+            lora_arguments.validate_multi_lora_args(args)
+        assert "--context-parallel-size 1" in str(err.value)
+    else:
+        lora_arguments.validate_multi_lora_args(args)
+    assert args.context_parallel_size == context_parallel_size
+
+
+@pytest.mark.parametrize(
     "allgather_cp, qkv_format, seen",
     [(True, "bshd", [False]), (True, "thd", [True]), (False, "bshd", [False])],
 )

@@ -565,6 +565,16 @@ def _allow_context_parallel_multi_lora(lora_arguments) -> None:
 
     @wraps(original)
     def validate(args) -> None:
+        estimator = getattr(args, "advantage_estimator", None)
+        if args.context_parallel_size > 1 and estimator in (
+            "ppo",
+            "reinforce_plus_plus",
+        ):
+            raise ValueError(
+                f"--advantage-estimator {estimator} has no effect on multi-LoRA "
+                "training, and Spindle doesn't support it with context parallelism "
+                "above 1. Remove the flag or set --context-parallel-size 1."
+            )
         context_parallel_size = args.context_parallel_size
         args.context_parallel_size = 1
         try:
