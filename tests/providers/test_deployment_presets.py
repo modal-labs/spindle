@@ -100,7 +100,7 @@ def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
 def test_dense_qwen_recipes_use_native_canonical_slots(preset):
     spec = load(config_path(preset))
     trainer = backend_config(spec)["miles"]
-    assert spec.trainer_image == "miles-v0.2.0-15afe21"
+    assert spec.trainer_image == "miles-v0.2.0-5e37a66"
     assert spec.inference_image == "sglang-v0.5.23-e003cf9"
     assert trainer["megatron_to_hf_mode"] == "raw"
     assert trainer["lora_type"] == "canonical_lora"

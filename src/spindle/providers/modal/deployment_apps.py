@@ -56,6 +56,7 @@ from .megatron_image import image as megatron_image
 from .miles_v012_image import image as miles_v012_image
 from .miles_v020_image import image as miles_v020_image
 from .miles_image import image as miles_image
+from .miles_native_image import image as miles_native_image
 from .ray_cluster import start_trainer_cluster
 from .rollout_image import gdn_lora_image as gdn_lora_sampler_image
 from .rollout_image import image as rollout_image
@@ -69,6 +70,7 @@ TRAINER_IMAGES = {
     "miles-v0.1.2-f2f8447": miles_v012_image,
     "miles-v0.1.2-464efc9-glm53": glm53_trainer_image,
     "miles-v0.2.0-15afe21": miles_v020_image,
+    "miles-v0.2.0-5e37a66": miles_native_image,
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {

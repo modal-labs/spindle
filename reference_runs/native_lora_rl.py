@@ -113,6 +113,11 @@ def train_client(
     )
     initial = score(training, probe)
     assert all(map(math.isfinite, initial))
+    initial_repeat_diff = delta(initial, score(training, probe))
+    assert initial_repeat_diff <= 1e-5, (
+        "repeated forward changed scores",
+        initial_repeat_diff,
+    )
     record(
         path,
         "client",
@@ -121,6 +126,7 @@ def train_client(
         model_id=training.model_id,
         rank=8 if client_index == 0 else 16,
         tinker=importlib.metadata.version("tinker"),
+        initial_repeat_max_diff=initial_repeat_diff,
         require_exact_replay=require_exact_replay,
     )
     adam = types.AdamParams(learning_rate=1e-4)
