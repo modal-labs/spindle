@@ -41,6 +41,7 @@ from . import (
     gradient_accumulation,
     host_syncs,
     mamba_packing,
+    moe_permute,
 )
 from .actor_shared import (
     ProfiledActor,
@@ -78,6 +79,7 @@ install_replay_patches(
 host_syncs.install()
 allgather_cp_lora.install(megatron_model)
 mamba_packing.install(megatron_model)
+moe_permute.install()
 
 
 def _publish_checkpoints_across_nodes() -> None:
