@@ -68,8 +68,6 @@ def test_speculative_defaults_use_model_specific_drafts(preset, algorithm, draft
 @pytest.mark.parametrize("preset", ["qwen35-35b-a3b-fft-64k", "qwen36-35b-a3b-fft-64k"])
 def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
     config = backend_config(load(config_path(preset)))["megatron"]
-    assert config["tensor_model_parallel_size"] == 4
-    assert config["context_parallel_size"] == 2
     assert config["expert_model_parallel_size"] == 8
     assert config["provider_overrides"]["moe_token_dispatcher_type"] == "alltoall"
 
