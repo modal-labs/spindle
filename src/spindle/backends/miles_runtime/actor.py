@@ -47,6 +47,7 @@ from . import (
     host_syncs,
     mamba_packing,
     moe_permute,
+    nemotron_h_omni,
     response_logits,
 )
 from .actor_shared import (
@@ -106,6 +107,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
 
     def init(self, args, role, **kwargs):  # ty: ignore[incompatible-method-override]
         _use_distributed_timeout_for_gloo(args.distributed_timeout_minutes)
+        nemotron_h_omni.install(args.hf_checkpoint)
         # Miles's LoRA builder inherits checkpoint MTP heads without honoring
         # enable_mtp_training. Qwen3.5 then injects an auxiliary backward loss
         # even for a client datum whose weights are all zero.

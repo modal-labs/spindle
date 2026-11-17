@@ -23,6 +23,7 @@ from spindle.backends.miles_config import MilesBackendConfig
 from spindle.errors import BackendFailed, TrainerOutOfMemory
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
+from . import nemotron_h_omni
 from .native_checkpoint import materialize_adapter
 from .out_of_memory import OUT_OF_MEMORY
 from .replay_data import install_bridge_replay, validate_routed_experts
@@ -276,6 +277,7 @@ class MilesRuntime:
         os.environ.setdefault("no_proxy", "127.0.0.1")
 
         install_bridge_replay(tinker_runtime)
+        nemotron_h_omni.install(self.config.hf_checkpoint)
         if self._v020 is not None:
             self._v020.configure_actor()
         else:
