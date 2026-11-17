@@ -3,8 +3,10 @@
 Miles v0.1.x keeps gradients across forward_backward calls and lets each pass's
 reduce run over them again. That rescales kept gradients on two layouts: expert
 gradients when experts are sharded differently from tensor parallelism, and
-sequence-parallel adapters, which are summed over tensor-parallel ranks. Other
-layouts skip the extra copy of the gradient buffers.
+sequence-parallel adapters, which are summed over tensor-parallel ranks. Layouts
+where running out of memory fails only the request use it too, so a failed pass
+leaves earlier gradients intact. Other layouts skip the extra copy of the
+gradient buffers.
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ from contextlib import contextmanager
 from functools import wraps
 from types import ModuleType
 from typing import Any
+
+from . import out_of_memory
 
 
 @contextmanager
@@ -40,27 +44,33 @@ def accumulate_gradients(model_chunks: Sequence[Any]) -> Generator[None]:
 
 
 def install(lora_model: ModuleType) -> None:
-    original: Callable[..., object] = lora_model.run_forward_backward
+    # Copy after get_data_iterator's all-reduce, so a rank out of memory here can't strand its peers in it.
+    original: Callable[..., object] = lora_model.run_forward_backward_pass
     if getattr(original, "__spindle_gradient_accumulation__", False):
         return
 
     @wraps(original)
-    def run_forward_backward(
+    def run_forward_backward_pass(
         args: Namespace,
-        batch_id: int,
+        dumper_phase_util: object,
+        data_iterator: object,
         model: Sequence[Any],
         *rest: object,
         **kwargs: object,
     ) -> object:
-        if kwargs.get("forward_only", False) or not _rescales_kept_gradients(
-            args, model
+        if kwargs.get("forward_only", False) or not (
+            out_of_memory.recoverable() or _rescales_kept_gradients(args, model)
         ):
-            return original(args, batch_id, model, *rest, **kwargs)
+            return original(
+                args, dumper_phase_util, data_iterator, model, *rest, **kwargs
+            )
         with accumulate_gradients(model):
-            return original(args, batch_id, model, *rest, **kwargs)
+            return original(
+                args, dumper_phase_util, data_iterator, model, *rest, **kwargs
+            )
 
-    run_forward_backward.__spindle_gradient_accumulation__ = True  # type: ignore[attr-defined]
-    lora_model.run_forward_backward = run_forward_backward
+    run_forward_backward_pass.__spindle_gradient_accumulation__ = True  # type: ignore[attr-defined]
+    lora_model.run_forward_backward_pass = run_forward_backward_pass
 
 
 def _rescales_kept_gradients(args: Namespace, model: Sequence[Any]) -> bool:
