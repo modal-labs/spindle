@@ -1,6 +1,5 @@
 config = "qwen38-27b-lora-256k"
 script = "../scripts/dapo_math.py"
-trainer_image = "miles-v0.2.0-15afe21"
 
 [tokenizer]
 model = "Qwen/Qwen3.8-27B"

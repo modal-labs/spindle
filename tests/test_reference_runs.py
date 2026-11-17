@@ -57,7 +57,6 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     revision = "a" * 40
     definition.write_text(
         'config = "qwen35-4b-lora-32k"\nscript = "workload.py"\n'
-        'trainer_image = "miles-v0.2.0-15afe21"\n'
         'script_args = ["--literal", "a value with spaces"]\n'
         f'tokenizer = {{ model = "test/tokenizer", revision = "{revision}" }}\n'
         '[config_overrides]\nname = "reference-test"\ntrainer_gpu = "H100!"\n'
@@ -72,11 +71,6 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     prepared = load(deployment)
     assert prepared.name == "reference-test"
     assert prepared.trainer_gpu == "H100!"
-    assert prepared.trainer_image == "miles-v0.2.0-15afe21"
-    assert (
-        load(launcher.config_path("qwen35-4b-lora-32k")).trainer_image
-        == "miles-v0.1.1-fdd808c"
-    )
     assert prepared.miles_cfg["max_lora_slots"] == 2
     assert prepared.miles_cfg["model_type"] == "qwen3.5-4B"
     assert load(launcher.config_path("qwen35-4b-lora-32k")).name == "qwen35-4b-lora-32k"
@@ -151,7 +145,6 @@ def test_reference_requires_pinned_tokenizer(tokenizer: dict | None) -> None:
     data = {
         "config": "recipe",
         "script": "workload.py",
-        "trainer_image": "miles-v0.1.1-fdd808c",
     }
     if tokenizer is not None:
         data["tokenizer"] = tokenizer
@@ -159,25 +152,11 @@ def test_reference_requires_pinned_tokenizer(tokenizer: dict | None) -> None:
         launcher.ValidationRunConfig.model_validate(data)
 
 
-@pytest.mark.parametrize("problem", ["missing", "empty", "wrong_type", "override"])
-def test_reference_requires_explicit_trainer_image(problem: str) -> None:
-    data = tomllib.loads((ROOT / "configs/dapo_qwen35_4b.toml").read_text())
-    if problem == "missing":
-        del data["trainer_image"]
-    elif problem == "empty":
-        data["trainer_image"] = ""
-    elif problem == "wrong_type":
-        data["trainer_image"] = 123
-    else:
-        data["config_overrides"]["trainer_image"] = "miles-v0.2.0-15afe21"
-    with pytest.raises(ValidationError, match="trainer_image"):
-        launcher.ValidationRunConfig.model_validate(data)
-
-
 @pytest.mark.parametrize(
     ("field", "value"),
     [
         ("trainer_gup", "H100!"),
+        ("trainer_image", "miles-v0.2.0-15afe21"),
         ("miles_cfg.cli_options", {}),
         ("trainer_nodes", "2"),
         ("miles_cfg.max_lora_slots", "1"),
@@ -312,10 +291,9 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     )
     recipe = BaseConfig(
         **vars(load(launcher.config_path(definition.config))),
-        overrides={
-            **definition.config_overrides.model_dump(by_alias=True, exclude_none=True),
-            "trainer_image": definition.trainer_image,
-        },
+        overrides=definition.config_overrides.model_dump(
+            by_alias=True, exclude_none=True
+        ),
     )
     deployment = DeploymentConfig.create(recipe)
     assert (

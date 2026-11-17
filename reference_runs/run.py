@@ -43,7 +43,6 @@ class ValidationRunConfig(BaseModel):
 
     config: str
     script: str
-    trainer_image: str = Field(min_length=1)
     tokenizer: TokenizerConfig
     config_overrides: ConfigOverrides = Field(default_factory=ConfigOverrides)
     script_args: list[str] = Field(default_factory=list)
@@ -66,10 +65,9 @@ def main() -> None:
     parent = args.validation.resolve().parent
     recipe = BaseConfig(
         **vars(load(config_path(definition.config))),
-        overrides={
-            **definition.config_overrides.model_dump(by_alias=True, exclude_none=True),
-            "trainer_image": definition.trainer_image,
-        },
+        overrides=definition.config_overrides.model_dump(
+            by_alias=True, exclude_none=True
+        ),
     )
     if args.write_config:
         if extra:
