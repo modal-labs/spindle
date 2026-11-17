@@ -27,6 +27,8 @@ class RunPoint:
     status: str = "success"
     modal_app_url: str | None = None
     metrics: dict[str, float] = field(default_factory=dict)
+    source_commit: str | None = None
+    server_url: str | None = None
 
 
 def render_timing_history_chart(
