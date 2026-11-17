@@ -7,11 +7,13 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 ### Added
 
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
+- Sampling accepts the Tinker SDK's `prompt_logprobs_last_n`, which scores only the last N prompt tokens. The prefix before them can be served from the prefix cache.
 
 ### Fixed
 
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
 - `miles-v0.2.0` trainers with two GPUs no longer hang at start-up. Ray now starts with enough CPUs for the extra workers this image runs.
+- A sampling request with an option Spindle does not support, such as `prompt_alt_tokens_k` or `topk_sample_logprobs`, now gets a 400 with the reason right away. Before, it was accepted, failed on the server three times, and only then failed in the client.
 
 ### Changed
 
