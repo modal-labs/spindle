@@ -1,6 +1,6 @@
 def ignore_config_source(path):
     """Workers receive computed configs as JSON; authoring files stay local."""
-    return path.suffix != ".py" or path.parts[0] == "configs"
+    return path.suffix not in {".py", ".patch"} or path.parts[0] == "configs"
 
 
 CORE_PACKAGES = (
