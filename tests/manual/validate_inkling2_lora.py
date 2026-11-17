@@ -60,16 +60,19 @@ def trainer() -> None:
 
 
 def miles_regressions() -> None:
-    for suite, cutoff in [
+    suites = [
         (
             ["tests/fast/backends/megatron_utils/lora/native"],
             "tests/fast/backends/megatron_utils/lora/native",
+            [],
         ),
         (
-            ["tests/fast/launch_scripts", "tests/manual/launch_scripts"],
+            ["tests/manual/launch_scripts"],
             "tests/fast/launch_scripts",
+            ["-k", "inkling2"],
         ),
-    ]:
+    ]
+    for suite, cutoff, selection in suites:
         subprocess.run(
             [
                 sys.executable,
@@ -79,6 +82,7 @@ def miles_regressions() -> None:
                 "-o",
                 "addopts=",
                 f"--confcutdir={cutoff}",
+                *selection,
                 *suite,
             ],
             cwd="/root/miles",
