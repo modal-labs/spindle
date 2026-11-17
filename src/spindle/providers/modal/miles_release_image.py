@@ -2,14 +2,11 @@
 
 import subprocess
 
-import modal
-
 from .image_dependencies import (
-    CORE_PACKAGES,
     MEGATRON_RUNTIME_CHECK,
     MEGATRON_RUNTIME_PACKAGES,
-    STITCH_PACKAGE,
 )
+from .miles_image_common import MILES_EXTRA_PACKAGES, miles_base_image
 
 MILES_RELEASE = "v0.1.2"
 BASE_IMAGE = (
@@ -31,22 +28,17 @@ def _check_release(miles_commit: str) -> None:
 
 
 release_image = (
-    modal.Image.from_registry(BASE_IMAGE)
-    .entrypoint([])
-    .env(
+    miles_base_image(
+        BASE_IMAGE,
         {
             "LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH",
             "PYTHONPATH": f"{MEGATRON_PATH}:$PYTHONPATH",
             "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-        }
+        },
     )
-    .pip_install(*CORE_PACKAGES, STITCH_PACKAGE)
     .pip_install(
         *MEGATRON_RUNTIME_PACKAGES,
-        "pyyaml>=6.0.2",
-        "opentelemetry-exporter-otlp==1.43.0",
-        "opentelemetry-exporter-otlp-proto-grpc==1.43.0",
-        "opentelemetry-exporter-otlp-proto-http==1.43.0",
+        *MILES_EXTRA_PACKAGES,
     )
     .run_function(_check_release, kwargs={"miles_commit": MILES_COMMIT})
     .run_commands(MEGATRON_RUNTIME_CHECK)

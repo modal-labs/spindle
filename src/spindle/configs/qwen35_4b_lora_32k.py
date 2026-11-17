@@ -1,26 +1,26 @@
-from spindle.configs.qwen35_9b_lora_16k import Config as Parent
+from spindle.configs._qwen35_lora_32k import Qwen35Lora32k as Parent
 
 
 class Config(Parent):
     name = "qwen35-4b-lora-32k"
     model = "Qwen/Qwen3.5-4B"
-    max_context_length = 32768
-    # Replicate the small model across four GPUs for batched multi-tenant training.
-    trainer_gpus_per_node = 4
-    trainer_cpu = 32
-    trainer_memory_mib = 131072
-    trainer_max_clients_per_instance = 8
-    inference_gpu = ["B200", "H100"]
+    trainer_gpu = "B200"
+    inference_gpu = "B200"
+    inference_target_concurrency = 64
     overrides = {
-        "miles_cfg.model_type": "qwen3.5-4B",
-        "miles_cfg.tensor_model_parallel_size": 1,
-        "miles_cfg.max_lora_slots": 8,
-        "miles_cfg.max_tokens_per_gpu": 16384,
-        "miles_cfg.cli_options.log_probs_chunk_size": 4096,
-        "miles_cfg.cli_options.balance_data": True,
-        "sglang_cfg.max_running_requests": 128,
+        **Parent.overrides,
+        "sglang_cfg.tp_size": 1,
+        "sglang_cfg.attention_backend": "trtllm_mha",
+        "sglang_cfg.max_running_requests": 64,
         "sglang_cfg.max_queued_requests": 128,
-        "sglang_cfg.mem_fraction_static": 0.85,
+        "sglang_cfg.max_loaded_loras": 4,
+        "sglang_cfg.max_loras_per_batch": 4,
+        "sglang_cfg.lora_backend": "csgmv",
+        "sglang_cfg.cuda_graph_max_bs_decode": 64,
+        "sglang_cfg.speculative_algorithm": "NEXTN",
+        "sglang_cfg.speculative_num_steps": 3,
+        "sglang_cfg.speculative_eagle_topk": 1,
+        "sglang_cfg.speculative_num_draft_tokens": 4,
     }
 
 

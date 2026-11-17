@@ -200,6 +200,9 @@ class MilesBackendConfig(BaseModel):
             str(int(self.default_lora_alpha)),
             "--lora-dropout",
             str(self.lora_dropout),
+            # Miles v0.2.0 defaults serve entries to canonical_lora; v0.1.x multi-LoRA supports only lora.
+            "--lora-type",
+            "lora",
             "--target-modules",
             ",".join(self.target_modules),
             "--no-gradient-accumulation-fusion",

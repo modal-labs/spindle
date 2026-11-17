@@ -9,13 +9,7 @@ class Config(Parent):
         "platform.requires_proxy_auth": True,
         "platform.modal.environment": "spindle",
         "platform.modal.exclude_reserved_capacity": True,
-        "trainer_max_instances": 6,
-        "inference_gpus_per_node": 1,
-        "inference_min_replicas": 4,
-        "inference_max_replicas": 16,
-        "sglang_cfg.tp_size": 1,
-        "sglang_cfg.max_running_requests": 128,
-        "sglang_cfg.max_queued_requests": 4096,
+        "trainer_max_instances": 4,
     }
 
 

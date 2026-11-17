@@ -747,6 +747,18 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
         backend_config(spec)
 
 
+@pytest.mark.parametrize(
+    "changes, match",
+    [
+        ({"miles_cfg__megatron_to_hf_mode": "raw"}, "megatron_to_hf_mode"),
+        ({"trainer_nodes": 2}, "single-node"),
+    ],
+)
+def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
+    with pytest.raises(ValueError, match=match):
+        backend_config(recipe(trainer_image="miles-v0.2.0", **changes))
+
+
 def test_backend_dispatch_rejects_unknown_backend():
     with pytest.raises(ValueError, match="backend"):
         backend_config(recipe(backend="missing"))
@@ -1298,3 +1310,55 @@ async def test_a_config_another_frontend_container_just_added_shows_at_once(read
     await writer.add(other)
     async with client_for(reader) as client:
         assert await read(client) & {other.name, other.model}
+
+
+@pytest.mark.parametrize("algorithm", ["DFLASH", "NEXTN"])
+def test_speculative_draft_model_is_downloaded_asset_and_sglang_path(algorithm):
+    row = resolved(
+        recipe(
+            inference_draft_model="org/model-dflash",
+            inference_draft_model_revision="draft-revision",
+            sglang_cfg={"speculative_algorithm": algorithm},
+        )
+    )
+    assert row.draft_asset_path.startswith("/assets/.drafts/org/model-dflash/")
+    assert (
+        row.inference_settings["speculative_draft_model_path"] == row.draft_asset_path
+    )
+
+
+def test_speculative_draft_model_cannot_replace_base_model():
+    with pytest.raises(ValueError, match="different from the base model"):
+        resolved(recipe(inference_draft_model="Qwen/Qwen3.5-9B-Base"))
+
+
+def test_draft_revisions_have_separate_download_directories():
+    def draft(revision):
+        return resolved(
+            recipe(
+                inference_draft_model="org/draft",
+                inference_draft_model_revision=revision,
+            )
+        )
+
+    first, second = draft("revision-a"), draft("revision-b")
+    assert first.asset_path == second.asset_path
+    assert first.draft_asset_path != second.draft_asset_path
+    assert first.draft_asset_path == draft("revision-a").draft_asset_path
+    assert (
+        first.inference_settings["speculative_draft_model_path"]
+        == first.draft_asset_path
+    )
+
+
+@pytest.mark.parametrize("weights", ["", "org/custom-target"])
+def test_native_mtp_reuses_the_resolved_target_checkpoint(weights):
+    row = resolved(
+        recipe(
+            weights_revision="target-revision",
+            model_weights=weights,
+            sglang_cfg={"speculative_algorithm": "NEXTN"},
+        )
+    )
+    assert row.draft_asset_path is None
+    assert row.inference_settings["speculative_draft_model_path"] == row.asset_path
