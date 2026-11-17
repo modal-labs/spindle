@@ -8,12 +8,14 @@ class Config(BaseConfig):
     parameterization = "full"
     model = "Qwen/Qwen3.5-4B"
     max_context_length = 65536
-    trainer_gpu = "H100"
-    trainer_gpus_per_node = 4
+    trainer_gpu = "B200"
+    trainer_gpus_per_node = 8
+    trainer_rdma = True
+    overrides = {"platform.modal.exclude_reserved_capacity": True}
     backend = "megatron"
     megatron_cfg = {
         "tensor_model_parallel_size": 2,
-        "context_parallel_size": 2,
+        "context_parallel_size": 4,
         "sequence_parallel": True,
         "micro_batch_size": 1,
         "max_tokens_per_microbatch": 65536,
