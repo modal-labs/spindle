@@ -3,9 +3,10 @@
 Shared-prefix training is disabled by default. Set
 `miles_cfg.shared_prefix_training = True` and explicitly select an image built
 with `spindle.providers.modal.shared_prefix_image.with_shared_prefix(base)`.
-The provided `glm53-flash-lora-shared-prefix-b300` config selects that image
+The explicit example `examples/shared-prefix/config.py` selects that image
 and excludes reserved capacity. Existing model configs and images keep their
-current behavior. This is an experimental feature, not a default rollout.
+current behavior. The example is outside the bundled configs so `deploy --all`
+does not enable it. This is an experimental feature, not a default rollout.
 
 The supported Miles integration currently covers GLM-5.3 Flash's native
 KDA/DSA provider with one node, one adapter slot, CP=PP=ETP=1, THD packing,

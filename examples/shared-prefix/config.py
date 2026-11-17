@@ -6,6 +6,7 @@ from spindle.configs.glm53_flash_lora_64k import Config as Parent
 class Config(Parent):
     name = "glm53-flash-lora-shared-prefix-b300"
     trainer_image = "spindle.providers.modal.shared_prefix_image:glm53_trainer_image"
+    inference_image = "sglang-v0.5.23-c4182b2-glm53"
     trainer_gpu = "B300"
     trainer_gpus_per_node = 8
     trainer_nodes = 1

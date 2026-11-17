@@ -1,5 +1,6 @@
 """Opt-in and numerical failure gates require no GPU runtime."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -126,11 +127,11 @@ def test_conflicting_deterministic_environment_is_rejected(
 def test_example_gate_survives_full_deployment_serialization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from spindle.deployments import DeploymentConfig, config_path, load
+    from spindle.deployments import DeploymentConfig, load
 
     monkeypatch.setenv("SPINDLE_MILES_COMMIT", "a" * 40)
     deployment = DeploymentConfig.create(
-        load(config_path("glm53-flash-lora-shared-prefix-b300"))
+        load(Path(__file__).resolve().parents[2] / "examples/shared-prefix/config.py")
     )
     restored = DeploymentConfig.model_validate_json(deployment.model_dump_json())
     backend = MilesBackendConfig(**restored.trainer_settings["miles"])
