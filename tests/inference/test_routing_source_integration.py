@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from unittest.mock import AsyncMock
 
 import httpx
@@ -28,8 +28,10 @@ import xxhash
 
 from spindle.inference import lora_sidecar, routing_state
 from spindle.inference.kv_events import KVEventSubscriber
-from spindle.inference.native_router import RoutedResponse
 from spindle.inference.routing_state import RoutingSource
+
+if TYPE_CHECKING:
+    from spindle.inference.native_router import RoutedResponse
 
 pytest.importorskip("spindle_router")
 NativeRouter = importlib.import_module("spindle.inference.native_router").NativeRouter

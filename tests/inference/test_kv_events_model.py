@@ -420,7 +420,7 @@ def test_live_gap_replays_from_anchor_without_hiding_snapshot() -> None:
         assert publisher.requests[-1] == 0
         assert subscriber.ready and subscriber.snapshot == original
         await until(lambda: subscriber.sequence == 2)
-        assert subscriber.ready and len(subscriber.snapshot[2]) == 3
+        assert subscriber.ready and len(subscriber.snapshot.prefixes) == 3
 
     asyncio.run(run_scenario(8, scenario))
 
@@ -429,10 +429,10 @@ def test_last_live_batch_is_published_after_snapshot_interval() -> None:
     async def scenario(publisher: Publisher, subscriber: KVEventSubscriber) -> None:
         model = TreeModel()
         await publisher.emit([model.store(None, "adapter-a", None, [[1] * 64])])
-        await until(lambda: len(subscriber.snapshot[2]) == 1)
+        await until(lambda: len(subscriber.snapshot.prefixes) == 1)
         await publisher.emit([model.store(None, "adapter-a", None, [[2] * 64])])
         await until(lambda: subscriber.sequence == 1)
-        await until(lambda: len(subscriber.snapshot[2]) == 2, 0.6)
+        await until(lambda: len(subscriber.snapshot.prefixes) == 2, 0.6)
 
     asyncio.run(run_scenario(8, scenario))
 
@@ -459,7 +459,7 @@ def test_replay_timeouts_do_not_starve_live_socket(
             assert not subscriber.ready
             publisher.drop_replays = 0
             await until(lambda: subscriber.ready)
-            assert len(subscriber.snapshot[2]) == 1
+            assert len(subscriber.snapshot.prefixes) == 1
         finally:
             for task in tasks:
                 task.cancel()
@@ -512,7 +512,7 @@ def test_full_rebuild_converges_while_publications_continue() -> None:
             release_rebuild.set()
             await until(lambda: subscriber.ready and subscriber.sequence == 3199, 10)
             assert not resets
-            assert len(subscriber.snapshot[2]) == 3200
+            assert len(subscriber.snapshot.prefixes) == 3200
         finally:
             release_rebuild.set()
             await asyncio.to_thread(subscriber.stop_thread)

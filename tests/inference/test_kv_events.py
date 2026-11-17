@@ -199,7 +199,7 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
             for _ in range(requests):
                 identity, delimiter, start = await router.recv_multipart()
                 assert delimiter == b""
-                ready_at_request.append(subscriber.snapshot[0])
+                ready_at_request.append(subscriber.snapshot.ready)
                 start = int.from_bytes(start, "big")
                 for seq, payload in history:
                     if seq >= start:
@@ -331,10 +331,10 @@ def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path: Path) ->
         async def serve() -> None:
             while True:
                 identity, _, start = await router.recv_multipart()
-                replay_ready.append(subscriber.snapshot[0])
+                replay_ready.append(subscriber.snapshot.ready)
                 if replay_ready[-1]:
                     await asyncio.sleep(0.03)
-                    ready_during_replay.append(subscriber.snapshot[0])
+                    ready_during_replay.append(subscriber.snapshot.ready)
                 for seq, payload in history:
                     if seq >= int.from_bytes(start, "big"):
                         await router.send_multipart(
@@ -437,7 +437,7 @@ def test_live_publications_queued_during_replay_keep_cache(tmp_path: Path) -> No
             async with asyncio.timeout(2):
                 while not stale_results:
                     await asyncio.sleep(0.01)
-            assert all(result and snapshot[0] for result, snapshot in stale_results)
+            assert all(result and snapshot.ready for result, snapshot in stale_results)
             assert subscriber.ready and subscriber.sequence == 1
             assert set(subscriber.cache.prefixes) == {
                 digest("adapter-v1", list(range(64)))
@@ -569,9 +569,9 @@ def test_subscriber_thread_recovers_after_unexpected_failure(tmp_path: Path) -> 
             async with asyncio.timeout(3):
                 while subscriber.attempts < 1:
                     await asyncio.sleep(0.01)
-                assert not subscriber.snapshot[0]
+                assert not subscriber.snapshot.ready
                 await task
-                while not subscriber.snapshot[0]:
+                while not subscriber.snapshot.ready:
                     await asyncio.sleep(0.01)
             assert thread.is_alive() and subscriber.attempts >= 2
         finally:
@@ -580,7 +580,7 @@ def test_subscriber_thread_recovers_after_unexpected_failure(tmp_path: Path) -> 
             await asyncio.gather(task, return_exceptions=True)
             router.close(0)
             context.destroy(linger=0)
-        assert not thread.is_alive() and not subscriber.snapshot[0]
+        assert not thread.is_alive() and not subscriber.snapshot.ready
 
     asyncio.run(scenario())
 
@@ -592,7 +592,7 @@ def test_subscriber_thread_stops_after_replay_socket_error() -> None:
     started = time.monotonic()
     subscriber.stop_thread()
     assert time.monotonic() - started < 2.5
-    assert not thread.is_alive() and not subscriber.snapshot[0]
+    assert not thread.is_alive() and not subscriber.snapshot.ready
 
 
 def test_subscriber_thread_stops_during_long_replay(tmp_path: Path) -> None:
@@ -636,11 +636,11 @@ def test_subscriber_thread_stops_during_long_replay(tmp_path: Path) -> None:
             async with asyncio.timeout(3):
                 while applied < 50:
                     await asyncio.sleep(0.01)
-            assert not subscriber.snapshot[0]
+            assert not subscriber.snapshot.ready
             started = time.monotonic()
             await asyncio.to_thread(subscriber.stop_thread)
             assert time.monotonic() - started < 1
-            assert not thread.is_alive() and not subscriber.snapshot[0]
+            assert not thread.is_alive() and not subscriber.snapshot.ready
         finally:
             if thread.is_alive():
                 await asyncio.to_thread(subscriber.stop_thread)
