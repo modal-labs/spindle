@@ -1,7 +1,9 @@
 """CPU process tests for the SGLang publisher, sidecar, and Rust router."""
 
-import atexit
+from __future__ import annotations
+
 import asyncio
+import atexit
 import importlib
 import importlib.util
 import json
@@ -12,8 +14,11 @@ import sys
 import threading
 import time
 import types
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import ModuleType
+from typing import Protocol
 from unittest.mock import AsyncMock
 
 import httpx
@@ -23,6 +28,8 @@ import xxhash
 
 from spindle.inference import lora_sidecar, routing_state
 from spindle.inference.kv_events import KVEventSubscriber
+from spindle.inference.native_router import RoutedResponse
+from spindle.inference.routing_state import RoutingSource
 
 pytest.importorskip("spindle_router")
 NativeRouter = importlib.import_module("spindle.inference.native_router").NativeRouter
@@ -37,7 +44,37 @@ ADAPTER = "adapter/v1"
 TOKENS = list(range(128))
 
 
-def fork_events():
+class EventPublisher(Protocol):
+    def publish(self, event: object) -> None: ...
+
+    def shutdown(self) -> None: ...
+
+
+class Harness(Protocol):
+    publishers: dict[str, EventPublisher]
+
+    def start(
+        self, replica: str, source: RoutingSource, publisher: bool = True
+    ) -> str: ...
+
+    def publisher(self, replica: str) -> EventPublisher: ...
+
+    def publish(self, publisher: EventPublisher, event: object) -> None: ...
+
+    def stored(self) -> object: ...
+
+    def removed(self) -> object: ...
+
+    def state(self, replica: str) -> dict[str, object]: ...
+
+    def snapshot(self, replica: str, prefixes: list[str]) -> None: ...
+
+    def set_loads(self, value: str) -> None: ...
+
+    async def route(self) -> RoutedResponse: ...
+
+
+def fork_events() -> ModuleType:
     """Load the fork's real wire and publisher code without its GPU imports."""
     runtime = types.ModuleType("sglang.srt.runtime_context")
     runtime.get_parallel = lambda: None
@@ -62,7 +99,7 @@ def fork_events():
                 sys.modules[name] = prior
 
 
-def free_ports(count):
+def free_ports(count: int) -> list[int]:
     sockets = [socket.socket() for _ in range(count)]
     try:
         for sock in sockets:
@@ -73,7 +110,7 @@ def free_ports(count):
             sock.close()
 
 
-def wait_for(check, timeout=5):
+def wait_for(check: Callable[[], object], timeout: float = 5) -> object:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -86,7 +123,15 @@ def wait_for(check, timeout=5):
     pytest.fail("component did not become ready")
 
 
-def serve_sidecar(replica, port, upstream, source, catalog, endpoint, replay_endpoint):
+def serve_sidecar(
+    replica: str,
+    port: int,
+    upstream: str,
+    source: RoutingSource,
+    catalog: Path,
+    endpoint: str,
+    replay_endpoint: str,
+) -> None:
     os.environ["MODAL_TASK_ID"] = replica
     routing_state.ROUTING_CATALOG_PATH = Path(catalog)
     app = lora_sidecar.create_app(
@@ -101,15 +146,17 @@ def serve_sidecar(replica, port, upstream, source, catalog, endpoint, replay_end
 
 
 @pytest.fixture
-def harness(tmp_path):
+def harness(tmp_path: Path) -> Iterator[Harness]:
     state = {"loads": "ok"}
     destinations = {}
 
     class Upstream(BaseHTTPRequestHandler):
-        def log_message(self, *_):
+        def log_message(self, *_: object) -> None:
             pass
 
-        def respond(self, value, status=200, replica=None):
+        def respond(
+            self, value: object, status: int = 200, replica: str | None = None
+        ) -> None:
             body = json.dumps(value).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -122,7 +169,7 @@ def harness(tmp_path):
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             if self.path != "/v1/loads?include=core":
                 self.respond({}, 404)
                 return
@@ -147,7 +194,7 @@ def harness(tmp_path):
                 }
             )
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             self.rfile.read(int(self.headers["Content-Length"]))
             if self.path == "/generate":
                 self.respond({"text": "ok", "meta_info": {}})
@@ -155,7 +202,7 @@ def harness(tmp_path):
             self.respond({}, 404)
 
     class Gateway(Upstream):
-        def proxy(self):
+        def proxy(self) -> None:
             replica = self.headers.get("Modal-Flash-Upstream", "cold:8000").split(":")[
                 0
             ]
@@ -195,10 +242,12 @@ def harness(tmp_path):
         upstream = f"http://127.0.0.1:{servers[0].server_port}"
         gateway = f"http://127.0.0.1:{servers[1].server_port}"
 
-        def __init__(self):
+        def __init__(self) -> None:
             self.publishers = {}
 
-        def start(self, replica, source, publisher=True):
+        def start(
+            self, replica: str, source: RoutingSource, publisher: bool = True
+        ) -> str:
             port, pub_port, replay_port = free_ports(3)
             endpoint = f"tcp://127.0.0.1:{pub_port}"
             replay = f"tcp://127.0.0.1:{replay_port}"
@@ -221,7 +270,7 @@ def harness(tmp_path):
                 self.publisher(replica)
             return replica
 
-        def publisher(self, replica):
+        def publisher(self, replica: str) -> EventPublisher:
             endpoint, replay = endpoints[replica]
             pub = events.ZmqEventPublisher(
                 0,
@@ -234,7 +283,7 @@ def harness(tmp_path):
             self.publishers[replica] = pub
             return pub
 
-        def restart(self, replica):
+        def restart(self, replica: str) -> None:
             old = processes[replica]
             old.terminate()
             old.join(timeout=3)
@@ -261,10 +310,10 @@ def harness(tmp_path):
                 )
             )
 
-        def set_loads(self, value):
+        def set_loads(self, value: str) -> None:
             state["loads"] = value
 
-        def snapshot(self, replica, prefixes):
+        def snapshot(self, replica: str, prefixes: list[str]) -> None:
             (tmp_path / f"{replica}.json").write_text(
                 json.dumps(
                     {
@@ -283,10 +332,10 @@ def harness(tmp_path):
                 )
             )
 
-        def publish(self, publisher, event):
+        def publish(self, publisher: EventPublisher, event: object) -> None:
             publisher.publish(events.KVEventBatch(time.time(), [event]))
 
-        def stored(self):
+        def stored(self) -> object:
             return events.BlockStored(
                 block_hashes=[101, 102],
                 parent_block_hash=None,
@@ -297,13 +346,13 @@ def harness(tmp_path):
                 lora_name=ADAPTER,
             )
 
-        def removed(self):
+        def removed(self) -> object:
             return events.BlockRemoved(block_hashes=[101, 102], medium="GPU")
 
-        def state(self, replica):
+        def state(self, replica: str) -> dict[str, object]:
             return httpx.get(destinations[replica] + "/routing-state").json()
 
-        async def route(self):
+        async def route(self) -> RoutedResponse:
             router = NativeRouter(
                 AsyncMock(
                     return_value=[
@@ -349,7 +398,7 @@ def harness(tmp_path):
         thread.join(timeout=3)
 
 
-def prefix_hashes():
+def prefix_hashes() -> list[str]:
     digest = xxhash.xxh3_128((ADAPTER + "\0").encode())
     prefixes = []
     for token in TOKENS:
@@ -360,7 +409,9 @@ def prefix_hashes():
 
 
 @pytest.mark.parametrize("source", ["kv_events", "hook"])
-def test_real_router_prefers_cached_prefix_then_releases_preference(harness, source):
+def test_real_router_prefers_cached_prefix_then_releases_preference(
+    harness: Harness, source: RoutingSource
+) -> None:
     harness.start("cached", source)
     harness.start("cold", source)
     if source == "kv_events":
@@ -395,7 +446,9 @@ def test_real_router_prefers_cached_prefix_then_releases_preference(harness, sou
     assert second.replica == "cold"
 
 
-def test_slow_loads_keeps_routing_state_fast_and_router_falls_back(harness):
+def test_slow_loads_keeps_routing_state_fast_and_router_falls_back(
+    harness: Harness,
+) -> None:
     harness.set_loads("slow")
     harness.start("cold", "kv_events")
     started = time.monotonic()
@@ -407,7 +460,7 @@ def test_slow_loads_keeps_routing_state_fast_and_router_falls_back(harness):
     assert routed.routing["reason"] == "gateway_fallback"
 
 
-def test_late_publisher_and_sidecar_restart_replay_cache(harness):
+def test_late_publisher_and_sidecar_restart_replay_cache(harness: Harness) -> None:
     harness.start("cached", "kv_events", publisher=False)
     harness.start("cold", "kv_events")
     assert (

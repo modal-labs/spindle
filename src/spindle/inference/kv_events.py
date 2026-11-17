@@ -18,7 +18,7 @@ import time
 from array import array
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Literal, NamedTuple, NotRequired, TypedDict
+from typing import Literal, NamedTuple, NotRequired, TypedDict, cast
 
 import msgspec
 import xxhash
@@ -168,7 +168,7 @@ class _BlockIndex:
         self.__init__()
 
 
-@dataclass(slots=True, init=False)
+@dataclass(slots=True, init=False, eq=False, repr=False)
 class _Chain:
     """Hold contiguous blocks and their reusable prefix checkpoints."""
 
@@ -342,7 +342,7 @@ class KVCache:
         if ref is None:
             return None
         chain = self.chains[ref >> 16]
-        return chain, ref & 65535
+        return cast(_Chain, chain), ref & 65535
 
     def remove(self, key: int) -> None:
         found = self._chain_ref(key)
@@ -639,7 +639,7 @@ class KVEventSubscriber:
             return True
         if sequence == self.sequence:
             return payload == self.anchor
-        return self.apply(sequence, payload)
+        return cast(bool, self.apply(sequence, payload))
 
     async def replay(self, context: zmq.asyncio.Context) -> None:
         socket = context.socket(zmq.DEALER)

@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import struct
 import time
 from collections import deque
+from collections.abc import Callable
+from pathlib import Path
 
 import msgspec
 import pytest
@@ -13,11 +17,18 @@ import zmq.asyncio
 import spindle.inference.kv_events as kv_events
 from spindle.inference.kv_events import (
     KVCache,
+    KVEvent,
     KVEventSubscriber,
 )
 
 
-def stored(keys, tokens, parent=None, adapter="adapter-v1", medium="GPU"):
+def stored(
+    keys: list[int],
+    tokens: list[int],
+    parent: int | None = None,
+    adapter: str = "adapter-v1",
+    medium: str | None = "GPU",
+) -> KVEvent:
     return dict(
         type="BlockStored",
         block_hashes=keys,
@@ -31,14 +42,14 @@ def stored(keys, tokens, parent=None, adapter="adapter-v1", medium="GPU"):
     )
 
 
-def digest(adapter, tokens):
+def digest(adapter: str, tokens: list[int]) -> str:
     h = xxhash.xxh3_128((adapter + "\0").encode())
     for token in tokens:
         h.update(struct.pack("<q", token))
     return h.hexdigest()
 
 
-def packet(events, ts=1.0):
+def packet(events: list[KVEvent], ts: float = 1.0) -> bytes:
     # SGLang EventBatch is array-like; events are tagged maps.
     return msgspec.msgpack.encode([ts, events, 0])
 
@@ -62,7 +73,9 @@ def packet(events, ts=1.0):
     ],
     ids=["unnamed", "salted", "bigram", "boolean", "unknown-parent"],
 )
-def test_events_without_comparable_named_unigram_prefixes_are_skipped(invalid_event):
+def test_events_without_comparable_named_unigram_prefixes_are_skipped(
+    invalid_event: dict[str, object],
+) -> None:
     cache = KVCache()
     event = stored([1], list(range(64)))
     event.update(invalid_event)
@@ -71,14 +84,14 @@ def test_events_without_comparable_named_unigram_prefixes_are_skipped(invalid_ev
     assert not cache.prefixes
 
 
-def test_new_store_with_duplicate_block_hash_is_skipped():
+def test_new_store_with_duplicate_block_hash_is_skipped() -> None:
     cache = KVCache()
     cache.apply(stored([1, 1], [1] * 64 + [2] * 64))
     assert not cache.blocks
     assert not cache.prefixes
 
 
-def test_routing_prefixes_are_bounded_and_favor_new_paths():
+def test_routing_prefixes_are_bounded_and_favor_new_paths() -> None:
     cache = KVCache()
     for key in range(8193):
         cache.apply(stored([key], list(range(key, key + 64))))
@@ -88,7 +101,7 @@ def test_routing_prefixes_are_bounded_and_favor_new_paths():
     assert digest("adapter-v1", list(range(64))) not in prefixes
 
 
-def test_shared_root_stays_in_capped_prefixes_after_large_child_store():
+def test_shared_root_stays_in_capped_prefixes_after_large_child_store() -> None:
     cache = KVCache()
     cache.apply(stored([0], [0] * 64))
     keys = list(range(1, 8194))
@@ -97,7 +110,7 @@ def test_shared_root_stays_in_capped_prefixes_after_large_child_store():
     assert digest("adapter-v1", [0] * 64) in cache.prefixes
 
 
-def test_capped_export_keeps_endpoints_across_unequal_conversations():
+def test_capped_export_keeps_endpoints_across_unequal_conversations() -> None:
     cache = KVCache()
     endpoints = []
     key = 1
@@ -111,7 +124,7 @@ def test_capped_export_keeps_endpoints_across_unequal_conversations():
     assert set(endpoints) <= set(cache.prefixes)
 
 
-def test_capped_export_favors_recent_endpoints_and_branch_points():
+def test_capped_export_favors_recent_endpoints_and_branch_points() -> None:
     cache = KVCache()
     for conversation in range(8200):
         cache.apply(stored([conversation + 1], [conversation + 1] * 64))
@@ -135,7 +148,7 @@ def test_capped_export_favors_recent_endpoints_and_branch_points():
     assert branch not in cache.endpoints
 
 
-def test_linear_extensions_do_not_consume_branch_budget():
+def test_linear_extensions_do_not_consume_branch_budget() -> None:
     cache = KVCache()
     for key in range(1, 9001):
         cache.apply(stored([key], [key] * 64, parent=key - 1 or None))
@@ -153,7 +166,7 @@ def test_linear_extensions_do_not_consume_branch_budget():
     assert len(cache.branch_points) == 1
 
 
-def test_truncation_removes_branch_point_when_fork_becomes_tail():
+def test_truncation_removes_branch_point_when_fork_becomes_tail() -> None:
     cache = KVCache()
     cache.apply(stored([0], [0] * 64))
     cache.apply(stored([1, 2, 3], [1] * 64 + [2] * 64 + [3] * 64, parent=0))
@@ -167,9 +180,9 @@ def test_truncation_removes_branch_point_when_fork_becomes_tail():
     "with_topic", [False, True], ids=["sglang-0.5.21", "sglang-0.5.23"]
 )
 def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
-    tmp_path, with_topic, caplog
-):
-    async def scenario():
+    tmp_path: Path, with_topic: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         router = context.socket(zmq.ROUTER)
         endpoint = f"ipc://{tmp_path}/replay"
@@ -182,7 +195,7 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
 
         ready_at_request = []
 
-        async def serve(requests=1):
+        async def serve(requests: int = 1) -> None:
             for _ in range(requests):
                 identity, delimiter, start = await router.recv_multipart()
                 assert delimiter == b""
@@ -203,7 +216,7 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
                     prefix + [(-1).to_bytes(8, "big", signed=True), b""]
                 )
 
-        async def replay(requests=1):
+        async def replay(requests: int = 1) -> None:
             await asyncio.gather(serve(requests), subscriber.replay(context))
 
         try:
@@ -241,9 +254,9 @@ def test_replay_uses_sglang_router_framing_and_live_sequence_detects_restarts(
     "with_topic", [False, True], ids=["sglang-0.5.21", "sglang-0.5.23"]
 )
 def test_replay_recovers_after_buffer_roll_without_inventing_ancestors(
-    tmp_path, with_topic
-):
-    async def scenario():
+    tmp_path: Path, with_topic: bool
+) -> None:
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         router = context.socket(zmq.ROUTER)
         endpoint = f"ipc://{tmp_path}/rolled"
@@ -251,7 +264,7 @@ def test_replay_recovers_after_buffer_roll_without_inventing_ancestors(
         subscriber = KVEventSubscriber(replay_endpoint=endpoint)
         history = deque(maxlen=2)
 
-        def add(sequence, event):
+        def add(sequence: int, event: KVEvent) -> None:
             history.append((sequence, packet([event])))
 
         add(0, stored([1], list(range(64))))
@@ -260,7 +273,7 @@ def test_replay_recovers_after_buffer_roll_without_inventing_ancestors(
         add(3, stored([4], list(range(64))))
         add(4, stored([5], list(range(64, 128)), parent=4))
 
-        async def serve(requests=1):
+        async def serve(requests: int = 1) -> None:
             for _ in range(requests):
                 identity, delimiter, start = await router.recv_multipart()
                 assert delimiter == b""
@@ -301,8 +314,8 @@ def test_replay_recovers_after_buffer_roll_without_inventing_ancestors(
     asyncio.run(asyncio.wait_for(scenario(), 5))
 
 
-def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path):
-    async def scenario():
+def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path: Path) -> None:
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         pub = context.socket(zmq.PUB)
         router = context.socket(zmq.ROUTER)
@@ -315,7 +328,7 @@ def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path):
         replay_ready = []
         ready_during_replay = []
 
-        async def serve():
+        async def serve() -> None:
             while True:
                 identity, _, start = await router.recv_multipart()
                 replay_ready.append(subscriber.snapshot[0])
@@ -329,7 +342,7 @@ def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path):
                         )
                 await router.send_multipart([identity, b"", b"\xff" * 8, b""])
 
-        async def until(predicate):
+        async def until(predicate: Callable[[], bool]) -> None:
             async with asyncio.timeout(4):
                 while not predicate():
                     await asyncio.sleep(0.01)
@@ -374,8 +387,8 @@ def test_live_stream_and_idle_replay_recover_dropped_eviction(tmp_path):
     asyncio.run(scenario())
 
 
-def test_live_publications_queued_during_replay_keep_cache(tmp_path):
-    async def scenario():
+def test_live_publications_queued_during_replay_keep_cache(tmp_path: Path) -> None:
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         pub = context.socket(zmq.PUB)
         router = context.socket(zmq.ROUTER)
@@ -387,7 +400,7 @@ def test_live_publications_queued_during_replay_keep_cache(tmp_path):
         stale_results = []
         original = subscriber.apply_publication
 
-        def observe(sequence, payload):
+        def observe(sequence: int, payload: bytes) -> bool:
             stale = sequence < subscriber.sequence
             result = original(sequence, payload)
             if stale:
@@ -401,7 +414,7 @@ def test_live_publications_queued_during_replay_keep_cache(tmp_path):
             packet([dict(type="BlockRemoved", block_hashes=[999], medium="GPU")]),
         ]
 
-        async def serve():
+        async def serve() -> None:
             identity, delimiter, start = await router.recv_multipart()
             assert delimiter == b"" and int.from_bytes(start, "big") == 0
             await asyncio.sleep(0.2)
@@ -439,17 +452,19 @@ def test_live_publications_queued_during_replay_keep_cache(tmp_path):
     asyncio.run(scenario())
 
 
-def test_replay_timeout_applies_to_each_frame(tmp_path, monkeypatch):
+def test_replay_timeout_applies_to_each_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(kv_events, "REPLAY_STALL_TIMEOUT_SECONDS", 0.3)
 
-    async def scenario():
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         router = context.socket(zmq.ROUTER)
         endpoint = f"ipc://{tmp_path}/slow-replay"
         router.bind(endpoint)
         subscriber = KVEventSubscriber(replay_endpoint=endpoint)
 
-        async def serve():
+        async def serve() -> None:
             identity, delimiter, start = await router.recv_multipart()
             assert delimiter == b"" and int.from_bytes(start, "big") == 0
             for sequence in range(3):
@@ -480,10 +495,12 @@ def test_replay_timeout_applies_to_each_frame(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_stalled_publisher_keeps_cache_until_replay_answers(tmp_path, monkeypatch):
+def test_stalled_publisher_keeps_cache_until_replay_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(kv_events, "REPLAY_STALL_TIMEOUT_SECONDS", 0.2)
 
-    async def scenario():
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         router = context.socket(zmq.ROUTER)
         endpoint = f"ipc://{tmp_path}/stalled-replay"
@@ -494,7 +511,7 @@ def test_stalled_publisher_keeps_cache_until_replay_answers(tmp_path, monkeypatc
         batch = packet([stored([1], list(range(64)))])
         end = [b"", (-1).to_bytes(8, "big", signed=True), b""]
 
-        async def answer():
+        async def answer() -> None:
             identity, _, start = await router.recv_multipart()
             assert int.from_bytes(start, "big") == 0
             await router.send_multipart([identity, b"", (0).to_bytes(8, "big"), batch])
@@ -521,8 +538,8 @@ def test_stalled_publisher_keeps_cache_until_replay_answers(tmp_path, monkeypatc
     asyncio.run(asyncio.wait_for(scenario(), 10))
 
 
-def test_subscriber_thread_recovers_after_unexpected_failure(tmp_path):
-    async def scenario():
+def test_subscriber_thread_recovers_after_unexpected_failure(tmp_path: Path) -> None:
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         router = context.socket(zmq.ROUTER)
         endpoint = f"ipc://{tmp_path}/thread-replay"
@@ -531,7 +548,7 @@ def test_subscriber_thread_recovers_after_unexpected_failure(tmp_path):
         class FailingOnce(KVEventSubscriber):
             attempts = 0
 
-            async def replay(self, context):
+            async def replay(self, context: zmq.asyncio.Context) -> None:
                 self.attempts += 1
                 if self.attempts == 1:
                     raise RuntimeError("unexpected failure")
@@ -539,7 +556,7 @@ def test_subscriber_thread_recovers_after_unexpected_failure(tmp_path):
 
         subscriber = FailingOnce(replay_endpoint=endpoint)
 
-        async def serve():
+        async def serve() -> None:
             identity, _, _ = await router.recv_multipart()
             await router.send_multipart(
                 [identity, b"", (-1).to_bytes(8, "big", signed=True), b""]
@@ -568,7 +585,7 @@ def test_subscriber_thread_recovers_after_unexpected_failure(tmp_path):
     asyncio.run(scenario())
 
 
-def test_subscriber_thread_stops_after_replay_socket_error():
+def test_subscriber_thread_stops_after_replay_socket_error() -> None:
     subscriber = KVEventSubscriber(replay_endpoint="invalid://replay")
     subscriber.start_thread()
     thread = subscriber._thread
@@ -578,8 +595,8 @@ def test_subscriber_thread_stops_after_replay_socket_error():
     assert not thread.is_alive() and not subscriber.snapshot[0]
 
 
-def test_subscriber_thread_stops_during_long_replay(tmp_path):
-    async def scenario():
+def test_subscriber_thread_stops_during_long_replay(tmp_path: Path) -> None:
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         router = context.socket(zmq.ROUTER)
         endpoint = f"ipc://{tmp_path}/long-replay"
@@ -588,7 +605,7 @@ def test_subscriber_thread_stops_during_long_replay(tmp_path):
         applied = 0
         original = subscriber.cache.apply
 
-        def slow_apply(event):
+        def slow_apply(event: KVEvent) -> None:
             nonlocal applied
             time.sleep(0.002)
             original(event)
@@ -596,7 +613,7 @@ def test_subscriber_thread_stops_during_long_replay(tmp_path):
 
         subscriber.cache.apply = slow_apply
 
-        async def serve():
+        async def serve() -> None:
             identity, _, _ = await router.recv_multipart()
             for sequence in range(1000):
                 await router.send_multipart(
@@ -635,7 +652,7 @@ def test_subscriber_thread_stops_during_long_replay(tmp_path):
     asyncio.run(scenario())
 
 
-def test_mixed_restore_extends_existing_prefix():
+def test_mixed_restore_extends_existing_prefix() -> None:
     cache = KVCache()
     cache.apply(stored([1], list(range(64))))
     cache.apply(stored([1, 2], list(range(128))))
@@ -646,7 +663,7 @@ def test_mixed_restore_extends_existing_prefix():
     }
 
 
-def test_signed_block_hashes_survive_resize_and_removal():
+def test_signed_block_hashes_survive_resize_and_removal() -> None:
     cache = KVCache()
     keys = [-(1 << 63), (1 << 63) - 1] + list(range(1024))
     tokens = list(range(len(keys)))
@@ -656,7 +673,7 @@ def test_signed_block_hashes_survive_resize_and_removal():
     assert not cache.prefixes
 
 
-def test_removing_last_block_releases_grown_index():
+def test_removing_last_block_releases_grown_index() -> None:
     cache = KVCache()
     keys = list(range(1025))
     cache.apply(stored(keys, keys))

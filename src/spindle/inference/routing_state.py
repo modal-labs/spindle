@@ -144,20 +144,17 @@ class RoutingState:
             )
             response.raise_for_status()
             loads = response.json()["loads"]
-            self.loads = (
-                {
-                    key: loads[0][key]
-                    for key in (
-                        "timestamp",
-                        "num_running_reqs",
-                        "num_waiting_reqs",
-                        "num_used_tokens",
-                        "max_total_num_tokens",
-                    )
+            snapshot: LoadSnapshot | None = None
+            if len(loads) == 1:
+                row = loads[0]
+                snapshot = {
+                    "timestamp": row["timestamp"],
+                    "num_running_reqs": row["num_running_reqs"],
+                    "num_waiting_reqs": row["num_waiting_reqs"],
+                    "num_used_tokens": row["num_used_tokens"],
+                    "max_total_num_tokens": row["max_total_num_tokens"],
                 }
-                if len(loads) == 1
-                else None
-            )
+            self.loads = snapshot
             self.loads_at = time.monotonic()
         except (httpx.HTTPError, ValueError, LookupError, TypeError):
             pass

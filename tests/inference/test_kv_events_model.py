@@ -1,10 +1,13 @@
 """Model-based checks for the SGLang KV publisher's PUB/ROUTER protocol."""
 
+from __future__ import annotations
+
 import asyncio
 import random
 import struct
 import threading
 from collections import Counter, deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import msgspec
@@ -14,14 +17,13 @@ import zmq
 import zmq.asyncio
 
 import spindle.inference.kv_events as kv_events
-from spindle.inference.kv_events import KVCache, KVEventSubscriber
-
+from spindle.inference.kv_events import KVCache, KVEvent, KVEventSubscriber
 
 TOPIC = b"kv-events"
 END_SEQ = (-1).to_bytes(8, "big", signed=True)
 
 
-def packet(events, sequence):
+def packet(events: list[KVEvent], sequence: int) -> bytes:
     return msgspec.msgpack.encode([float(sequence), events, 0])
 
 
@@ -34,11 +36,13 @@ class Node:
 
 
 class TreeModel:
-    def __init__(self):
+    def __init__(self) -> None:
         self.nodes: dict[int, Node] = {}
         self.next_key = 1
 
-    def store(self, parent, adapter, salt, pages):
+    def store(
+        self, parent: int | None, adapter: str, salt: str | None, pages: list[list[int]]
+    ) -> KVEvent:
         keys = list(range(self.next_key, self.next_key + len(pages)))
         self.next_key += len(pages)
         path = self.nodes[parent].tokens if parent is not None else ()
@@ -58,7 +62,7 @@ class TreeModel:
             "medium": "GPU",
         }
 
-    def remove(self, key):
+    def remove(self, key: int) -> KVEvent:
         removed = {key}
         while True:
             children = {
@@ -73,11 +77,11 @@ class TreeModel:
             self.nodes.pop(node_key)
         return {"type": "BlockRemoved", "block_hashes": [key], "medium": "GPU"}
 
-    def clear(self):
+    def clear(self) -> KVEvent:
         self.nodes.clear()
         return {"type": "AllBlocksCleared"}
 
-    def restore_with_repeated_key(self, key, page):
+    def restore_with_repeated_key(self, key: int, page: list[int]) -> KVEvent:
         node = self.nodes[key]
         parent_tokens = (
             self.nodes[node.parent].tokens if node.parent is not None else ()
@@ -89,7 +93,7 @@ class TreeModel:
         event["token_ids"] = list(old_page) * 2 + page
         return event
 
-    def prefix_counts(self):
+    def prefix_counts(self) -> Counter[str]:
         result = Counter()
         for node in self.nodes.values():
             if node.salt is not None or node.adapter == "base":
@@ -106,11 +110,13 @@ class TreeModel:
                 result[digest.hexdigest()] += 1
         return result
 
-    def prefixes(self):
+    def prefixes(self) -> set[str]:
         return set(self.prefix_counts())
 
 
-def random_stream(seed, count=80, *, include_base=True):
+def random_stream(
+    seed: int, count: int = 80, *, include_base: bool = True
+) -> list[tuple[KVEvent, Counter[str]]]:
     rng = random.Random(seed)
     model = TreeModel()
     stream = []
@@ -184,7 +190,9 @@ def random_stream(seed, count=80, *, include_base=True):
 @pytest.mark.parametrize(
     "seed,include_base", [(2, False), (11, True), (37, False), (83, True)]
 )
-def test_random_valid_stream_matches_independent_tree(seed, include_base):
+def test_random_valid_stream_matches_independent_tree(
+    seed: int, include_base: bool
+) -> None:
     subscriber = KVEventSubscriber()
     restored = False
     for sequence, (event, truth) in enumerate(
@@ -204,7 +212,7 @@ def test_random_valid_stream_matches_independent_tree(seed, include_base):
     assert restored
 
 
-def test_removed_tree_releases_all_internal_maps():
+def test_removed_tree_releases_all_internal_maps() -> None:
     model = TreeModel()
     subscriber = KVEventSubscriber()
     rng = random.Random(5)
@@ -234,7 +242,7 @@ def test_removed_tree_releases_all_internal_maps():
     assert not subscriber.cache.prefixes
 
 
-def test_short_final_page_then_child_crosses_next_prefix_boundary():
+def test_short_final_page_then_child_crosses_next_prefix_boundary() -> None:
     model = TreeModel()
     subscriber = KVEventSubscriber()
     first = model.store(None, "adapter-a", None, [[1] * 64])
@@ -247,11 +255,11 @@ def test_short_final_page_then_child_crosses_next_prefix_boundary():
     assert len(model.prefixes()) == 2
 
 
-def test_endpoints_and_branch_points_follow_truncation_and_removal():
+def test_endpoints_and_branch_points_follow_truncation_and_removal() -> None:
     model = TreeModel()
     cache = KVCache()
 
-    def check():
+    def check() -> None:
         endpoints = Counter()
         for chain in cache.chains:
             if chain is None:
@@ -290,7 +298,7 @@ def test_endpoints_and_branch_points_follow_truncation_and_removal():
 
 
 class Publisher:
-    def __init__(self, context, buffer_size):
+    def __init__(self, context: zmq.asyncio.Context, buffer_size: int) -> None:
         self.context = context
         self.pub = context.socket(zmq.PUB)
         self.router = context.socket(zmq.ROUTER)
@@ -306,7 +314,7 @@ class Publisher:
         self.pause_replay = 0.0
         self.drop_replays = 0
 
-    async def serve(self):
+    async def serve(self) -> None:
         while True:
             identity, delimiter, start = await self.router.recv_multipart()
             assert delimiter == b"" and len(start) == 8
@@ -324,7 +332,7 @@ class Publisher:
                     )
             await self.router.send_multipart([identity, b"", b"", END_SEQ, b""])
 
-    async def emit(self, events, *, live=True):
+    async def emit(self, events: list[KVEvent], *, live: bool = True) -> int:
         sequence = self.sequence
         self.sequence += 1
         payload = packet(events, sequence)
@@ -333,22 +341,25 @@ class Publisher:
             await self.pub.send_multipart([TOPIC, sequence.to_bytes(8, "big"), payload])
         return sequence
 
-    def restart(self):
+    def restart(self) -> None:
         self.sequence = 0
         self.history.clear()
 
-    def close(self):
+    def close(self) -> None:
         self.pub.close(0)
         self.router.close(0)
 
 
-async def until(predicate, timeout=3):
+async def until(predicate: Callable[[], bool], timeout: float = 3) -> None:
     async with asyncio.timeout(timeout):
         while not predicate():
             await asyncio.sleep(0.01)
 
 
-async def run_scenario(buffer_size, scenario):
+async def run_scenario(
+    buffer_size: int,
+    scenario: Callable[[Publisher, KVEventSubscriber], Awaitable[None]],
+) -> None:
     context = zmq.asyncio.Context()
     publisher = Publisher(context, buffer_size)
     subscriber = KVEventSubscriber(publisher.endpoint, publisher.replay_endpoint)
@@ -367,8 +378,8 @@ async def run_scenario(buffer_size, scenario):
         context.destroy(linger=0)
 
 
-def test_gap_replay_with_duplicates_and_reordered_publications():
-    async def scenario(publisher, subscriber):
+def test_gap_replay_with_duplicates_and_reordered_publications() -> None:
+    async def scenario(publisher: Publisher, subscriber: KVEventSubscriber) -> None:
         model = TreeModel()
         first = model.store(None, "adapter-a", None, [[1] * 64])
         await publisher.emit([first])
@@ -393,8 +404,8 @@ def test_gap_replay_with_duplicates_and_reordered_publications():
     asyncio.run(run_scenario(8, scenario))
 
 
-def test_live_gap_replays_from_anchor_without_hiding_snapshot():
-    async def scenario(publisher, subscriber):
+def test_live_gap_replays_from_anchor_without_hiding_snapshot() -> None:
+    async def scenario(publisher: Publisher, subscriber: KVEventSubscriber) -> None:
         first = TreeModel().store(None, "adapter-a", None, [[1] * 64])
         await publisher.emit([first])
         await until(lambda: subscriber.sequence == 0)
@@ -414,8 +425,8 @@ def test_live_gap_replays_from_anchor_without_hiding_snapshot():
     asyncio.run(run_scenario(8, scenario))
 
 
-def test_last_live_batch_is_published_after_snapshot_interval():
-    async def scenario(publisher, subscriber):
+def test_last_live_batch_is_published_after_snapshot_interval() -> None:
+    async def scenario(publisher: Publisher, subscriber: KVEventSubscriber) -> None:
         model = TreeModel()
         await publisher.emit([model.store(None, "adapter-a", None, [[1] * 64])])
         await until(lambda: len(subscriber.snapshot[2]) == 1)
@@ -426,10 +437,12 @@ def test_last_live_batch_is_published_after_snapshot_interval():
     asyncio.run(run_scenario(8, scenario))
 
 
-def test_replay_timeouts_do_not_starve_live_socket(monkeypatch):
+def test_replay_timeouts_do_not_starve_live_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(kv_events, "REPLAY_STALL_TIMEOUT_SECONDS", 0.05)
 
-    async def scenario():
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         publisher = Publisher(context, 8)
         publisher.drop_replays = 1000
@@ -457,8 +470,8 @@ def test_replay_timeouts_do_not_starve_live_socket(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_full_rebuild_converges_while_publications_continue():
-    async def scenario():
+def test_full_rebuild_converges_while_publications_continue() -> None:
+    async def scenario() -> None:
         context = zmq.asyncio.Context()
         publisher = Publisher(context, 4000)
         publisher.pub.setsockopt(zmq.SNDHWM, 5000)
@@ -470,7 +483,7 @@ def test_full_rebuild_converges_while_publications_continue():
         release_rebuild = threading.Event()
         applied = 0
 
-        def pause_apply(event):
+        def pause_apply(event: KVEvent) -> None:
             nonlocal applied
             applied += 1
             if applied == 10:
@@ -478,7 +491,7 @@ def test_full_rebuild_converges_while_publications_continue():
                 assert release_rebuild.wait(10)
             original_apply(event)
 
-        def reset():
+        def reset() -> None:
             resets.append(subscriber.sequence)
             original_reset()
 
@@ -511,16 +524,16 @@ def test_full_rebuild_converges_while_publications_continue():
     asyncio.run(scenario())
 
 
-def test_random_delivery_gaps_never_add_false_prefixes():
+def test_random_delivery_gaps_never_add_false_prefixes() -> None:
     seed = 13
 
-    async def scenario(publisher, subscriber):
+    async def scenario(publisher: Publisher, subscriber: KVEventSubscriber) -> None:
         rng = random.Random(seed)
         stream = random_stream(seed, 45, include_base=False)
         truth_by_sequence = [set(truth) for _, truth in stream]
         violations = []
 
-        async def monitor():
+        async def monitor() -> None:
             while True:
                 if subscriber.ready and 0 <= subscriber.sequence < len(stream):
                     actual = set(subscriber.cache.prefixes)
@@ -546,8 +559,8 @@ def test_random_delivery_gaps_never_add_false_prefixes():
     asyncio.run(run_scenario(64, scenario))
 
 
-def test_buffer_rollover_discards_state_after_clear_is_lost():
-    async def scenario(publisher, subscriber):
+def test_buffer_rollover_discards_state_after_clear_is_lost() -> None:
+    async def scenario(publisher: Publisher, subscriber: KVEventSubscriber) -> None:
         model = TreeModel()
         first = model.store(None, "adapter-a", None, [[1] * 64])
         await publisher.emit([first])
@@ -569,8 +582,8 @@ def test_buffer_rollover_discards_state_after_clear_is_lost():
     asyncio.run(run_scenario(3, scenario))
 
 
-def test_publisher_restart_resets_sequence_and_state():
-    async def scenario(publisher, subscriber):
+def test_publisher_restart_resets_sequence_and_state() -> None:
+    async def scenario(publisher: Publisher, subscriber: KVEventSubscriber) -> None:
         model = TreeModel()
         for value in range(3):
             await publisher.emit([model.store(None, "adapter-a", None, [[value] * 64])])
