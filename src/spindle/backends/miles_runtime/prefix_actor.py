@@ -7,9 +7,12 @@ import json
 import os
 import sys
 import time
+from argparse import Namespace
+from pathlib import Path
 
 import torch
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.multi_lora_layers import set_tokens_per_adapter_slot
 from megatron.core.utils import unwrap_model
 from miles.backends.megatron_utils import model as execution
@@ -27,12 +30,13 @@ from miles.backends.training_utils.prefix_tree.megatron import (
 from miles.backends.training_utils.prefix_tree.packed import prepare_packed_tree
 from miles.backends.training_utils.prefix_tree.reduction import OrderedRowGather
 from spindle.backends.miles_runtime.actor import SpindleMilesTrainRayActor
+from spindle.patching import same_signature
 
 from .prefix_checks import check_forward_parity
 
 
 class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
-    def init(self, args: object, role: str, **kwargs: object) -> object:
+    def init(self, args: object, role: str, **kwargs: object) -> int | None:
         torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "8")))
         # Match current Miles' production default. Allocation poisoning is a
         # separate debug option and makes thousands of export allocations costly.
@@ -52,10 +56,16 @@ class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
         if args.use_rollout_routing_replay or args.enable_mtp_training:
             raise ValueError("Prefix RL does not support routing replay or MTP")
         original = AutoBridge.to_megatron_provider
+        actor = self
 
-        def provider(bridge: object, *a: object, **k: object) -> object:
-            result = original(bridge, *a, **k)
-            self.prefix_layout_type = configure_tree_provider(result)
+        @same_signature(original)
+        def provider(
+            self: AutoBridge,
+            load_weights: bool = True,
+            hf_path: str | Path | None = None,
+        ) -> GPTModelProvider:
+            result = original(self, load_weights=load_weights, hf_path=hf_path)
+            actor.prefix_layout_type = configure_tree_provider(result)
             # The opt-in policy fixes routing state and kernel choices equally
             # for expanded reference and compact execution.
             result.moe_router_bias_update_rate = 0.0
@@ -75,7 +85,9 @@ class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
         self.prefix_enabled = True
         self.prefix_rows = []
         roots = unwrap_model(self.model)
-        self.prefix_policies = [LoraKernelControl()]
+        self.prefix_policies: list[LoraKernelControl | FrozenExpertKernelControl] = [
+            LoraKernelControl()
+        ]
         for root in roots:
             validate_megatron_tree_config(root.config)
             install_row_math(root)
@@ -88,7 +100,7 @@ class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
             root.register_forward_hook(self._restore_prefix, with_kwargs=True)
         native_packed = execution.get_packed_seq_params
 
-        def packed(batch: dict, args: object) -> object:
+        def packed(batch: dict, args: Namespace) -> object:
             value = native_packed(batch, args)
             if value is None:
                 raise ValueError("Shared-prefix RL requires THD packed sequences")
