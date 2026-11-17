@@ -35,7 +35,7 @@ except ImportError:
 
     from . import tinker_cp
 
-from . import allgather_cp_lora, expert_lora_compat, host_syncs
+from . import allgather_cp_lora, expert_lora_compat, host_syncs, response_logits
 from .actor_shared import (
     ProfiledActor,
     install_replay_patches,
@@ -70,6 +70,7 @@ install_replay_patches(
 
 host_syncs.install()
 allgather_cp_lora.install(megatron_model)
+response_logits.install(logit_processors)
 
 
 def _publish_checkpoints_across_nodes() -> None:
