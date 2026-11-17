@@ -31,6 +31,7 @@ from .contract import (
 from .miles_config import (
     GDN_INPUT_PROJECTIONS,
     MilesBackendConfig,
+    check_lora_request,
     lora_target_flags,
     parse_backend_config,
 )
@@ -613,21 +614,18 @@ class MilesCommandBackend(Backend):
         return replace(state, train_unembed=False)
 
     def _validate_job(self, state: MilesJobState) -> None:
-        if not 0 < state.rank <= self.config.max_lora_rank:
-            raise ValueError(
-                f"LoRA rank must be between 1 and {self.config.max_lora_rank}"
-            )
+        check_lora_request(
+            self.config.target_modules,
+            self.config.max_lora_rank,
+            rank=state.rank,
+            train_attn=state.train_attn,
+            train_mlp=state.train_mlp,
+            train_unembed=state.train_unembed,
+        )
         if state.seed is not None and not self.runtime.supports_seed:
             raise ValueError(
                 "per-model seeds require Miles load_slot(seed=...); "
                 "update Miles and redeploy the trainer"
-            )
-        configured = lora_target_flags(self.config.target_modules)
-        requested = (state.train_attn, state.train_mlp, state.train_unembed)
-        if requested != configured:
-            raise ValueError(
-                "Miles uses deployment-wide LoRA targets; model train_attn, "
-                "train_mlp, and train_unembed must match the deployment"
             )
 
     def _require_jobs(self, model_ids: tuple[str, ...]) -> None:
