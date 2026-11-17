@@ -62,14 +62,14 @@ def builders(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "preset,backend,clients,nproc",
+    "preset,backend,clients,nproc,gpu",
     [
-        ("qwen35-9b-lora-16k", "miles_lora", 6, 1),
-        ("qwen35-4b-fft-64k", "megatron_fft", 1, 4),
+        ("qwen35-9b-lora-16k", "miles_lora", 6, 1, "H100:4"),
+        ("qwen35-4b-fft-64k", "megatron_fft", 1, 4, ["B300:4", "B200:4"]),
     ],
 )
 def test_trainer_declaration_and_executor_configuration(
-    builders, monkeypatch, preset, backend, clients, nproc
+    builders, monkeypatch, preset, backend, clients, nproc, gpu
 ):
     row = deployment(preset)
     platform = row.recipe.platform
@@ -78,9 +78,7 @@ def test_trainer_declaration_and_executor_configuration(
     app, trainer = deployment_apps.build_trainer_app(row, platform, image=image)
     assert app.tags["spindle_role"] == "trainer"
     declaration, _ = app.functions["trainer"]
-    assert declaration["gpu"] == (
-        ["B300:4", "B200:4"] if backend == "megatron_fft" else "H100:4"
-    )
+    assert declaration["gpu"] == gpu
     assert declaration["ephemeral_disk"] is None
     assert declaration["region"] is None
     assert declaration["max_containers"] is None

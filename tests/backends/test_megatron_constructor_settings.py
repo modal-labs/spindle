@@ -16,7 +16,7 @@ with backend_runtime_imports():
 
 
 def test_config_overrides_reach_megatron(monkeypatch):
-    spec = load(config_path("qwen35-4b-fft-64k"))
+    spec = load(config_path("qwen35-9b-fft-64k"))
     spec.megatron_cfg["optimizer_overrides"] = {"native_optimizer_setting": False}
     spec.megatron_cfg["distributed_overrides"] = {"native_ddp_setting": 123}
     spec.megatron_cfg["provider_overrides"]["native_provider_setting"] = [1, 2]
@@ -59,7 +59,7 @@ def test_config_overrides_reach_megatron(monkeypatch):
     assert actual_provider is not provider
     assert actual_provider.pre_wrap_hook is provider.pre_wrap_hook
     assert actual_provider.post_wrap_hook is provider.post_wrap_hook
-    assert actual_provider.tensor_model_parallel_size == 1
+    assert actual_provider.tensor_model_parallel_size == 2
     assert actual_provider.moe_token_dispatcher_type == "alltoall"
     optimizer = modeling.optimizer_config(config, "bf16", distributed_optimizer=True)
     assert optimizer["native_optimizer_setting"] is False
