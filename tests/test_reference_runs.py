@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 import tinker
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from spindle.deployments import load
 
@@ -20,6 +20,21 @@ launcher = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = launcher
 spec.loader.exec_module(launcher)
 plotter = runpy.run_path(str(ROOT / "plot.py"))
+
+
+@pytest.mark.parametrize(
+    ("path", "schema"),
+    [
+        (path, launcher.ValidationRunConfig)
+        for path in sorted((ROOT / "configs").glob("*.toml"))
+    ]
+    + [(path, plotter["ReferenceRunIndex"]) for path in sorted(ROOT.glob("*.toml"))],
+    ids=lambda value: (
+        str(value.relative_to(ROOT)) if isinstance(value, Path) else value.__name__
+    ),
+)
+def test_committed_toml_matches_schema(path: Path, schema: type[BaseModel]) -> None:
+    schema.model_validate(tomllib.loads(path.read_text()))
 
 
 def test_prepare_and_launch_share_overrides_from_another_directory(
@@ -113,9 +128,7 @@ def test_catalog_outputs_plot_as_ids_and_partial_files(
     )
     for run in catalog:
         definition = ROOT / "configs" / f"{run.validation}.toml"
-        launcher.ValidationRunConfig.model_validate(
-            tomllib.loads(definition.read_text())
-        )
+        assert definition.is_file()
         assert (ROOT / run.output).is_file()
     partial = tmp_path / "partial.jsonl"
     partial.write_text('{"event":"update","step":1,"reward":0.5}\n{"event":')
