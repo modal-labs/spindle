@@ -131,15 +131,16 @@ class ProfiledActor:
 
     def _configure_out_of_memory(self) -> None:
         world_size = dist.get_world_size()
-        # Other layouts run collectives inside the pass, where a failed rank would leave its peers waiting.
-        only_data_parallel = (
+        # Other layouts and MoE routers run collectives mid-pass, where a failed rank would strand its peers.
+        dense_data_parallel = (
             parallel_state.get_data_parallel_world_size() == world_size
-            and parallel_state.get_expert_model_parallel_world_size() == 1
-            and parallel_state.get_expert_tensor_parallel_world_size() == 1
-            and not any(chunk.ddp_config.overlap_grad_reduce for chunk in self.model)
+            and not any(
+                chunk.config.num_moe_experts or chunk.ddp_config.overlap_grad_reduce
+                for chunk in self.model
+            )
         )
         out_of_memory.configure(
-            recoverable=world_size == 1 or only_data_parallel,
+            recoverable=world_size == 1 or dense_data_parallel,
             group=distributed_utils.get_gloo_group() if world_size > 1 else None,
         )
         self._out_of_memory_configured = True
