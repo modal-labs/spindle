@@ -542,11 +542,9 @@ def make_forward_step(
                 batch["cu_seqlens"].numel(),
                 device=device,
             ),
-            "max_seqlen": torch.tensor(batch["max_seqlen"], device=device),
         }
         packed_seq_params = get_packed_seq_params(packed_metadata)
-        # FlashAttention 4 keys its backward compile cache on values derived from
-        # max_seqlen; a tensor never matches, so every call would recompile.
+        # A tensor here makes FlashAttention 4 recompile its backward on every call.
         packed_seq_params.max_seqlen_q = batch["max_seqlen"]
         packed_seq_params.max_seqlen_kv = batch["max_seqlen"]
 
