@@ -7,7 +7,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import config_path, load
@@ -20,6 +20,24 @@ class TokenizerConfig(BaseModel):
     revision: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
+class ConfigOverrides(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: str | None = None
+    trainer_gpu: str | None = None
+    trainer_gpus_per_node: int | None = None
+    trainer_nodes: int | None = None
+    trainer_max_instances: int | None = None
+    trainer_max_clients_per_instance: int | None = None
+    inference_gpu: str | None = None
+    inference_gpus_per_node: int | None = None
+    inference_min_replicas: int | None = None
+    inference_max_replicas: int | None = None
+    miles_max_lora_slots: int | None = Field(
+        default=None, alias="miles_cfg.max_lora_slots"
+    )
+
+
 class ValidationRunConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -27,17 +45,8 @@ class ValidationRunConfig(BaseModel):
     script: str
     trainer_image: str = Field(min_length=1)
     tokenizer: TokenizerConfig
-    config_overrides: dict[str, object] = Field(default_factory=dict)
+    config_overrides: ConfigOverrides = Field(default_factory=ConfigOverrides)
     script_args: list[str] = Field(default_factory=list)
-
-    @field_validator("config_overrides")
-    @classmethod
-    def validate_config_overrides(
-        cls, overrides: dict[str, object]
-    ) -> dict[str, object]:
-        if "trainer_image" in overrides:
-            raise ValueError("trainer_image must be set at the top level")
-        return overrides
 
 
 def main() -> None:
@@ -58,7 +67,7 @@ def main() -> None:
     recipe = BaseConfig(
         **vars(load(config_path(definition.config))),
         overrides={
-            **definition.config_overrides,
+            **definition.config_overrides.model_dump(by_alias=True, exclude_none=True),
             "trainer_image": definition.trainer_image,
         },
     )

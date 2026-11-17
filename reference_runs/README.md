@@ -30,9 +30,11 @@ revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
 ```
 
 The existing H100 reference pins its hardware and client capacity in
-`[config_overrides]`, preserving the old Python reference recipe. It uses the
-existing dotted config override mechanism,
-for example `inference_gpu = "H100!"` to select exact H100 hardware. Optional
+`[config_overrides]`, preserving the old Python reference recipe. Its fields
+are declared in `ConfigOverrides` in `run.py`; unknown fields and incorrect
+types are rejected. Omitted fields keep their deployment recipe values.
+Use `inference_gpu = "H100!"` to select exact H100 hardware, or the declared
+`"miles_cfg.max_lora_slots"` key to set adapter capacity. Optional
 `script_args = []` contains literal CLI arguments. Dataset, grading, learning
 rate, batch size and seed stay in the Tinker script. Every definition requires
 a typed `tokenizer` with its Hugging Face model ID and full commit revision.

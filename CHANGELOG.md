@@ -23,6 +23,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- Reference deployment overrides use explicit typed fields and reject undeclared settings.
 - Reference definitions must specify `trainer_image` at the top level so the trainer image selection is recorded explicitly.
 - DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
 - Reference runs use flat TOML definitions, a typed execution index, and flat JSONL outputs. A shared launcher selects the exact deployment for the existing DAPO-Math workload.

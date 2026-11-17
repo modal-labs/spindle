@@ -174,6 +174,24 @@ def test_reference_requires_explicit_trainer_image(problem: str) -> None:
         launcher.ValidationRunConfig.model_validate(data)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("trainer_gup", "H100!"),
+        ("miles_cfg.cli_options", {}),
+        ("trainer_nodes", "2"),
+        ("miles_cfg.max_lora_slots", "1"),
+    ],
+)
+def test_reference_rejects_undeclared_or_mistyped_overrides(
+    field: str, value: object
+) -> None:
+    data = tomllib.loads((ROOT / "configs/dapo_qwen35_4b.toml").read_text())
+    data["config_overrides"][field] = value
+    with pytest.raises(ValidationError, match="config_overrides"):
+        launcher.ValidationRunConfig.model_validate(data)
+
+
 def test_direct_workload_requires_tokenizer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -295,7 +313,7 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     recipe = BaseConfig(
         **vars(load(launcher.config_path(definition.config))),
         overrides={
-            **definition.config_overrides,
+            **definition.config_overrides.model_dump(by_alias=True, exclude_none=True),
             "trainer_image": definition.trainer_image,
         },
     )
@@ -334,6 +352,6 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     assert records[0]["config"]["model"] == expected_model
     assert records[0]["config"]["tokenizer_revision"] == definition.tokenizer.revision
     assert records[0]["config"]["updates"] == 2
-    assert records[0]["recipe"] == definition.config_overrides["name"]
+    assert records[0]["recipe"] == definition.config_overrides.name
     assert [r["step"] for r in records if r["event"] == "update"] == [1, 2]
     assert training.step == 2
