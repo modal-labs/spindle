@@ -1,6 +1,6 @@
 """Deploy checkout recipes behind a temporary regression frontend."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 import secrets
 import uuid
@@ -63,6 +63,7 @@ def isolated_configs(
         recipe.platform["url_label"] = frontend
         recipe.platform["requires_proxy_auth"] = True
         recipe.platform["secrets"]["api"] = frontend
+        recipe.platform["secrets"]["sampler_proxy"] = frontend
         recipe.platform["storage"]["checkpoints"] = f"{frontend}-checkpoints"
         recipe.platform["storage"]["bulletin"] = f"{frontend}-bulletin"
         configs.append(DeploymentConfig.create(recipe))
@@ -77,7 +78,11 @@ def verify_checkout(
         headers={"X-API-Key": api_key, **proxy_auth_headers()},
         timeout=120,
     )
-    response.raise_for_status()
+    if response.is_error:
+        detail = response.text.replace(api_key, "[redacted]")[:200]
+        raise ValueError(
+            f"Regression verification failed (HTTP {response.status_code}): {detail}"
+        )
     capabilities = response.json()
     if capabilities.get("spindle_commit") != commit:
         raise ValueError(
@@ -90,10 +95,7 @@ def verify_checkout(
 
 
 @contextmanager
-def checkout_server(
-    recipes: list[BaseConfig],
-    verify: Callable[[str, str, str, list[str]], None],
-) -> Iterator[tuple[str, str, str]]:
+def checkout_server(recipes: list[BaseConfig]) -> Iterator[tuple[str, str, str, str]]:
     commit = source_commit()
     if commit is None:
         raise ValueError("Run regression from a Spindle checkout")
@@ -101,9 +103,18 @@ def checkout_server(
     api_key = "tml-spindle-" + secrets.token_urlsafe(32)
     configs = isolated_configs(recipes, frontend)
     print(f"Deploying checkout {commit} as {frontend} in {REGRESSION_ENV}", flush=True)
+    tokens = modal.Workspace.from_context().proxy_tokens
+    token = tokens.create(name=frontend)
     try:
+        tokens.allow(token.token_id, REGRESSION_ENV)
         modal.Secret.objects.create(
-            frontend, {"TINKER_API_KEY": api_key}, environment_name=REGRESSION_ENV
+            frontend,
+            {
+                "TINKER_API_KEY": api_key,
+                "MODAL_PROXY_TOKEN_ID": token.token_id,
+                "MODAL_PROXY_TOKEN_SECRET": token.token_secret,
+            },
+            environment_name=REGRESSION_ENV,
         )
         deploy(configs)
         url = modal.Function.from_name(
@@ -111,17 +122,19 @@ def checkout_server(
         ).get_web_url()
         if not url:
             raise RuntimeError("Regression frontend has no URL")
-        verify(url, api_key, commit, [recipe.name for recipe in recipes])
         print(f"Regression server: {url} ({commit})", flush=True)
-        yield url, api_key, commit
+        yield url, api_key, commit, frontend
     finally:
-        stop(frontend, REGRESSION_ENV)
-        for suffix in ("checkpoints", "bulletin", "usage"):
-            modal.Volume.objects.delete(
-                f"{frontend}-{suffix}",
-                allow_missing=True,
-                environment_name=REGRESSION_ENV,
+        try:
+            stop(frontend, REGRESSION_ENV)
+            for suffix in ("checkpoints", "bulletin", "usage"):
+                modal.Volume.objects.delete(
+                    f"{frontend}-{suffix}",
+                    allow_missing=True,
+                    environment_name=REGRESSION_ENV,
+                )
+            modal.Secret.objects.delete(
+                frontend, allow_missing=True, environment_name=REGRESSION_ENV
             )
-        modal.Secret.objects.delete(
-            frontend, allow_missing=True, environment_name=REGRESSION_ENV
-        )
+        finally:
+            tokens.delete(token.token_id)

@@ -133,7 +133,6 @@ regression_image = with_local_sources(
 
 slack_secret = modal.Secret.from_name("spindle-bot-slack", environment_name=MODAL_ENV)
 api_secret = modal.Secret.from_name("spindle-prod-api", environment_name=MODAL_ENV)
-proxy_secret = modal.Secret.from_name("spindle-proxy", environment_name=MODAL_ENV)
 hf_secret = modal.Secret.from_name("huggingface-secret", environment_name=MODAL_ENV)
 
 app = modal.App("spindle-synmon-launcher")
@@ -540,7 +539,7 @@ def regression_renderers(models: list[str]) -> dict[str, str | None]:
     return {model: guess_number_renderer(model) for model in models}
 
 
-@app.function(image=regression_image, secrets=[proxy_secret], timeout=3 * 60)
+@app.function(image=regression_image, timeout=3 * 60)
 def verify_regression_server(
     base_url: str, api_key: str, commit: str, recipes: list[str]
 ) -> None:
@@ -549,7 +548,6 @@ def verify_regression_server(
 
 @app.function(
     image=regression_image,
-    secrets=[proxy_secret],
     timeout=GUESS_NUMBER["timeout_s"] + 15 * 60,
     single_use_containers=True,
 )
@@ -647,17 +645,18 @@ def regress(
     if not recipes:
         raise SystemExit("No selected recipes have a cookbook renderer")
     failed = False
-    with checkout_server(recipes, verify_regression_server.remote) as (
-        base_url,
-        api_key,
-        commit,
-    ):
+    with checkout_server(recipes) as (base_url, api_key, commit, secret_name):
+        credentials = modal.Secret.from_name(secret_name, environment_name=MODAL_ENV)
+        verify_regression_server.with_options(secrets=[credentials]).remote(
+            base_url, api_key, commit, [recipe.name for recipe in recipes]
+        )
+        worker = regression.with_options(max_containers=parallel, secrets=[credentials])
         calls = []
         pending = set()
         try:
             for recipe in recipes:
                 print(f"Running {recipe.name}: {recipe.model}", flush=True)
-                call = regression.with_options(max_containers=parallel).spawn(
+                call = worker.spawn(
                     recipe.model,
                     recipe.name,
                     renderers[recipe.model],

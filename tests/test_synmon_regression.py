@@ -90,12 +90,14 @@ def test_checkout_configs_do_not_mutate_source_or_share_writable_run_storage():
             != second.recipe.platform["storage"][storage]
         )
     assert first.recipe.platform["secrets"]["api"] == "sr-first"
+    assert first.recipe.platform["secrets"]["sampler_proxy"] == "sr-first"
     assert first.recipe.platform["requires_proxy_auth"] is True
     assert first.recipe.platform["modal"]["environment"] == checkout.REGRESSION_ENV
 
 
 @pytest.mark.parametrize(
-    "failure", [None, "deploy", "commit", "recipe", "body", "interrupt"]
+    "failure",
+    [None, "allow", "deploy", "auth", "commit", "recipe", "body", "interrupt"],
 )
 def test_checkout_lifecycle_cleans_up_and_rejects_wrong_server(monkeypatch, failure):
     recipes = regression_recipes(["Qwen/Qwen3-8B"])
@@ -108,6 +110,24 @@ def test_checkout_lifecycle_cleans_up_and_rejects_wrong_server(monkeypatch, fail
     def create(name, credentials, **kwargs):
         captured.update(frontend=name, key=credentials["TINKER_API_KEY"])
         events.append("secret")
+
+    def allow(token_id, env):
+        assert (token_id, env) == ("test-proxy-id", checkout.REGRESSION_ENV)
+        if failure == "allow":
+            raise RuntimeError("allow failed")
+
+    tokens = SimpleNamespace(
+        create=lambda **kwargs: SimpleNamespace(
+            token_id="test-proxy-id", token_secret="test-proxy-secret"
+        ),
+        allow=allow,
+        delete=lambda token_id: events.append(("delete-proxy", token_id)),
+    )
+    monkeypatch.setattr(
+        checkout.modal.Workspace,
+        "from_context",
+        lambda: SimpleNamespace(proxy_tokens=tokens),
+    )
 
     def deploy(configs):
         assert configs[0].recipe.platform["frontend"] == captured["frontend"]
@@ -123,6 +143,8 @@ def test_checkout_lifecycle_cleans_up_and_rejects_wrong_server(monkeypatch, fail
         assert request.headers["X-API-Key"] == captured["key"]
         assert request.headers["Modal-Key"] == "test-proxy-id"
         assert request.headers["Modal-Secret"] == "test-proxy-secret"
+        if failure == "auth":
+            return httpx.Response(401, text="invalid proxy authorization")
         return httpx.Response(
             200,
             json={
@@ -165,11 +187,10 @@ def test_checkout_lifecycle_cleans_up_and_rejects_wrong_server(monkeypatch, fail
         )
 
         def run():
-            with checkout.checkout_server(recipes, checkout.verify_checkout) as (
-                url,
-                key,
-                commit,
-            ):
+            with checkout.checkout_server(recipes) as (url, key, commit, secret_name):
+                checkout.verify_checkout(
+                    url, key, commit, [recipe.name for recipe in recipes]
+                )
                 events.append("body")
                 assert (url, key, commit) == (
                     "https://checkout.example",
@@ -188,19 +209,22 @@ def test_checkout_lifecycle_cleans_up_and_rejects_wrong_server(monkeypatch, fail
                 KeyboardInterrupt
                 if failure == "interrupt"
                 else ValueError
-                if failure in ("commit", "recipe")
+                if failure in ("auth", "commit", "recipe")
                 else RuntimeError
             )
             with pytest.raises(expected):
                 run()
-    frontend = captured["frontend"]
-    assert events[-5:] == [
+    frontend = captured.get("frontend") or next(
+        e[1] for e in events if isinstance(e, tuple) and e[0] == "stop"
+    )
+    assert events[-6:] == [
         ("stop", frontend, checkout.REGRESSION_ENV),
         *[
             ("delete-volume", f"{frontend}-{suffix}")
             for suffix in ("checkpoints", "bulletin", "usage")
         ],
         ("delete-secret", frontend),
+        ("delete-proxy", "test-proxy-id"),
     ]
     assert ("body" in events) == (failure in (None, "body", "interrupt"))
 
@@ -214,10 +238,15 @@ def test_regression_uses_checkout_credentials_and_cancels_active_work_on_interru
     monkeypatch.setenv("TINKER_API_KEY", "production-key")
 
     @contextmanager
-    def server(selected, verify):
+    def server(selected):
         assert selected == recipes
         try:
-            yield "https://checkout.example", "checkout-key", "checkout-sha"
+            yield (
+                "https://checkout.example",
+                "checkout-key",
+                "checkout-sha",
+                "checkout-secret",
+            )
         finally:
             events.append("stop-server")
 
@@ -241,6 +270,13 @@ def test_regression_uses_checkout_credentials_and_cancels_active_work_on_interru
 
     monkeypatch.setattr(config_validation, "regression_recipes", lambda *a: recipes)
     monkeypatch.setattr(config_validation, "checkout_server", server)
+    monkeypatch.setattr(
+        config_validation,
+        "verify_regression_server",
+        SimpleNamespace(
+            with_options=lambda **kwargs: SimpleNamespace(remote=lambda *args: None)
+        ),
+    )
     monkeypatch.setattr(
         config_validation,
         "regression_renderers",
