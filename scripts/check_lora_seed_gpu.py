@@ -71,6 +71,9 @@ def _backend_config(model: str) -> MilesBackendConfig:
     root = Path("/seed-assets/DeepSeek-V2-Lite")
     hf = json.loads((root / "config.json").read_text())
     options = {
+        "deterministic_mode": True,
+        "cross_entropy_loss_fusion": False,
+        "tp_comm_overlap": False,
         "add_bias_linear": False,
         "num_layers": hf["num_hidden_layers"],
         "hidden_size": hf["hidden_size"],
@@ -79,7 +82,7 @@ def _backend_config(model: str) -> MilesBackendConfig:
         "kv_channels": hf["qk_nope_head_dim"],
         "normalization": "RMSNorm",
         "position_embedding_type": "rope",
-        "norm_epsilon": hf["rms_norm_eps"],
+        "layernorm_epsilon": hf["rms_norm_eps"],
         "swiglu": True,
         "untie_embeddings_and_output_weights": True,
         "vocab_size": hf["vocab_size"],
@@ -98,7 +101,8 @@ def _backend_config(model: str) -> MilesBackendConfig:
         "num_experts": hf["n_routed_experts"],
         "moe_layer_freq": json.dumps(
             [0] * hf["first_k_dense_replace"]
-            + [1] * (hf["num_hidden_layers"] - hf["first_k_dense_replace"])
+            + [1] * (hf["num_hidden_layers"] - hf["first_k_dense_replace"]),
+            separators=(",", ":"),
         ),
         "moe_ffn_hidden_size": hf["moe_intermediate_size"],
         "moe_router_topk": hf["num_experts_per_tok"],
@@ -106,15 +110,16 @@ def _backend_config(model: str) -> MilesBackendConfig:
         * hf["n_shared_experts"],
         "moe_router_pre_softmax": True,
         "moe_router_score_function": hf["scoring_func"],
-        "moe_router_load_balancing_type": "seq_aux_loss",
+        "moe_router_load_balancing_type": ["seq_aux_loss"],
         "moe_token_dispatcher_type": "alltoall",
-        "moe_aux_loss_coeff": 0.0,
+        "moe_aux_loss_coeff": [0.0],
         "moe_router_group_topk": 1,
         "moe_router_num_groups": 1,
         "moe_grouped_gemm": True,
         "moe_router_topk_scaling_factor": hf["routed_scaling_factor"],
         "moe_router_dtype": "fp32",
-        "moe_permute_fusion": True,
+        "moe_permute_fusion": False,
+        "moe_shared_expert_overlap": False,
     }
     return MilesBackendConfig(
         hf_checkpoint=str(root),
@@ -193,6 +198,8 @@ def prepare_mla() -> dict[str, str]:
         "CUDA_DEVICE_MAX_CONNECTIONS": "1",
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
     },
 )
 def check(model: str = "Qwen/Qwen3-8B") -> dict[str, object]:
@@ -374,6 +381,9 @@ def check(model: str = "Qwen/Qwen3-8B") -> dict[str, object]:
                 miles_api=os.environ.get("SPINDLE_MILES_API", "0.1"),
                 hardware="H100:1",
                 steps=3,
+                deterministic_mode=bool(
+                    backend.config.cli_options.get("deterministic_mode", False)
+                ),
                 same_seed_max_logprob_error=same,
                 different_seed_max_logprob_error=different,
                 runs=results,

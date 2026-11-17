@@ -5,6 +5,7 @@ import os
 from typing import TYPE_CHECKING
 
 import torch
+from megatron.bridge.peft.multi_lora_layers import MultiLoRALinear
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker
 
 if TYPE_CHECKING or os.environ.get("SPINDLE_MILES_API") != "0.2":
@@ -17,10 +18,12 @@ class SeedProbeActor(SpindleMilesTrainRayActor):
     def seed_probe(self, slot: int) -> dict[str, str]:
         weights = hashlib.sha256()
         replicated = 0
+        modules = 0
         for chunk in self.model:
             for module in chunk.modules():
-                if module.__class__.__name__ == "MultiLoRALinear":
-                    replicated += int(module.replicate_adapter)
+                if isinstance(module, MultiLoRALinear):
+                    modules += 1
+                    replicated += int(getattr(module, "replicate_adapter", False))
                     for parameter in module.adapters[slot].parameters():
                         weights.update(
                             parameter.detach()
@@ -42,4 +45,5 @@ class SeedProbeActor(SpindleMilesTrainRayActor):
             "weights": weights.hexdigest(),
             "rng": rng.hexdigest(),
             "replicated_modules": str(replicated),
+            "adapter_modules": str(modules),
         }

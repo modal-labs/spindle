@@ -44,6 +44,20 @@ preserves the trainer's random streams for other clients. Omitting `seed` keeps
 the default initialization behavior. This controls initialization only; sampling
 uses `tinker.SamplingParams(seed=...)`, and training order can still vary.
 
+Full training reproducibility also requires deterministic kernels and fixed input
+and batching order. The [GPU seed check](../scripts/check_lora_seed_gpu.py)
+reproduced initial and trained weights exactly for Qwen3-8B and DeepSeek-V2-Lite
+on a single H100 with Miles v0.1.1 and v0.2.0, across three optimizer steps.
+The MLA check covers expert adapters and 27 replicated projections. DeepSeek
+required `cli_options` with `deterministic_mode = true`,
+`cross_entropy_loss_fusion = false`, and `tp_comm_overlap = false`, plus
+`NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`, `CUBLAS_WORKSPACE_CONFIG=:4096:8`, and
+`NCCL_ALGO=Ring` in the trainer environment. Its training diverged with the
+same seed when deterministic mode was disabled. These checks do not establish
+reproducibility across different hardware, versions, or batching orders.
+[Validation results](assets/lora-validation/seed-reproducibility.json) record
+the exact Miles commits, settings, and weight hashes.
+
 ## Submit training work
 
 When multiple clients hit the same training engine, the engine will try and batch these clients' requests when possible. The intended use of multi-tenancy to maximize trainer utilization is thus to maintain a steady stream of incoming forward_backward data. The engine's current scheduling logic will interleave client batches when large enough, and multi-lora batch when multiple can fit within a single forward pass. The batching is done wrt "compatibility": in particular, fb requests which share the same `loss_fn` and `loss_fn_config`. This includes consecutive compatible requests from one client (see deterministic training section for ensuring gradient accumulation order). 
