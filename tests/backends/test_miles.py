@@ -224,23 +224,20 @@ def test_config_points_reference_load_at_the_hf_checkpoint() -> None:
     )
 
 
-def test_config_exports_lora_through_the_raw_converter() -> None:
-    config = _config(megatron_to_hf_mode="raw")
+@pytest.mark.parametrize("lora_type", ["lora", "canonical_lora"])
+def test_config_exports_lora_through_the_raw_converter(lora_type) -> None:
+    config, _, _ = parse_backend_config(
+        json.loads(
+            _config(megatron_to_hf_mode="raw", lora_type=lora_type).model_dump_json()
+        )
+    )
 
     arguments = config.miles_arguments()
     assert arguments[arguments.index("--megatron-to-hf-mode") + 1] == "raw"
     assert "--multi-lora-n-adapters" in arguments
-    assert arguments[arguments.index("--lora-type") + 1] == "lora"
+    assert arguments[arguments.index("--lora-type") + 1] == lora_type
     with pytest.raises(ValueError, match="megatron_to_hf_mode"):
         _config(megatron_to_hf_mode="direct")
-
-
-def test_native_canonical_arguments_survive_config_round_trip() -> None:
-    config = _config(megatron_to_hf_mode="raw", lora_type="canonical_lora")
-    restored, _, _ = parse_backend_config(json.loads(config.model_dump_json()))
-    arguments = restored.miles_arguments()
-    assert arguments[arguments.index("--lora-type") + 1] == "canonical_lora"
-    assert arguments[arguments.index("--ref-load") + 1] == config.hf_checkpoint
 
 
 def test_config_wildcard_targets_serve_by_module_suffix() -> None:

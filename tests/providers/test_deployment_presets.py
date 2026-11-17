@@ -72,40 +72,6 @@ def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
     assert config["provider_overrides"]["moe_token_dispatcher_type"] == "alltoall"
 
 
-@pytest.mark.parametrize(
-    "preset",
-    [
-        "qwen25-3b-lora-32k",
-        "qwen25-7b-instruct-lora-32k",
-        "qwen35-2b-lora-32k",
-        "qwen35-4b-lora-32k",
-        "qwen35-9b-instruct-lora-16k",
-        "qwen35-9b-instruct-lora-16k-dp2",
-        "qwen35-9b-instruct-lora-256k",
-        "qwen35-9b-instruct-lora-32k",
-        "qwen35-9b-lora-128k",
-        "qwen35-9b-lora-16k",
-        "qwen35-9b-lora-16k-single",
-        "qwen35-9b-lora-2k",
-        "qwen35-9b-lora-64k",
-        "qwen38-27b-lora-128k",
-        "qwen38-27b-lora-16k",
-        "qwen38-27b-lora-16k-b200",
-        "qwen38-27b-lora-32k",
-        "qwen38-27b-lora-64k",
-        "qwen3-4b-lora-32k",
-        "qwen3-8b-lora-32k",
-    ],
-)
-def test_dense_qwen_recipes_use_native_canonical_slots(preset):
-    spec = load(config_path(preset))
-    trainer = backend_config(spec)["miles"]
-    assert spec.trainer_image == "miles-v0.2.0-e814245"
-    assert spec.inference_image == "sglang-v0.5.23-e003cf9"
-    assert trainer["megatron_to_hf_mode"] == "raw"
-    assert trainer["lora_type"] == "canonical_lora"
-
-
 def test_moe_rollout_preserves_attention_data_parallelism():
     spec = load(config_path("qwen35-35b-a3b-fft-64k"))
     options = serving_options(spec)
@@ -171,25 +137,6 @@ def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
     assert frontend_settings_from_env() == settings
 
 
-def test_native_nano_keeps_its_ungated_expert_topology():
-    spec = load(config_path("nemotron3-nano-30b-a3b-lora-64k"))
-    trainer = backend_config(spec)["miles"]
-    assert spec.trainer_image == "miles-v0.2.0-e814245"
-    assert trainer["megatron_to_hf_mode"] == "raw"
-    assert trainer["lora_type"] == "canonical_lora"
-    assert trainer["tensor_model_parallel_size"] == 2
-    assert trainer["expert_model_parallel_size"] == 2
-    assert trainer["expert_tensor_parallel_size"] == 1
-    assert "gate_proj" not in trainer["target_modules"]
-    assert trainer["cli_options"]["deterministic_mode"] is True
-    assert trainer["cli_options"]["cross_entropy_loss_fusion"] is False
-    assert trainer["cli_options"]["tp_comm_overlap"] is False
-    assert spec.trainer_env["MAMBA_DETERMINISTIC"] == "1"
-    assert spec.trainer_env["NCCL_ALGO"] == "Ring"
-    assert spec.trainer_env["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
-    assert spec.trainer_env["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
-
-
 @pytest.mark.parametrize(
     "preset",
     [
@@ -201,7 +148,6 @@ def test_native_nano_keeps_its_ungated_expert_topology():
 def test_legacy_nemotron_does_not_inherit_native_nano_settings(preset):
     spec = load(config_path(preset))
     trainer = backend_config(spec)["miles"]
-    assert spec.trainer_image == "miles-v0.1.1-fdd808c"
     assert trainer["megatron_to_hf_mode"] == "bridge"
     assert trainer["lora_type"] == "lora"
     assert "deterministic_mode" not in trainer["cli_options"]

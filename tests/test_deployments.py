@@ -145,6 +145,7 @@ def test_no_model_catalog_required():
         ({"sglang_cfg": {"model_path": "other"}}, "managed"),
         ({"sglang_cfg": {"tp_size": 2}}, "replica GPU"),
         ({"trainer_max_clients_per_instance": 7}, "max_lora_slots"),
+        ({"miles_cfg__cli_options__lora_type": "canonical_lora"}, "managed"),
         ({"trainer_max_clients_per_batch": 0}, "trainer_max_clients_per_batch"),
         (
             {
@@ -806,11 +807,6 @@ def test_canonical_slots_require_the_native_capable_image(image):
         backend_config(
             recipe(trainer_image=image, miles_cfg__lora_type="canonical_lora")
         )
-
-
-def test_lora_layout_cannot_be_overridden_through_cli_options():
-    with pytest.raises(ValueError, match="managed"):
-        backend_config(recipe(miles_cfg__cli_options__lora_type="canonical_lora"))
 
 
 def test_backend_dispatch_rejects_unknown_backend():
