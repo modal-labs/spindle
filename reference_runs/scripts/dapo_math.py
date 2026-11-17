@@ -111,14 +111,21 @@ def datum(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument(
-        "--base-model", required=True, help="model ID or deployment name for Qwen3.5-4B"
+        "--base-model", required=True, help="model ID or deployment name"
     )
     parser.add_argument(
         "--output", type=Path, required=True, help="new JSONL output file"
     )
     parser.add_argument("--smoke", action="store_true", help=f"use {SMOKE}")
+    parser.add_argument(
+        "--tokenizer", nargs=2, metavar=("MODEL", "REVISION"), help="pinned tokenizer"
+    )
     args = parser.parse_args()
     config = SMOKE if args.smoke else Config()
+    if args.tokenizer:
+        config = dataclasses.replace(
+            config, model=args.tokenizer[0], tokenizer_revision=args.tokenizer[1]
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.touch(exist_ok=False)
 

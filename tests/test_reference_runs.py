@@ -6,12 +6,15 @@ import runpy
 import sys
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import tinker
 from pydantic import BaseModel, ValidationError
 
-from spindle.deployments import load
+from spindle.configuration import BaseConfig
+from spindle.deployments import DeploymentConfig, load
 
 ROOT = Path(__file__).parents[1] / "reference_runs"
 spec = importlib.util.spec_from_file_location("reference_launcher", ROOT / "run.py")
@@ -164,3 +167,102 @@ def test_index_rejects_invalid_provenance(problem: str, message: str) -> None:
         data["runs"].append(data["runs"][0].copy())
     with pytest.raises(ValidationError, match=message):
         plotter["ReferenceRunIndex"].model_validate(data)
+
+
+@pytest.mark.parametrize("validation", sorted((ROOT / "configs").glob("*.toml")))
+def test_reference_smoke_records_selected_tokenizer_and_updates(
+    validation: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    workload = importlib.import_module("dapo_math")
+
+    def future(value: object) -> SimpleNamespace:
+        return SimpleNamespace(result=lambda: value)
+
+    class Training:
+        step = 0
+
+        def save_weights_for_sampler(self, name: str) -> SimpleNamespace:
+            return future(SimpleNamespace(path=f"test://{name}"))
+
+        def save_state(self, name: str) -> SimpleNamespace:
+            return future(None)
+
+        def forward_backward(self, datums: list, loss: str) -> SimpleNamespace:
+            assert len(datums) == 32
+            assert loss == "importance_sampling"
+            assert all(isinstance(datum, tinker.Datum) for datum in datums)
+            assert {
+                value
+                for datum in datums
+                for value in datum.loss_fn_inputs["advantages"].data
+            } == {-0.5, 0.0, 0.5}
+            return future(SimpleNamespace(metrics={"loss:sum": 0.0}))
+
+        def optim_step(self, adam: object) -> SimpleNamespace:
+            self.step += 1
+            return future(SimpleNamespace(metrics={"update_successful:mean": 1.0}))
+
+    class Sampler:
+        def sample(self, prompt: object, count: int, params: object) -> SimpleNamespace:
+            return future(SimpleNamespace(sequences=sequences * (count // 2)))
+
+    training = Training()
+    sequences = [
+        tinker.types.SampledSequence(
+            tokens_np=np.array([3, token], dtype=np.int32),
+            logprobs_np=np.array([-1.0, -1.0], dtype=np.float32),
+            stop_reason="stop",
+            sequence_id=str(token),
+        )
+        for token in [4, 5]
+    ]
+    tokenizer = SimpleNamespace(
+        eos_token_id=0,
+        apply_chat_template=lambda *a, **kw: [1, 2],
+        decode=lambda tokens: r"\boxed{1}" if tokens[-1] == 4 else r"\boxed{0}",
+    )
+    definition = launcher.ValidationRunConfig.model_validate(
+        tomllib.loads(validation.read_text())
+    )
+    recipe = BaseConfig(
+        **vars(load(launcher.config_path(definition.config))),
+        overrides=definition.config_overrides,
+    )
+    deployment = DeploymentConfig.create(recipe)
+    assert (
+        deployment.trainer_settings["miles"]["actor_num_nodes"] == recipe.trainer_nodes
+    )
+    if recipe.trainer_nodes > 1:
+        assert deployment.trainer_settings["capture_dir"].startswith("/checkpoints/")
+    expected_model = recipe.model
+
+    def load_tokenizer(model: str, *, revision: str) -> SimpleNamespace:
+        assert model == expected_model
+        assert len(revision) == 40
+        return tokenizer
+
+    monkeypatch.setattr(
+        workload.PreTrainedTokenizerFast, "from_pretrained", load_tokenizer
+    )
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text((json.dumps({"prompt": [], "label": "1"}) + "\n") * 32)
+    monkeypatch.setattr(
+        "huggingface_hub.hf_hub_download", lambda *a, **kw: str(dataset)
+    )
+    service = SimpleNamespace(
+        create_lora_training_client=lambda model, rank: training,
+        create_sampling_client=lambda model_path: Sampler(),
+    )
+    monkeypatch.setattr(tinker, "ServiceClient", lambda: service)
+    output = tmp_path / "metrics.jsonl"
+    monkeypatch.setattr(
+        sys, "argv", ["run", str(validation), "--output", str(output), "--", "--smoke"]
+    )
+    launcher.main()
+    records = [json.loads(line) for line in output.read_text().splitlines()]
+    assert records[0]["config"]["model"] == expected_model
+    assert records[0]["config"]["updates"] == 2
+    assert records[0]["recipe"] == definition.config_overrides["name"]
+    assert [r["step"] for r in records if r["event"] == "update"] == [1, 2]
+    assert training.step == 2

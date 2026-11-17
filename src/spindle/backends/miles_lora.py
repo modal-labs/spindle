@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -36,6 +37,7 @@ from .miles_config import (
 from .miles_runtime.data import build_outputs, pad_slot_rows, prepare_batch
 from .miles_runtime.profiling import StepPhaseTimer, TorchProfileConfig
 from .miles_runtime.runtime import MilesRuntime
+from .miles_runtime.volumes import checkpoint_volume_path
 
 
 @dataclass(slots=True)
@@ -74,6 +76,7 @@ class MilesCommandBackend(Backend):
         self.slot_to_job: dict[int, str] = {}
         # A volume refresh must not race checkpoint writes on the persistence lane.
         self._checkpoint_io_lock = threading.RLock()
+        self._captures_on_volume = checkpoint_volume_path(capture_dir) is not None
         self._native = self.runtime.checkpoint_format == "miles_adapter_state"
         self._checkpoint_captures: dict[str, dict[str, Any]] = {}
         self._sampler_captures: dict[str, dict[str, Any]] = {}
@@ -299,14 +302,6 @@ class MilesCommandBackend(Backend):
         capture_path = self.capture_dir / "checkpoints" / snapshot_id
         capture_path.parent.mkdir(parents=True, exist_ok=True)
         state = self.jobs[model_id]
-        with self._timer.phase(
-            "save_checkpoint", state.optimizer_step, model_id=model_id
-        ):
-            self.runtime.save_slot(
-                self.job_to_slot[model_id],
-                str(capture_path / "miles"),
-                include_optimizer=include_optimizer,
-            )
         metadata = {
             "schema_version": 1,
             "checkpoint_format": self.runtime.checkpoint_format,
@@ -338,10 +333,21 @@ class MilesCommandBackend(Backend):
                 "pipeline_model_parallel_size": 1,
             },
         }
-        (capture_path / "metadata.json").write_text(
-            json.dumps(metadata, sort_keys=True),
-            encoding="utf-8",
-        )
+        with (
+            self._timer.phase(
+                "save_checkpoint", state.optimizer_step, model_id=model_id
+            ),
+            self._volume_capture_io(),
+        ):
+            self.runtime.save_slot(
+                self.job_to_slot[model_id],
+                str(capture_path / "miles"),
+                include_optimizer=include_optimizer,
+            )
+            (capture_path / "metadata.json").write_text(
+                json.dumps(metadata, sort_keys=True),
+                encoding="utf-8",
+            )
         self._checkpoint_captures[snapshot_id] = {
             "model_id": model_id,
             "destination": destination,
@@ -426,8 +432,11 @@ class MilesCommandBackend(Backend):
         state = self.jobs[model_id]
         path = self.capture_dir / "sampler" / capture_id
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._timer.phase(
-            "save_sampler_weights", state.optimizer_step, model_id=model_id
+        with (
+            self._timer.phase(
+                "save_sampler_weights", state.optimizer_step, model_id=model_id
+            ),
+            self._volume_capture_io(),
         ):
             self.runtime.export_slot_peft(
                 slot=self.job_to_slot[model_id],
@@ -464,8 +473,11 @@ class MilesCommandBackend(Backend):
             )
             job = self.jobs.get(capture["model_id"])
             publish_step = job.optimizer_step if job is not None else -1
-            with self._timer.phase(
-                "publish_weights", publish_step, model_id=capture["model_id"]
+            with (
+                self._timer.phase(
+                    "publish_weights", publish_step, model_id=capture["model_id"]
+                ),
+                self._volume_capture_io(),
             ):
                 bulletin.publish(
                     VersionRef(
@@ -484,6 +496,12 @@ class MilesCommandBackend(Backend):
             capture = self._sampler_captures.pop(capture_id, None)
             if capture is not None:
                 shutil.rmtree(capture["path"], ignore_errors=True)
+
+    def _volume_capture_io(self) -> contextlib.AbstractContextManager:
+        """Volume reloads fail on open files, so captures on the volume share the persistence lock."""
+        if self._captures_on_volume:
+            return self._checkpoint_io_lock
+        return contextlib.nullcontext()
 
     def unload_model(self, model_id: str) -> None:
         if model_id not in self.jobs:
@@ -707,22 +725,19 @@ def _install_capture(
     every node's shards, and a server-side copy from it needs no local view.
     """
     volume_name = os.environ.get("SPINDLE_CHECKPOINT_VOLUME")
-    root = Path(os.environ.get("SPINDLE_CHECKPOINT_ROOT") or "/checkpoints")
-    try:
-        relative = (str(source.relative_to(root)), str(target.relative_to(root)))
-    except ValueError:
-        relative = None
-    if volume_name is None or relative is None:
+    source_relative = checkpoint_volume_path(source)
+    target_relative = checkpoint_volume_path(target)
+    if volume_name is None or source_relative is None or target_relative is None:
         _install_directory(source, target, overwrite=overwrite)
         return
 
     volume = modal.Volume.from_name(volume_name)
     volume.commit()
-    entries = [entry.path for entry in volume.listdir(relative[0])]
+    entries = [entry.path for entry in volume.listdir(source_relative)]
     shards = [path for path in entries if path.endswith(".distcp")]
     if shards and len(shards) < world_size:
         raise RuntimeError(
-            f"capture {relative[0]} holds {len(shards)} of {world_size} shards; "
+            f"capture {source_relative} holds {len(shards)} of {world_size} shards; "
             "a checkpoint short of a node's shards fails only on the resume "
             "that needs it"
         )
@@ -732,9 +747,9 @@ def _install_capture(
         shutil.rmtree(target)
     target.mkdir(parents=True, exist_ok=True)
     volume.commit()
-    volume.copy_files(entries, relative[1], recursive=True)
+    volume.copy_files(entries, target_relative, recursive=True)
     print(
-        f"spindle_checkpoint_install path={relative[1]} files={len(entries)} "
+        f"spindle_checkpoint_install path={target_relative} files={len(entries)} "
         f"shards={len(shards)}",
         flush=True,
     )

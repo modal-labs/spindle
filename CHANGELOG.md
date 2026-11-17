@@ -6,12 +6,14 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- A two-node Qwen3.8-27B DAPO-Math reference definition uses the shared Tinker workload and the Miles v0.2.0 trainer image.
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
 - `nemotron35-super-vl-120b-a12b-lora-64k` trains LoRA adapters on NVIDIA Nemotron 3.5 Super VL 120B-A12B. Training and sampling take text only: image inputs are not accepted, and adapters apply to the language model.
 
 ### Fixed
 
 - The Miles image names `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53` and `miles-v0.2.0-15afe21` install the fork commit in their name again. Seeded LoRA initialization had moved them to newer commits. Seed support now has its own names: `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26`. The default Miles image and every bundled Miles config use these. A checkpoint restores only on the Miles revision that saved it. To restore a checkpoint saved with v0.1.7 or earlier, set `trainer_image` to `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` for DeepSeek-V4.1, or `miles-v0.1.2-464efc9-glm53` for GLM-5.3 Flash.
+- Miles v0.2.0 trainers can gather checkpoint and sampler captures across nodes without racing checkpoint persistence.
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
 - `miles-v0.2.0` trainers with two GPUs no longer hang at start-up. Ray now starts with enough CPUs for the extra workers this image runs.
 - When a `forward_backward` or `forward` call runs out of GPU memory on a Miles LoRA trainer, the request fails with an out-of-memory error and the trainer keeps serving, with earlier gradients kept. This covers one-GPU trainers and dense models that use only data parallelism. Other layouts still restart the trainer.

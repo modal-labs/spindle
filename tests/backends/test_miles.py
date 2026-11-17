@@ -740,6 +740,48 @@ def test_sampler_snapshots_persist_concurrently_without_crossing_adapters(
     assert not backend._sampler_captures
 
 
+@pytest.mark.parametrize("captures_on_volume", [True, False])
+def test_volume_captures_wait_for_checkpoint_persistence(
+    tmp_path, monkeypatch, captures_on_volume
+) -> None:
+    volume = tmp_path / "volume"
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "checkpoint-volume")
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(volume))
+    runtime = FakeMilesRuntime()
+    runtime.checkpoint_format = "miles_adapter_state"
+    backend = MilesCommandBackend(
+        _config(),
+        checkpoint_dir=volume / "checkpoints",
+        capture_dir=(volume if captures_on_volume else tmp_path) / "captures",
+        base_model="Qwen/Qwen3-4B",
+        runtime=runtime,
+    )
+    backend.accept_model("model-a", _spec())
+    backend.capture_checkpoint(
+        "model-a", "capture-a", destination="step-1", include_optimizer=True
+    )
+    persisting, release = threading.Event(), threading.Event()
+
+    def commit(name):
+        persisting.set()
+        assert release.wait(timeout=5)
+
+    monkeypatch.setattr(miles_lora, "_commit_volume", commit)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        persist = workers.submit(backend.persist_checkpoint, "capture-a", "step-1")
+        assert persisting.wait(timeout=5)
+        export = workers.submit(backend.capture_sampler_snapshot, "model-a", "s-1", 1)
+        if captures_on_volume:
+            # A volume reload during the persistence copy would fail on its open files.
+            with pytest.raises(TimeoutError):
+                export.result(timeout=0.5)
+        else:
+            export.result(timeout=5)
+        release.set()
+        persist.result(timeout=5)
+        export.result(timeout=5)
+
+
 @pytest.mark.parametrize("seed", [None, 0, 7])
 def test_backend_accepts_per_model_seed(tmp_path, seed) -> None:
     runtime = FakeMilesRuntime()

@@ -1,11 +1,12 @@
 # Reference runs
 
-A flat catalog of validation definitions and measured executions. The existing
-DAPO-Math reference trains Qwen3.5-4B through the stock Tinker SDK.
+A flat catalog of validation definitions and measured executions. The DAPO-Math
+references train through the stock Tinker SDK.
 
 ```text
 reference_runs/
   configs/dapo_qwen35_4b.toml   # Immutable validation definition
+  configs/dapo_qwen38_27b_multinode.toml
   scripts/dapo_math.py         # Dataset, grading and training settings
   run.py                      # Prepare config or launch the script
   index.toml                  # Execution provenance and output paths
@@ -32,6 +33,15 @@ rate, batch size and seed stay in the Tinker script. The launcher supplies
 `--base-model` with the resolved deployment name and passes the output path;
 scripts use that value directly in `create_lora_training_client` to select the
 exact recipe. Script arguments cannot override these two values.
+
+`dapo_qwen38_27b_multinode.toml` uses the same workload with a pinned Qwen3.8-27B
+tokenizer, selected by `--tokenizer MODEL REVISION`. It inherits the committed
+`qwen38-27b-lora-256k` topology: two eight-H200 trainer nodes, TP2/CP8, and two
+four-H200 sampler replicas. Reference overrides select the registered Miles
+v0.2.0 trainer image, exact H200 hardware and one training client/adapter slot.
+The workload generates at most 2,048 response tokens; it does not validate 256K
+sequences. This definition has no recorded GPU execution yet. Compare new
+measurements against the same validation, rather than the 4B learning curve.
 
 Once published, a validation TOML file is immutable. Create a new definition
 when changing its script selection, arguments or deployment overrides. Spindle
