@@ -605,7 +605,7 @@ def make_forward_step(
             diagnostics = {}
             temperature = batch["loss_config"].get("sampling_temperature", 1.0)
             replay = "sampling_mask_offsets" in batch
-            if deferred_output is not None and not replay:
+            if logprob_chunk_tokens is not None and not replay:
                 logprobs = chunked_logprobs(
                     output,
                     deferred_output["weight"],

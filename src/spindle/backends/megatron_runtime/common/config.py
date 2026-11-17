@@ -143,9 +143,12 @@ class EngineModelConfig:
         if self.logprob_chunk_tokens is not None:
             if self.logprob_chunk_tokens < 1:
                 raise ValueError("logprob_chunk_tokens must be at least 1")
-            if self.tensor_model_parallel_size != 1:
+            if (
+                self.tensor_model_parallel_size != 1
+                or self.pipeline_model_parallel_size != 1
+            ):
                 raise ValueError(
-                    "logprob_chunk_tokens requires tensor_model_parallel_size 1"
+                    "logprob_chunk_tokens requires tensor and pipeline parallel size 1"
                 )
         if self.max_lora_slots < 1:
             raise ValueError("max_lora_slots must be at least 1")

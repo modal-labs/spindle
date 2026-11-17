@@ -66,9 +66,10 @@ class _ChunkedLogprobs(torch.autograd.Function):
         targets = labels.masked_fill(~valid, 0)
         logprobs = torch.empty(hidden.shape[0], device=hidden.device)
         lse = torch.empty_like(logprobs)
+        logit_weight = weight.float() if fp32 else weight
         for start in range(0, hidden.shape[0], chunk):
             stop = start + chunk
-            logits = _chunk_logits(hidden[start:stop], weight, fp32, temperature)
+            logits = _chunk_logits(hidden[start:stop], logit_weight, fp32, temperature)
             lse[start:stop] = torch.logsumexp(logits, dim=-1)
             target = logits.gather(1, targets[start:stop, None]).squeeze(1)
             logprobs[start:stop] = target - lse[start:stop]
@@ -79,8 +80,9 @@ class _ChunkedLogprobs(torch.autograd.Function):
 
     @staticmethod
     def backward(
-        ctx: torch.autograd.function.FunctionCtx, grad: torch.Tensor
+        ctx: torch.autograd.function.FunctionCtx, *grad_outputs: torch.Tensor
     ) -> tuple[torch.Tensor | None, ...]:
+        (grad,) = grad_outputs
         hidden, weight, targets, valid, lse = ctx.saved_tensors
         chunk, fp32, temperature = ctx.chunk, ctx.fp32, ctx.temperature
         weight_fp32 = weight.float()
@@ -90,7 +92,9 @@ class _ChunkedLogprobs(torch.autograd.Function):
         for start in range(0, hidden.shape[0], chunk):
             stop = start + chunk
             rows = hidden[start:stop]
-            logits = _chunk_logits(rows, weight, fp32, temperature)
+            logits = _chunk_logits(
+                rows, weight_fp32 if fp32 else weight, fp32, temperature
+            )
             # d logprob / d logits = onehot(target) - softmax, scaled by grad.
             probs = logits.sub_(lse[start:stop, None]).exp_().neg_()
             probs.scatter_add_(
