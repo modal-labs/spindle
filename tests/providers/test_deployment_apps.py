@@ -122,6 +122,13 @@ def test_trainer_declaration_and_executor_configuration(
     trainer("instance-a", row.model_dump_json(), "ap-frontend")
     assert len(calls) == 1
 
+    async def unavailable(key):
+        raise ConnectionError(key)
+
+    monkeypatch.setattr(store, "get", unavailable)
+    trainer("instance-b", row.model_dump_json(), "ap-frontend")
+    assert len(calls) == 2
+
 
 @pytest.mark.parametrize("kind", ["lora", "base", "latest", "pinned"])
 def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, kind):

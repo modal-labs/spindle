@@ -319,7 +319,11 @@ def run_trainer(deployment, instance_id, platform=None):
 
 def _booted_before(instance_id: str) -> bool:
     """Modal reruns an input whose container died, but its models are already lost."""
-    record = asyncio.run(shared_kv().get(instance_key(instance_id)))
+    try:
+        record = asyncio.run(shared_kv().get(instance_key(instance_id)))
+    except Exception:
+        logging.getLogger(__name__).exception("read trainer %s", instance_id)
+        return False
     return isinstance(record, dict) and bool(record.get("boot_id"))
 
 
