@@ -7,15 +7,10 @@ class Config(Parent):
     inference_image = "sglang-v0.5.23-c4182b2"
     model = "Qwen/Qwen3.5-9B"
     overrides = {
-        "trainer_gpu": "H200",
         "trainer_env": {
-            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            **Parent.trainer_env,
             "TORCHINDUCTOR_COMPILE_THREADS": "1",
         },
-        "megatron_cfg.tensor_model_parallel_size": 2,
-        "megatron_cfg.context_parallel_size": 2,
-        "megatron_cfg.sequence_parallel": True,
-        "megatron_cfg.logprob_chunk_tokens": None,
         "inference_gpu": "H200",
         "sglang_cfg.ep_size": 1,
     }
