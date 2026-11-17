@@ -12,7 +12,7 @@ class Config(BaseConfig):
     model = "thinkingmachines/Inkling-2-Small"
     weights_revision = "1df2d97d45210d94f781f42a6521392e5a539e46"
     trainer_image = "miles-v0.2.0-e186d97-inkling2-attn"
-    inference_image = "sglang-inkling2-a2e3c49"
+    inference_image = "sglang-inkling2-a2e3c49-head"
     max_context_length = 8192
     trainer_gpu = "B300"
     trainer_gpus_per_node = 8

@@ -16,7 +16,7 @@ from spindle.backends.miles_config import MilesBackendConfig
 from spindle.configs.inkling2_small_lora_8k_b300 import Config
 
 from spindle.providers.modal.inkling2_image import (
-    inference_image,
+    head_lora_inference_image as inference_image,
     trainer_runtime_image,
 )
 
@@ -163,7 +163,8 @@ def parse_sampling_config() -> None:
         assert config.quantization == "inkling2"
         miles = MilesBackendConfig(**backend_config(recipe)["miles"])
         assert get_normalized_target_modules(
-            miles.peft_target_modules, Inkling2ForConditionalGeneration
+            [*miles.peft_target_modules, "model.llm.unembed"],
+            Inkling2ForConditionalGeneration,
         ) == {"qkvr", "wo_ud", "lm_head"}
 
 

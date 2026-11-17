@@ -203,7 +203,9 @@ A checkpoint restores only on a trainer with the same Miles revision as the one 
 
 ### Inkling-2-Small LoRA
 
-`inkling2-small-lora-8k-b300` is an experimental 8K recipe with two adapter slots on one eight-B300 trainer and a separate eight-B300 sampler. It uses `miles-v0.2.0-e186d97-inkling2-attn` and `sglang-inkling2-a2e3c49`. The checkpoint and base container are pinned by revision and digest.
+`inkling2-small-lora-8k-b300` is an experimental 8K recipe with two adapter slots on one eight-B300 trainer and a separate eight-B300 sampler. It uses `miles-v0.2.0-e186d97-inkling2-attn` and `sglang-inkling2-a2e3c49-head`. The checkpoint and base container are pinned by revision and digest.
+
+The sampler image maps the checkpoint's `model.llm.unembed` adapter target to SGLang's `lm_head` during compatibility checks. Adapter tensors and checkpoints keep their original HF names.
 
 The recipe trains the six attention projections and the unembedding, with an independent `lora_A` for each projection. Routed experts and attention sinks stay frozen. Create clients with the stock Tinker SDK:
 

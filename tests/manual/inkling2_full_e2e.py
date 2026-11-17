@@ -94,12 +94,6 @@ def main(rank: int, context_length: int) -> None:
         return sampler
 
     before_b = timed("adapter_b_initial_forward", lambda: loss(b))
-    frozen_sampler = publish_and_sample(b, "inkling-b-before")
-    scoring_prompt = types.ModelInput.from_ints(tokens)
-    baseline_logprobs = timed(
-        "base_sampling_logprobs",
-        lambda: frozen_sampler.compute_logprobs(scoring_prompt).result(),
-    )
     for step in range(2):
         timed(f"adapter_a_backward_{step}", lambda: loss(a, True))
         timed(
@@ -108,6 +102,12 @@ def main(rank: int, context_length: int) -> None:
         )
     after_b = timed("adapter_b_isolation_forward", lambda: loss(b))
     assert abs(before_b - after_b) < 1e-5, (before_b, after_b)
+    frozen_sampler = publish_and_sample(b, "inkling-b-before")
+    scoring_prompt = types.ModelInput.from_ints(tokens)
+    baseline_logprobs = timed(
+        "base_sampling_logprobs",
+        lambda: frozen_sampler.compute_logprobs(scoring_prompt).result(),
+    )
     trained_sampler = publish_and_sample(a, "inkling-a-trained")
     trained_logprobs = timed(
         "trained_sampling_logprobs",

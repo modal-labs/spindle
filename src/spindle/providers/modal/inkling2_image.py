@@ -1,5 +1,7 @@
 """Inkling-2-Small attention and unembedding multi-LoRA images."""
 
+from pathlib import Path
+
 import modal
 
 from .image_dependencies import (
@@ -23,6 +25,18 @@ runtime_image = (
 inference_image = runtime_image.pip_install(
     *CORE_SAMPLER_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE
 ).add_local_python_source("spindle", ignore=ignore_config_source)
+head_lora_inference_image = (
+    runtime_image.add_local_file(
+        Path(__file__).with_name("inkling2-lora-head.patch"),
+        "/tmp/inkling2-lora-head.patch",
+        copy=True,
+    )
+    .run_commands(
+        "cd /sgl-workspace/sglang && patch -p1 < /tmp/inkling2-lora-head.patch"
+    )
+    .pip_install(*CORE_SAMPLER_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE)
+    .add_local_python_source("spindle", ignore=ignore_config_source)
+)
 trainer_runtime_image = (
     runtime_image.env(
         {

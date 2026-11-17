@@ -31,7 +31,7 @@ version = { attr = "spindle.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-spindle = ["skills/**/*"]
+spindle = ["skills/**/*", "providers/modal/*.patch"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

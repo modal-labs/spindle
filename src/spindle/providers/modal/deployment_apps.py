@@ -50,6 +50,9 @@ from .kernel_cache import (
     kernel_cache_volume,
 )
 from .inkling2_image import image as inkling2_trainer_image
+from .inkling2_image import (
+    head_lora_inference_image as inkling2_head_lora_sampler_image,
+)
 from .inkling2_image import inference_image as inkling2_sampler_image
 from .kv import shared_kv
 from .lora_pool import LoraPoolSpec
@@ -74,6 +77,7 @@ TRAINER_IMAGES = {
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {
+    "sglang-inkling2-a2e3c49-head": inkling2_head_lora_sampler_image,
     "sglang-inkling2-a2e3c49": inkling2_sampler_image,
     "sglang-v0.5.21-a3e0e17": deepseek_v41_sampler_image,
     "sglang-v0.5.23-c4182b2": rollout_image,
