@@ -11,18 +11,22 @@ class Config(Parent):
     trainer_memory_mib = 262144
     trainer_max_clients_per_instance = 4
     inference_max_replicas = 2
-    inference_target_concurrency = 128
+    inference_target_concurrency = 89
     overrides = {
         "miles_cfg.expert_model_parallel_size": 2,
         "miles_cfg.max_lora_slots": 4,
         "miles_cfg.cli_options.log_probs_chunk_size": 4096,
         "sglang_cfg.max_loras_per_batch": 4,
         "sglang_cfg.max_loaded_loras": 32,
-        "sglang_cfg.max_mamba_cache_size": 640,
+        "sglang_cfg.max_mamba_cache_size": 448,
         "sglang_cfg.mem_fraction_static": 0.9,
         "sglang_cfg.prefill_decode_interval": 16,
         "sglang_cfg.prefill_decode_interval_min_bs": 32,
         "sglang_cfg.lora_use_virtual_experts": True,
+        "sglang_cfg.speculative_algorithm": "NEXTN",
+        "sglang_cfg.speculative_num_steps": 3,
+        "sglang_cfg.speculative_eagle_topk": 1,
+        "sglang_cfg.speculative_num_draft_tokens": 4,
     }
 
 

@@ -67,7 +67,7 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 
 
-The following 32K LoRA recipes enable speculative decoding by default:
+The following LoRA recipes enable speculative decoding by default:
 
 | Recipe | Method | Draft checkpoint |
 | --- | --- | --- |
@@ -76,6 +76,7 @@ The following 32K LoRA recipes enable speculative decoding by default:
 | `qwen35-9b-instruct-lora-32k` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
 | `qwen38-27b-lora-32k` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
 | `glm53-flash-lora-32k` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |
+| `nemotron35-lightning-30b-a3b-lora-64k` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
 
 Deploy a recipe by passing its Python path to `spindle deploy`, for example:
 
