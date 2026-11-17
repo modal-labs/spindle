@@ -11,7 +11,7 @@ from spindle.configs.qwen35_4b_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "dapo-math-qwen35-4b-h100"
-    trainer_image = "miles-v0.2.0"
+    trainer_image = "miles-v0.2.0-15afe21"
     trainer_gpu = "H100!"
     trainer_gpus_per_node = 4
     trainer_nodes = 1

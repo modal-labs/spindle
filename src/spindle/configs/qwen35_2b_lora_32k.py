@@ -3,6 +3,8 @@ from spindle.configs._qwen35_lora_32k import Qwen35Lora32k as Parent
 
 class Config(Parent):
     name = "qwen35-2b-lora-32k"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "Qwen/Qwen3.5-2B"
     # Miles has no 2B preset; keep the shared Qwen3.5 spec and tied embeddings.
     # Linear-attention dimensions are loaded from the checkpoint's text_config.
