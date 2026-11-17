@@ -65,7 +65,7 @@ async def sample_task(
     router: Router | None = None,
 ) -> dict[str, Any]:
     request = task["payload"]
-    prompt = prompt_tokens(request["prompt"])
+    prompt = _prompt_tokens(request["prompt"])
     params = _sampling_params(
         request.get("sampling_params") or {},
         remaining_context=(
@@ -75,7 +75,7 @@ async def sample_task(
         ),
         stop_token_ids_only=stop_token_ids_only,
     )
-    validate_sample_request(request, prompt)
+    validate_sample_request(request)
     replay_flags = {key: request.get(key, False) for key in REPLAY_FLAGS}
     if replay_flags["return_sampling_probabilities"]:
         replay_flags["return_sampling_mask"] = True
@@ -499,7 +499,7 @@ def _conversation_affinity_id(task: dict[str, Any], prompt: list[int]) -> str | 
     return f"conversation-{digest.hexdigest()[:32]}"
 
 
-def validate_sample_request(request: dict[str, Any], prompt: list[int]) -> None:
+def validate_sample_request(request: dict[str, Any]) -> None:
     for key in REPLAY_FLAGS:
         if type(request.get(key, False)) is not bool:
             raise ValueError(f"{key} must be a boolean")
@@ -521,13 +521,14 @@ def validate_sample_request(request: dict[str, Any], prompt: list[int]) -> None:
         return
     if not request.get("prompt_logprobs"):
         raise ValueError("prompt_logprobs_last_n requires prompt_logprobs")
-    if type(last_n) is not int or not 1 <= last_n < len(prompt):
+    prompt_length = len(_prompt_tokens(request.get("prompt") or {}))
+    if type(last_n) is not int or not 1 <= last_n < prompt_length:
         raise ValueError(
             "prompt_logprobs_last_n must be between 1 and the prompt length minus 1"
         )
 
 
-def prompt_tokens(prompt: dict[str, Any]) -> list[int]:
+def _prompt_tokens(prompt: dict[str, Any]) -> list[int]:
     tokens: list[int] = []
     for chunk in prompt.get("chunks") or ():
         if not isinstance(chunk, dict) or chunk.get("type") != "encoded_text":
