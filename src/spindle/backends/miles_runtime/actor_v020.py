@@ -34,6 +34,7 @@ from spindle.backends.score_centering import REPLAY_LOSSES
 
 from .actor_shared import (
     ProfiledActor,
+    freeze_gdn_gates,
     install_replay_patches,
     mark_actor_initialized,
     use_distributed_timeout_for_gloo,
@@ -55,6 +56,9 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
     def init(self, args: TrainerConfig, role: str, **kwargs: object) -> int | None:
         use_distributed_timeout_for_gloo(args.backend.distributed_timeout_minutes)
         result = MultiLoRATrainRayActor.init(self, args, role, **kwargs)
+        freeze_gdn_gates(
+            self.model, args.target_modules, args.tensor_model_parallel_size
+        )
         mark_actor_initialized()
         return result
 

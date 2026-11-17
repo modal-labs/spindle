@@ -34,6 +34,7 @@ from .miles_config import (
     parse_backend_config,
 )
 from .miles_runtime.data import build_outputs, pad_slot_rows, prepare_batch
+from .miles_runtime.gdn_lora import merge_gdn_input_adapters
 from .miles_runtime.profiling import RankProfiler, StepPhaseTimer, TorchProfileConfig
 from .miles_runtime.runtime import MilesRuntime
 
@@ -330,6 +331,7 @@ class MilesCommandBackend(Backend):
                 "train_attn": state.train_attn,
                 "train_mlp": state.train_mlp,
                 "train_unembed": state.train_unembed,
+                "target_modules": list(self.config.target_modules),
             },
             "optimizer_step": state.optimizer_step,
             "has_optimizer": include_optimizer,
@@ -345,8 +347,6 @@ class MilesCommandBackend(Backend):
                 "pipeline_model_parallel_size": 1,
             },
         }
-        if self._native:
-            metadata["lora_config"]["target_modules"] = list(self.config.target_modules)
         (capture_path / "metadata.json").write_text(
             json.dumps(metadata, sort_keys=True),
             encoding="utf-8",
@@ -453,6 +453,8 @@ class MilesCommandBackend(Backend):
                 target_modules=self.config.peft_target_modules,
                 lora_dropout=self.config.lora_dropout,
             )
+            if "in_proj_qkvz" in self.config.peft_target_modules:
+                merge_gdn_input_adapters(path)
         self._first("first_sampler_export_done", step=state.optimizer_step)
         self._sampler_captures[capture_id] = {
             "model_id": model_id,
@@ -661,11 +663,6 @@ class MilesCommandBackend(Backend):
             or float(lora.get("alpha", 0)) != state.alpha
         ):
             raise ValueError("checkpoint LoRA configuration does not match the model")
-        # Checked here because a target mismatch found by Miles disables the whole trainer.
-        if self._native and lora.get("target_modules") != list(
-            self.config.target_modules
-        ):
-            raise ValueError("checkpoint LoRA configuration does not match the model")
         expected_targets = {
             "train_attn": state.train_attn,
             "train_mlp": state.train_mlp,
@@ -673,6 +670,19 @@ class MilesCommandBackend(Backend):
         }
         if any(lora.get(name) != value for name, value in expected_targets.items()):
             raise ValueError("checkpoint LoRA targets do not match the model")
+        saved_modules = lora.get("target_modules")
+        modules = list(self.config.target_modules)
+        # Legacy checkpoints lack the field and never trained linear-attention adapters.
+        legacy = (
+            saved_modules is None and not self._native and "in_proj_qkv" not in modules
+        )
+        # Checked here because a target mismatch found by Miles disables the whole trainer.
+        if saved_modules != modules and not legacy:
+            raise ValueError(
+                "checkpoint LoRA target_modules do not match the deployment: "
+                f"saved {saved_modules or 'without linear-attention adapters'}, "
+                f"deployment {modules}"
+            )
         expected_topology = {
             "world_size": self.config.world_size,
             "data_parallel_size": self.config.data_parallel_size,

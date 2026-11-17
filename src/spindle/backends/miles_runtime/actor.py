@@ -38,6 +38,7 @@ except ImportError:
 from . import allgather_cp_lora, expert_lora_compat, host_syncs
 from .actor_shared import (
     ProfiledActor,
+    freeze_gdn_gates as _freeze_gdn_gates,
     install_replay_patches,
     mark_actor_initialized as _mark_actor_initialized,
     use_distributed_timeout_for_gloo as _use_distributed_timeout_for_gloo,
@@ -93,6 +94,9 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
         # even for a client datum whose weights are all zero.
         if args.enable_mtp_training:
             result = super().init(args, role, **kwargs)
+            _freeze_gdn_gates(
+                self.model, args.target_modules, args.tensor_model_parallel_size
+            )
             _mark_actor_initialized()
             return result
         original = AutoBridge.to_megatron_provider
@@ -108,6 +112,9 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             result = super().init(args, role, **kwargs)
         finally:
             AutoBridge.to_megatron_provider = original
+        _freeze_gdn_gates(
+            self.model, args.target_modules, args.tensor_model_parallel_size
+        )
         _mark_actor_initialized()
         return result
 

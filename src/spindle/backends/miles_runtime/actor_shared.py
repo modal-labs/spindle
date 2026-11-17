@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import timedelta
 from types import ModuleType
 
@@ -13,6 +14,7 @@ from miles.utils import distributed_utils
 
 from spindle.startup_timing import timeline
 
+from .gdn_lora import freeze_gdn_gate_adapters
 from .profiling import RankProfiler, TorchProfileConfig
 from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
 from .replay import install_replay_hooks
@@ -61,6 +63,17 @@ def use_distributed_timeout_for_gloo(minutes: int) -> None:
         return distributed_utils.GLOO_GROUP
 
     train_actor.init_gloo_group = init_gloo_group
+
+
+def freeze_gdn_gates(
+    model: Iterable[torch.nn.Module], target_modules: str, tensor_parallel_size: int
+) -> None:
+    if "in_proj_b" in target_modules.split(",") and not freeze_gdn_gate_adapters(
+        model, tensor_parallel_size
+    ):
+        raise RuntimeError(
+            "found no linear-attention in_proj adapters to keep the gates frozen"
+        )
 
 
 def mark_actor_initialized() -> None:
