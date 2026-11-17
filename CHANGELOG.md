@@ -4,7 +4,6 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
-
 ### Changed
 
 - Miles LoRA training builds the logits gradient once per micro-batch instead of once per row. Steps with many short rows run faster and hold less memory; results are unchanged.
