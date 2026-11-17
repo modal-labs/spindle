@@ -347,6 +347,26 @@ def test_prompt_logprobs_last_n_scores_only_the_suffix() -> None:
         ({"prompt_logprobs_last_n": 1}, "requires prompt_logprobs"),
         ({"prompt_logprobs": True, "prompt_logprobs_last_n": 0}, "between 1"),
         ({"prompt_logprobs": True, "prompt_logprobs_last_n": 1}, "between 1"),
+        (
+            {
+                "prompt_logprobs": True,
+                "prompt_logprobs_last_n": 1,
+                "prompt": {"chunks": [{"type": "image", "data": "x"}]},
+            },
+            "only encoded_text",
+        ),
+        (
+            {
+                "prompt_logprobs": True,
+                "prompt_logprobs_last_n": 1,
+                "prompt": {"chunks": [{"type": "encoded_text", "tokens": "12"}]},
+            },
+            "must be integers",
+        ),
+        (
+            {"prompt_logprobs": True, "prompt_logprobs_last_n": 1, "prompt": [1, 2]},
+            "object with chunks",
+        ),
     ],
 )
 def test_invalid_prompt_logprobs_last_n_is_rejected(update, message) -> None:

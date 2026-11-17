@@ -521,7 +521,8 @@ def validate_sample_request(request: dict[str, Any]) -> None:
         return
     if not request.get("prompt_logprobs"):
         raise ValueError("prompt_logprobs_last_n requires prompt_logprobs")
-    prompt_length = len(_prompt_tokens(request.get("prompt") or {}))
+    # Token values are checked by the worker, as for every other request.
+    prompt_length = sum(map(len, _chunk_tokens(request.get("prompt") or {})))
     if type(last_n) is not int or not 1 <= last_n < prompt_length:
         raise ValueError(
             "prompt_logprobs_last_n must be between 1 and the prompt length minus 1, "
@@ -529,13 +530,24 @@ def validate_sample_request(request: dict[str, Any]) -> None:
         )
 
 
-def _prompt_tokens(prompt: dict[str, Any]) -> list[int]:
-    tokens: list[int] = []
+def _chunk_tokens(prompt: dict[str, Any]) -> list[list[Any]]:
+    if not isinstance(prompt, dict):
+        raise ValueError("prompt must be an object with chunks")
+    chunks = []
     for chunk in prompt.get("chunks") or ():
         if not isinstance(chunk, dict) or chunk.get("type") != "encoded_text":
             raise ValueError("only encoded_text prompt chunks are supported")
         values = chunk.get("tokens")
-        if not isinstance(values, list) or any(
+        if not isinstance(values, list):
+            raise ValueError("encoded_text tokens must be integers")
+        chunks.append(values)
+    return chunks
+
+
+def _prompt_tokens(prompt: dict[str, Any]) -> list[int]:
+    tokens: list[int] = []
+    for values in _chunk_tokens(prompt):
+        if any(
             isinstance(token, bool) or not isinstance(token, int) for token in values
         ):
             raise ValueError("encoded_text tokens must be integers")
