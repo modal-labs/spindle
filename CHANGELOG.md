@@ -11,6 +11,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 ### Fixed
 
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
+- `miles-v0.2.0` trainers with two GPUs no longer hang at start-up. Ray now starts with enough CPUs for the extra workers this image runs.
 
 ### Changed
 
