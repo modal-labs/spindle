@@ -219,6 +219,8 @@ client = service_client.create_lora_training_client(
 
 Training uses TP=CP=PP=1 and EP=8. The sampler keeps multiple adapters loaded but batches one adapter at a time. Native Miles adapter checkpoints retain each slot's optimizer state; they do not restore into the older bridge images. Full-model GPU training and sampling have not been validated for this recipe.
 
+Load the checkpoint's tokenizer with `transformers.AutoTokenizer.from_pretrained`, using the recipe's `weights_revision`, or use the public `tml-renderers` Inkling2 renderer. The stock SDK's `get_tokenizer()` does not support Thinking Machines models.
+
 ## Prepare and launch
 
 ~~~text

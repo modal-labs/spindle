@@ -9,6 +9,7 @@ import time
 
 import tinker
 from tinker import types
+from transformers import AutoTokenizer
 
 
 def timed[T](label: str, call: Callable[[], T]) -> T:
@@ -45,7 +46,11 @@ def main() -> None:
         for seed in (41, 42)
     ]
     a, b = clients
-    tokens = a.get_tokenizer().encode("The capital of France is Paris.")
+    tokenizer = AutoTokenizer.from_pretrained(
+        "thinkingmachines/Inkling-2-Small",
+        revision="1df2d97d45210d94f781f42a6521392e5a539e46",
+    )
+    tokens = tokenizer.encode("The capital of France is Paris.")
     prompt = types.ModelInput.from_ints(tokens[:-1])
     datum = types.Datum(
         model_input=prompt,
