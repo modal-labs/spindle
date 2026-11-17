@@ -546,9 +546,10 @@ def make_forward_step(
                 batch["cu_seqlens"].numel(),
                 device=device,
             ),
-            "max_seqlen": torch.tensor(batch["max_seqlen"], device=device),
         }
         packed_seq_params = get_packed_seq_params(packed_metadata)
+        packed_seq_params.max_seqlen_q = batch["max_seqlen"]
+        packed_seq_params.max_seqlen_kv = batch["max_seqlen"]
 
         context_parallel_size = parallel_state.get_context_parallel_world_size()
         if context_parallel_size > 1:
