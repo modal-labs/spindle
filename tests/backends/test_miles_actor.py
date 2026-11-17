@@ -106,6 +106,7 @@ def _load_actor(monkeypatch):
     # These need real torch; import them before torch is stubbed below.
     importlib.import_module("spindle.backends.miles_runtime.replay_data")
     importlib.import_module("spindle.backends.score_centering")
+    importlib.import_module("spindle.backends.miles_runtime.moe_permute")
     monkeypatch.delitem(
         sys.modules, "spindle.backends.miles_runtime.actor_shared", raising=False
     )
