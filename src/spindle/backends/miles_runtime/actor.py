@@ -37,6 +37,7 @@ except ImportError:
 
 from . import (
     allgather_cp_lora,
+    expert_grouped_gemm,
     expert_lora_compat,
     gradient_accumulation,
     host_syncs,
@@ -82,6 +83,7 @@ allgather_cp_lora.install(megatron_model)
 mamba_packing.install(megatron_model)
 moe_permute.install()
 response_logits.install(logit_processors)
+expert_grouped_gemm.install()
 
 
 def _publish_checkpoints_across_nodes() -> None:
