@@ -34,4 +34,4 @@ Lanes: GPU ops serialize; `capture_*` runs on the GPU lane, `persist_*`/`publish
 
 - CI (tests.yml): `uv sync --locked --python 3.12`, `pre-commit --all-files`, CPU torch 2.10.0, `uv run --no-sync pytest -q`, `uv build`; SDK matrix min/pinned/latest. Codegolf workflow: pytest, ruff, `codegolf config`, `render.py`.
 - Entry shape (docs/validation.md, lora_validation.md, scoped-e2e-results.md, deployment-validation.md): environment, PR head, hardware, workload, results, coverage limits, versions, evidence paths; confirm all apps stopped with zero containers.
-- Generators: `e2e_longrlvr_*_{full,miles}.py`, `e2e_terminal_bench_*`, `run_dapo_math_spindle_full.py`, `check_multi_targets_gpu.py`, `examples/codeforces-codegolf`.
+- Generators: `e2e_longrlvr_*_{full,miles}.py`, `e2e_terminal_bench_*`, `run_dapo_math_spindle_full.py`, `examples/codeforces-codegolf`.

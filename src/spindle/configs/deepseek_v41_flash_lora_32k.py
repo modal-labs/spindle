@@ -5,7 +5,7 @@ class Config(Parent):
     """DeepSeek-V4.1-Flash LoRA with 32K context."""
 
     name = "deepseek-v41-flash-lora-32k"
-    trainer_image = "miles-v0.1.2-f2f8447"
+    trainer_image = "miles-v0.1.2-99e1ebe"
     inference_image = "sglang-v0.5.21-a3e0e17"
     max_context_length = 32768
     overrides = {
