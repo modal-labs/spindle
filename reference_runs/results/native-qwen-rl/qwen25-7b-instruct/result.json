@@ -1,0 +1,16 @@
+[
+  {
+    "client": 0,
+    "passed": true,
+    "probe_change": 0.13352441787719727,
+    "exact_replay": true,
+    "resumed_step_max_diff": 0.0
+  },
+  {
+    "client": 1,
+    "passed": true,
+    "probe_change": 0.2114877700805664,
+    "exact_replay": false,
+    "resumed_step_max_diff": 0.20763397216796875
+  }
+]

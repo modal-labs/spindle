@@ -1,0 +1,286 @@
+[
+  {
+    "checkpoint": "tinker://f788ec35f9124c821d5d0fca685a05f7/weights/client0-resume",
+    "tensor_count": 1495,
+    "nonzero_lora_B": {
+      "in_proj_q": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 393216
+      },
+      "in_proj_v": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 786432
+      },
+      "in_proj_z": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 786432
+      },
+      "gate_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 2359296
+      },
+      "up_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 2359296
+      },
+      "q_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 524288
+      },
+      "k_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 65536
+      },
+      "in_proj_k": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 393216
+      },
+      "o_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 163840
+      },
+      "out_proj": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 491520
+      },
+      "v_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 65536
+      },
+      "down_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 655360
+      },
+      "lm_head": {
+        "tensors": 1,
+        "nonzero_tensors": 1,
+        "nonzero_elements": 1986560
+      }
+    }
+  },
+  {
+    "checkpoint": "tinker://c58cab6304ac9ac0cb1597c0254451e6/weights/client1-resume",
+    "tensor_count": 1495,
+    "nonzero_lora_B": {
+      "in_proj_q": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 786343
+      },
+      "in_proj_v": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 1572689
+      },
+      "in_proj_z": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 1572734
+      },
+      "gate_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 4718152
+      },
+      "up_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 4718118
+      },
+      "q_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 1048461
+      },
+      "k_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 131053
+      },
+      "in_proj_k": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 786369
+      },
+      "o_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 327651
+      },
+      "out_proj": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 982947
+      },
+      "v_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 131060
+      },
+      "down_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 1310596
+      },
+      "lm_head": {
+        "tensors": 1,
+        "nonzero_tensors": 1,
+        "nonzero_elements": 3972073
+      }
+    }
+  },
+  {
+    "checkpoint": "tinker://d986263b3847bf37e19ebf2b25f8ba6a/weights/client0-resume",
+    "tensor_count": 1495,
+    "nonzero_lora_B": {
+      "in_proj_q": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 393216
+      },
+      "in_proj_k": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 393216
+      },
+      "in_proj_v": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 786432
+      },
+      "in_proj_z": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 786432
+      },
+      "out_proj": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 786432
+      },
+      "gate_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 3145728
+      },
+      "up_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 3145728
+      },
+      "down_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 1048576
+      },
+      "q_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 524288
+      },
+      "k_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 65536
+      },
+      "v_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 65536
+      },
+      "o_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 262144
+      },
+      "lm_head": {
+        "tensors": 1,
+        "nonzero_tensors": 1,
+        "nonzero_elements": 1986560
+      }
+    }
+  },
+  {
+    "checkpoint": "tinker://1d5ee24c170dfce8b2d62f8ca4de02fa/weights/client1-resume",
+    "tensor_count": 1495,
+    "nonzero_lora_B": {
+      "in_proj_q": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 786432
+      },
+      "in_proj_k": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 786432
+      },
+      "in_proj_v": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 1572864
+      },
+      "in_proj_z": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 1572864
+      },
+      "out_proj": {
+        "tensors": 24,
+        "nonzero_tensors": 24,
+        "nonzero_elements": 1572864
+      },
+      "gate_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 6291456
+      },
+      "up_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 6291456
+      },
+      "down_proj": {
+        "tensors": 32,
+        "nonzero_tensors": 32,
+        "nonzero_elements": 2097152
+      },
+      "q_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 1048576
+      },
+      "k_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 131072
+      },
+      "v_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 131072
+      },
+      "o_proj": {
+        "tensors": 8,
+        "nonzero_tensors": 8,
+        "nonzero_elements": 524288
+      },
+      "lm_head": {
+        "tensors": 1,
+        "nonzero_tensors": 1,
+        "nonzero_elements": 3973120
+      }
+    }
+  }
+]
