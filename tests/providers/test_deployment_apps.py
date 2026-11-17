@@ -24,6 +24,7 @@ from spindle.providers.modal import (
 )
 from spindle.providers.modal.fft_pool import FFTPoolSpec
 from spindle.providers.modal.lora_pool import LoraPoolSpec
+from synthetic_monitoring.checkout import isolated_configs, regression_recipes
 
 LINUX_ENV_VALUE_LIMIT = 131_072
 
@@ -689,3 +690,22 @@ def test_launchers_do_not_reparse_backend_config(builders, monkeypatch):
     deployment_apps.build_rollout_app(
         row, LoraPoolSpec(row.definition_id), image="test"
     )
+
+
+@pytest.mark.parametrize(
+    "preset",
+    [
+        "deepseek-v31-lora-32k",
+        "deepseek-v41-flash-lora-32k",
+        "deepseek-v41-flash-1017-lora-32k",
+    ],
+)
+def test_checkout_deepseek_trainers_exclude_reserved_capacity(
+    builders, monkeypatch, preset
+):
+    recipes = regression_recipes(configs=[preset])
+    row = isolated_configs(recipes, "sr-placement")[0]
+    monkeypatch.setattr(modal, "clustered", lambda **_: lambda fn: fn)
+    app, _ = deployment_apps.build_trainer_app(row, image="test")
+    settings, _ = app.functions["trainer"]
+    assert settings["experimental_options"]["exclude_reserved_capacity"] is True

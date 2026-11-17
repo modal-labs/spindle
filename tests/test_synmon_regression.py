@@ -96,6 +96,7 @@ def test_checkout_configs_do_not_mutate_source_or_share_writable_run_storage():
     assert first.recipe.platform["secrets"]["api"] == "sr-first"
     assert first.recipe.platform["secrets"]["sampler_proxy"] == "sr-first"
     assert first.recipe.platform["requires_proxy_auth"] is True
+    assert first.recipe.platform["modal"]["exclude_reserved_capacity"] is True
     assert first.recipe.platform["modal"]["environment"] == checkout.REGRESSION_ENV
 
 

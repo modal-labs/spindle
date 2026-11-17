@@ -60,6 +60,7 @@ def isolated_configs(
         recipe = BaseConfig(**vars(original))
         recipe.platform["frontend"] = frontend
         recipe.platform["modal"]["environment"] = REGRESSION_ENV
+        recipe.platform["modal"]["exclude_reserved_capacity"] = True
         recipe.platform["url_label"] = frontend
         recipe.platform["requires_proxy_auth"] = True
         recipe.platform["secrets"]["api"] = frontend
