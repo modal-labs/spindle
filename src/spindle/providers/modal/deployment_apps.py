@@ -79,6 +79,8 @@ DEFAULT_IMAGES = {
     "megatron": "megatron-2d1fa8d",
     "sglang": "sglang-v0.5.23-c4182b2",
 }
+# Old names kept for one release so existing configs keep deploying.
+IMAGE_ALIASES = {"miles-v0.1.2": "miles-v0.1.2-f2f8447"}
 
 
 def image_for(backend, name=""):
@@ -92,7 +94,7 @@ def image_for(backend, name=""):
         if backend == "sglang"
         else ("trainer", TRAINER_IMAGES)
     )
-    name = name or DEFAULT_IMAGES[backend]
+    name = IMAGE_ALIASES.get(name) or name or DEFAULT_IMAGES[backend]
     if name not in images:
         raise ValueError(f"unknown {kind} image {name!r}; choose from {sorted(images)}")
     return images[name]

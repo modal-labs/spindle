@@ -526,11 +526,9 @@ def test_bundled_configs_pin_their_own_images(path, monkeypatch):
     deployment_apps.image_for("sglang", recipe.inference_image)
 
 
-def test_deepseek_v41_lora_trainer_image_is_registered():
-    assert (
-        deployment_apps.image_for("miles", "miles-v0.1.2-f2f8447")
-        is deployment_apps.miles_v012_image
-    )
+@pytest.mark.parametrize("name", ["miles-v0.1.2-f2f8447", "miles-v0.1.2"])
+def test_deepseek_v41_lora_trainer_image_is_registered(name):
+    assert deployment_apps.image_for("miles", name) is deployment_apps.miles_v012_image
 
 
 def test_gpu_type_lists_become_modal_fallbacks(builders):
