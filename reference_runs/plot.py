@@ -7,8 +7,38 @@ import argparse
 import json
 import tomllib
 from pathlib import Path
+from typing import Self
 
 from matplotlib import pyplot
+from pydantic import BaseModel, ConfigDict, model_validator
+
+
+class ReferenceRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    validation: str
+    output: str
+    spindle_commit: str
+    trainer_image: str
+    miles_commit: str
+    tinker_sdk: str
+    hardware: str
+    region: str | None = None
+    notes: str = ""
+
+
+class ReferenceRunIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runs: list[ReferenceRun]
+
+    @model_validator(mode="after")
+    def unique_ids(self) -> Self:
+        if len({run.id for run in self.runs}) != len(self.runs):
+            raise ValueError("duplicate run IDs in index")
+        return self
+
 
 PANELS = [
     ("evaluation", "reward", "Held-out accuracy"),
@@ -28,13 +58,11 @@ def main() -> None:
         "--output", type=Path, default=Path(__file__).with_name("reference-runs.png")
     )
     args = parser.parse_args()
-    entries = tomllib.loads(args.index.read_text())["runs"]
-    index = {entry["id"]: entry for entry in entries}
-    if len(index) != len(entries):
-        raise ValueError("duplicate run IDs in index")
+    catalog = ReferenceRunIndex.model_validate(tomllib.loads(args.index.read_text()))
+    index = {entry.id: entry for entry in catalog.runs}
     figure, axes = pyplot.subplots(2, 2, figsize=(11, 7), layout="constrained")
     for run in args.runs:
-        path = args.index.parent / index[run]["output"] if run in index else Path(run)
+        path = args.index.parent / index[run].output if run in index else Path(run)
         # A run that was interrupted mid-write ends in a partial line.
         lines = path.read_text().splitlines(keepends=True)
         records = [json.loads(line) for line in lines if line.endswith("\n")]

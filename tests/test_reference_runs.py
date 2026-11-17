@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import tinker
+from pydantic import ValidationError
 
 from spindle.deployments import load
 
@@ -18,6 +19,7 @@ assert spec and spec.loader
 launcher = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = launcher
 spec.loader.exec_module(launcher)
+plotter = runpy.run_path(str(ROOT / "plot.py"))
 
 
 def test_prepare_and_launch_share_overrides_from_another_directory(
@@ -104,19 +106,48 @@ def test_script_arguments_cannot_replace_selected_target_or_output(
 def test_catalog_outputs_plot_as_ids_and_partial_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    catalog = tomllib.loads((ROOT / "index.toml").read_text())["runs"]
-    assert len({run["id"] for run in catalog}) == len(catalog)
+    catalog = (
+        plotter["ReferenceRunIndex"]
+        .model_validate(tomllib.loads((ROOT / "index.toml").read_text()))
+        .runs
+    )
     for run in catalog:
-        definition = ROOT / "configs" / f"{run['validation']}.toml"
+        definition = ROOT / "configs" / f"{run.validation}.toml"
         launcher.ValidationRunConfig.model_validate(
             tomllib.loads(definition.read_text())
         )
-        assert (ROOT / run["output"]).is_file()
+        assert (ROOT / run.output).is_file()
     partial = tmp_path / "partial.jsonl"
     partial.write_text('{"event":"update","step":1,"reward":0.5}\n{"event":')
     picture = tmp_path / "comparison.png"
     monkeypatch.setattr(
-        sys, "argv", ["plot", catalog[0]["id"], str(partial), "--output", str(picture)]
+        sys, "argv", ["plot", catalog[0].id, str(partial), "--output", str(picture)]
     )
     runpy.run_path(str(ROOT / "plot.py"), run_name="__main__")
     assert picture.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.parametrize(
+    ("problem", "message"),
+    [
+        ("missing_output", "output"),
+        ("invalid_commit", "spindle_commit"),
+        ("unknown_entry_field", "extra_forbidden"),
+        ("unknown_index_field", "extra_forbidden"),
+        ("duplicate_id", "duplicate run IDs in index"),
+    ],
+)
+def test_index_rejects_invalid_provenance(problem: str, message: str) -> None:
+    data = tomllib.loads((ROOT / "index.toml").read_text())
+    if problem == "missing_output":
+        del data["runs"][0]["output"]
+    elif problem == "invalid_commit":
+        data["runs"][0]["spindle_commit"] = 123
+    elif problem == "unknown_entry_field":
+        data["runs"][0]["trainer_iamge"] = "typo"
+    elif problem == "unknown_index_field":
+        data["run"] = []
+    else:
+        data["runs"].append(data["runs"][0].copy())
+    with pytest.raises(ValidationError, match=message):
+        plotter["ReferenceRunIndex"].model_validate(data)

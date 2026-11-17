@@ -88,6 +88,7 @@ first update has no preceding interval. Missing server metrics stay absent.
 The script rejects an explicitly unsuccessful optimizer result.
 
 `index.toml` maps stable run IDs to validation definitions and JSONL files.
+`ReferenceRunIndex` and `ReferenceRun` in `plot.py` validate its fields and unique IDs.
 Record the tested Spindle commit, image identities, actual hardware and relevant
 notes there. This provenance is manual for now; the script does not query a
 Spindle-specific provenance API. Do not invent digests or hardware observations
