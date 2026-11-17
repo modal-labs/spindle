@@ -28,11 +28,7 @@ def _jsonable(value):
 
 
 def _validate_recipe(recipe: BaseConfig) -> None:
-    defaults = {
-        key: value
-        for key, value in vars(BaseConfig).items()
-        if not key.startswith("_") and not callable(value)
-    }
+    defaults = vars(BaseConfig())
     unknown = sorted(set(vars(recipe)) - set(defaults))
     if unknown:
         raise ValueError(f"unknown config settings: {', '.join(unknown)}")
