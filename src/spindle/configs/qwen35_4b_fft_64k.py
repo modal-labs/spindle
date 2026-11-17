@@ -8,12 +8,10 @@ class Config(BaseConfig):
     parameterization = "full"
     model = "Qwen/Qwen3.5-4B"
     max_context_length = 65536
-    trainer_gpu = "B200"
+    trainer_gpu = ["B300", "B200"]
     trainer_gpus_per_node = 4
     trainer_env = {
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        # The FP32 LM head's inputs are BF16 values, so TF32 tensor cores
-        # compute the same products as FP32 at tensor-core speed.
         "TORCH_ALLOW_TF32_CUBLAS_OVERRIDE": "1",
     }
     backend = "megatron"
@@ -36,7 +34,7 @@ class Config(BaseConfig):
         "optimizer": {"lr": 0.0001, "min_lr": 0.0001, "loss_scale": 1.0},
     }
     sampler_persistence_concurrency = 1
-    inference_gpu = "B200"
+    inference_gpu = "H100"
     sglang_cfg = {
         "tp_size": 1,
         "mem_fraction_static": 0.85,
