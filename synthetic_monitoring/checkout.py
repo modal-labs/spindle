@@ -73,22 +73,25 @@ def isolated_configs(
 def verify_checkout(
     base_url: str, api_key: str, commit: str, recipes: list[str]
 ) -> None:
-    response = httpx.get(
-        base_url.rstrip("/") + "/api/v1/get_server_capabilities",
-        headers={"X-API-Key": api_key, **proxy_auth_headers()},
-        timeout=120,
-    )
-    if response.is_error:
-        detail = response.text.replace(api_key, "[redacted]")[:200]
-        raise ValueError(
-            f"Regression verification failed (HTTP {response.status_code}): {detail}"
+    def get(path: str) -> dict:
+        response = httpx.get(
+            base_url.rstrip("/") + "/api/v1/" + path,
+            headers={"X-API-Key": api_key, **proxy_auth_headers()},
+            timeout=120,
         )
-    capabilities = response.json()
+        if response.is_error:
+            detail = response.text.replace(api_key, "[redacted]")[:200]
+            raise ValueError(
+                f"Regression verification failed (HTTP {response.status_code}): {detail}"
+            )
+        return response.json()
+
+    capabilities = get("get_server_capabilities")
     if capabilities.get("spindle_commit") != commit:
         raise ValueError(
             f"Regression server reports {capabilities.get('spindle_commit')!r}; expected {commit!r}"
         )
-    served = {model["model_name"] for model in capabilities["supported_models"]}
+    served = {row["name"] for row in get("spindle/deployments")["deployments"]}
     missing = set(recipes) - served
     if missing:
         raise ValueError(f"Regression server is missing recipes: {sorted(missing)}")

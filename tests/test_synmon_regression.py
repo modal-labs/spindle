@@ -1,3 +1,5 @@
+import asyncio
+import importlib
 from contextlib import contextmanager
 from copy import deepcopy
 from types import SimpleNamespace
@@ -5,6 +7,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from spindle.control_plane import ControlPlane, create_control_plane_app
+from spindle.providers.local import InMemoryKeyValueStore
 from synthetic_monitoring import checkout, config_validation
 from synthetic_monitoring.checkout import isolated_configs, regression_recipes
 
@@ -136,24 +140,31 @@ def test_checkout_lifecycle_cleans_up_and_rejects_wrong_server(monkeypatch, fail
             raise RuntimeError("deploy failed")
 
     def transport(request):
-        assert (
-            str(request.url)
-            == "https://checkout.example/api/v1/get_server_capabilities"
-        )
+        assert str(request.url) in {
+            "https://checkout.example/api/v1/get_server_capabilities",
+            "https://checkout.example/api/v1/spindle/deployments",
+        }
         assert request.headers["X-API-Key"] == captured["key"]
         assert request.headers["Modal-Key"] == "test-proxy-id"
         assert request.headers["Modal-Secret"] == "test-proxy-secret"
         if failure == "auth":
             return httpx.Response(401, text="invalid proxy authorization")
+        if request.url.path.endswith("spindle/deployments"):
+            return httpx.Response(
+                200,
+                json={
+                    "deployments": []
+                    if failure == "recipe"
+                    else [{"name": recipes[0].name}]
+                },
+            )
         return httpx.Response(
             200,
             json={
                 "spindle_commit": "wrong-sha"
                 if failure == "commit"
                 else "checkout-sha",
-                "supported_models": []
-                if failure == "recipe"
-                else [{"model_name": recipes[0].name}],
+                "supported_models": [{"model_name": recipes[0].model}],
             },
         )
 
@@ -290,3 +301,38 @@ def test_regression_uses_checkout_credentials_and_cancels_active_work_on_interru
     with pytest.raises(KeyboardInterrupt):
         config_validation.regress(model="Qwen/Qwen3-8B")
     assert events == ["cancel-client", "stop-server"]
+
+
+def test_verification_uses_actual_capability_and_deployment_response_contracts(
+    monkeypatch,
+):
+    recipes = regression_recipes(["Qwen/Qwen3-8B"])
+    configs = isolated_configs(recipes, "sr-contract")
+    server = create_control_plane_app(
+        ControlPlane(InMemoryKeyValueStore(), SimpleNamespace()),
+        configs,
+        api_key="test-key",
+    )
+    http_module = importlib.import_module("spindle.control_plane.http")
+    monkeypatch.setattr(http_module, "source_commit", lambda: "checkout-sha")
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "test-proxy-id")
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "test-proxy-secret")
+    requests = []
+
+    def get(url, **kwargs):
+        async def request():
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=server)
+            ) as client:
+                response = await client.get(url, **kwargs)
+                requests.append((response.request.url.path, response.json()))
+                return response
+
+        return asyncio.run(request())
+
+    monkeypatch.setattr(checkout.httpx, "get", get)
+    checkout.verify_checkout(
+        "https://checkout.example", "test-key", "checkout-sha", [recipes[0].name]
+    )
+    assert requests[0][1]["supported_models"][0]["model_name"] == recipes[0].model
+    assert requests[1][1]["deployments"][0]["name"] == recipes[0].name
