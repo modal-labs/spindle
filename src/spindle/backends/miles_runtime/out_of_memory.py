@@ -62,7 +62,8 @@ def run(
         # After the agreement, the other ranks may already be in the all-reduce.
         if not _state.recoverable or (backward and _state.agreed):
             raise
-        detail = str(error).splitlines()[0]
+        # Keep "CUDA out of memory. Tried to allocate N GiB"; the rest is allocator advice for the server.
+        detail = ". ".join(str(error).split(". ")[:2])
         if backward:
             _agree(failed=True)
     except PeerOutOfMemory as error:
