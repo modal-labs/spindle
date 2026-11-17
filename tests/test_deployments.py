@@ -201,7 +201,7 @@ def test_deepseek_v41_lora_recipe():
     assert serving["disable_shared_experts_fusion"] is True
     assert row.recipe.inference_env["SGLANG_DSV4_FP4_DEQUANT"] == "1"
     assert serving["weight_loader_disable_mmap"] is False
-    assert row.recipe.trainer_image == "miles-v0.1.2-f2f8447"
+    assert row.recipe.trainer_image == "miles-v0.1.2-fde5e9e"
     assert row.model == "deepseek-ai/DeepSeek-V4.1-Flash"
     assert row.asset_path == "/assets/deepseek-ai/DeepSeek-V4.1-Flash"
     assert json.loads(serving["json_model_override_args"])["vision_n_layers"] == 0

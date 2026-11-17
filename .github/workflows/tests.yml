@@ -66,14 +66,14 @@ jobs:
       - name: Install the pinned upstream sources Spindle patches
         if: matrix.tinker == '0.26.0'
         run: |
-          miles=$(sed -n 's/^MILES_COMMIT = "\(.*\)"$/\1/p' src/spindle/providers/modal/miles_image.py)
+          miles=$(sed -n 's/^image_[0-9]*_[0-9a-f]* = image_at("\([0-9a-f]\{40\}\)")$/\1/p' src/spindle/providers/modal/miles_image.py | tail -n 1)
           bridge=$(sed -n 's/^BRIDGE_COMMIT = "\(.*\)"$/\1/p' src/spindle/backends/miles_runtime/host_syncs.py)
           megatron=$(curl -sL "https://raw.githubusercontent.com/modal-projects/miles/$miles/release-lock.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["megatron_commit"])')
           test -n "$miles" && test -n "$bridge" && test -n "$megatron"
           uv pip install --python .venv/bin/python --no-deps "git+https://github.com/modal-projects/miles.git@$miles"
           uv pip install --python .venv/bin/python --no-deps "git+https://github.com/NVIDIA-NeMo/Megatron-Bridge.git@$bridge"
           uv pip install --python .venv/bin/python --no-deps "git+https://github.com/radixark/Megatron-LM.git@$megatron"
-      # The v0.2.0 modules need a newer Miles than MILES_COMMIT.
+      # The v0.2.0 modules need a newer Miles than the newest miles_image.py commit.
       - if: matrix.tinker == '0.26.0'
         run: >-
           uv run --no-sync ty check

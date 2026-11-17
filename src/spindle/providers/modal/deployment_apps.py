@@ -32,12 +32,18 @@ from spindle.startup_timing import SAMPLER_COMPONENT, TRAINER_COMPONENT, timelin
 from spindle.usage import ContainerUsage, poll_busy
 
 from .app_tags import app_tags
-from .deepseek_v41_image import inference_image as deepseek_v41_sampler_image
+from . import (
+    deepseek_v41_image,
+    glm53_image,
+    glm53_trainer_image,
+    miles_image,
+    miles_v012_image,
+    miles_v020_image,
+    rollout_image,
+)
 from .deployment import trainer_deployment_env
 from .fft_pool import FFTPoolSpec
 from .fft_pool import deploy_pool as deploy_fft
-from .glm53_image import inference_image as glm53_sampler_image
-from .glm53_trainer_image import image as glm53_trainer_image
 from .image_dependencies import (
     CORE_PACKAGES,
     STITCH_PACKAGE,
@@ -53,32 +59,31 @@ from .kv import shared_kv
 from .lora_pool import LoraPoolSpec
 from .lora_pool import deploy_pool as deploy_lora
 from .megatron_image import image as megatron_image
-from .miles_v012_image import image as miles_v012_image
-from .miles_v020_image import image as miles_v020_image
-from .miles_image import image as miles_image
 from .ray_cluster import start_trainer_cluster
-from .rollout_image import gdn_lora_image as gdn_lora_sampler_image
-from .rollout_image import image as rollout_image
 from .serve import run_engine_with_backend
 from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
 # Named images are frozen: add a new name instead of editing one. See docs/deployment-configs.md#images.
 TRAINER_IMAGES = {
-    "miles-v0.1.1-fdd808c": miles_image,
-    "miles-v0.1.2-f2f8447": miles_v012_image,
-    "miles-v0.1.2-464efc9-glm53": glm53_trainer_image,
-    "miles-v0.2.0-15afe21": miles_v020_image,
+    "miles-v0.1.1-fdd808c": miles_image.image_01_fdd808c,
+    "miles-v0.1.1-ce494f0": miles_image.image_02_ce494f0,
+    "miles-v0.1.2-f2f8447": miles_v012_image.image_01_f2f8447,
+    "miles-v0.1.2-fde5e9e": miles_v012_image.image_02_fde5e9e,
+    "miles-v0.1.2-464efc9-glm53": glm53_trainer_image.image_01_464efc9,
+    "miles-v0.1.2-612703a-glm53": glm53_trainer_image.image_02_612703a,
+    "miles-v0.2.0-15afe21": miles_v020_image.image_01_15afe21,
+    "miles-v0.2.0-384d73b": miles_v020_image.image_02_384d73b,
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {
-    "sglang-v0.5.21-a3e0e17": deepseek_v41_sampler_image,
-    "sglang-v0.5.23-c4182b2": rollout_image,
-    "sglang-v0.5.23-c4182b2-glm53": glm53_sampler_image,
-    "sglang-v0.5.23-803bccb": gdn_lora_sampler_image,
+    "sglang-v0.5.21-a3e0e17": deepseek_v41_image.image_01_a3e0e17,
+    "sglang-v0.5.23-c4182b2": rollout_image.image_01_c4182b2,
+    "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
+    "sglang-v0.5.23-803bccb": rollout_image.image_02_803bccb,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {
-    "miles": "miles-v0.1.1-fdd808c",
+    "miles": "miles-v0.1.1-ce494f0",
     "megatron": "megatron-2d1fa8d",
     "sglang": "sglang-v0.5.23-c4182b2",
 }

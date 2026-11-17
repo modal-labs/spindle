@@ -4,6 +4,8 @@ import subprocess
 from importlib.metadata import distribution
 from pathlib import Path
 
+import modal
+
 from .image_dependencies import (
     MEGATRON_RUNTIME_CHECK,
     MEGATRON_RUNTIME_PACKAGES,
@@ -25,7 +27,6 @@ BASE_IMAGE = (
 MILES_RELEASE_COMMIT = "2806267d060d51b1d3b62f85a1f9b145047aeef9"
 MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
 MILES_BRANCH = "spindle-miles"
-MILES_COMMIT = "ce494f0259b74fc406629dd44f5467c26e9dcb75"
 MILES_PATH = "/root/miles"
 MEGATRON_PATH = "/root/Megatron-LM"
 
@@ -116,7 +117,7 @@ DSA_KERNEL_INSTALL = (
 )
 
 
-image = (
+release_image = (
     miles_base_image(
         BASE_IMAGE,
         {
@@ -131,19 +132,30 @@ image = (
         *MILES_EXTRA_PACKAGES,
     )
     .run_function(_check_release, kwargs={"miles_commit": MILES_RELEASE_COMMIT})
-    .run_commands(
-        f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {MILES_COMMIT}"
-        f" && git -C {MILES_PATH} checkout -B {MILES_BRANCH} FETCH_HEAD",
-        BRIDGE_IMPORT_CACHE_INSTALL,
-    )
-    .run_commands(
-        "pip install --no-deps 'peft>=0.18.1'",
-        MEGATRON_RUNTIME_CHECK,
-        'python -c "from miles.ray.train.group import TrainerController as T; '
-        "assert all(hasattr(T, name) for name in "
-        "('load_slot', 'unload_slot', 'forward_backward', "
-        "'forward_only', 'optim_step', 'save_slot', 'export_slot'))\"",
-    )
-    .run_commands(DSA_KERNEL_INSTALL)
-    .add_local_python_source("spindle", ignore=ignore_config_source)
 )
+
+
+def image_at(miles_commit: str) -> modal.Image:
+    return (
+        release_image.run_commands(
+            f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {miles_commit}"
+            f" && git -C {MILES_PATH} checkout -B {MILES_BRANCH} FETCH_HEAD",
+            BRIDGE_IMPORT_CACHE_INSTALL,
+        )
+        .run_commands(
+            "pip install --no-deps 'peft>=0.18.1'",
+            MEGATRON_RUNTIME_CHECK,
+            'python -c "from miles.ray.train.group import TrainerController as T; '
+            "assert all(hasattr(T, name) for name in "
+            "('load_slot', 'unload_slot', 'forward_backward', "
+            "'forward_only', 'optim_step', 'save_slot', 'export_slot'))\"",
+        )
+        .run_commands(DSA_KERNEL_INSTALL)
+        .add_local_python_source("spindle", ignore=ignore_config_source)
+    )
+
+
+# Fork commits in ancestry order, each a descendant of the one before. Append new commits; never edit an entry.
+image_01_fdd808c = image_at("fdd808c008175d4895fd8c57c95ef4fa5bb6a2a0")
+# Passes per-adapter seeds through load_slot.
+image_02_ce494f0 = image_at("ce494f0259b74fc406629dd44f5467c26e9dcb75")

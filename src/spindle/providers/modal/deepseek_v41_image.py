@@ -7,7 +7,8 @@ after loading a trained adapter.
 from .image_dependencies import CORE_PACKAGES, ignore_config_source
 from .rollout_image import runtime_image_for
 
-inference_image = runtime_image_for(
+# Fork commits in ancestry order, each a descendant of the one before. Append new commits; never edit an entry.
+image_01_a3e0e17 = runtime_image_for(
     image="lmsysorg/sglang:v0.5.21",
     branch="spindle-sglang-v0.5.21",
     revision="a3e0e1725406b9330bd062520d4f99d0aa73ee4f",

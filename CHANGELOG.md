@@ -10,6 +10,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
+- The Miles image names `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53` and `miles-v0.2.0-15afe21` install the fork commit in their name again. Seeded LoRA initialization had moved them to newer commits. Seed support now lives under new names: `miles-v0.1.1-ce494f0`, `miles-v0.1.2-fde5e9e`, `miles-v0.1.2-612703a-glm53` and `miles-v0.2.0-384d73b`. The default Miles image and every bundled Miles config use the new names, so they keep seed support. Checkpoints saved on the old names before seed support restore on those names again. If you saved checkpoints on an old name while it installed the newer commit, set `trainer_image` to the matching new name to restore them, because a checkpoint restores only on the Miles revision that saved it.
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
 
 ### Changed
