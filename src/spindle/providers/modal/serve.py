@@ -5,12 +5,12 @@ import logging
 import os
 import secrets
 import signal
-import socket
 import subprocess
 import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 import httpx
 import modal
@@ -158,9 +158,7 @@ def run_engine_with_backend(
         raise ValueError(
             "parallel sampler persistence requires a single-process executor"
         )
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    backend_socket = f"/tmp/spindle-backend-{uuid.uuid4().hex}.sock"
     env = {**os.environ, **(backend_env or {})}
     env["PYTHONPATH"] = os.pathsep.join(
         [entry for entry in (env.get("PYTHONPATH"), *sys.path) if entry]
@@ -182,7 +180,7 @@ def run_engine_with_backend(
         ]
     )
     backend = subprocess.Popen(
-        [*launcher, "spindle.engine.backend_http", executor_reference, str(port)],
+        [*launcher, "spindle.engine.backend_http", executor_reference, backend_socket],
         env=env,
         start_new_session=True,
     )
@@ -196,7 +194,11 @@ def run_engine_with_backend(
             pass
 
     executor = HttpBackendClient(
-        f"http://127.0.0.1:{port}",
+        "http://backend",
+        transport=httpx.AsyncHTTPTransport(
+            uds=backend_socket,
+            limits=httpx.Limits(max_keepalive_connections=0),
+        ),
         read_timeout=operation_timeout,
         # A lost command response leaves gradient/optimizer state uncertain.
         # Terminate all ranks so the process monitor exits the engine instead
@@ -279,11 +281,14 @@ def run_engine_with_backend(
     try:
         asyncio.run(serve_until_backend_exits())
     finally:
-        running = backend.poll() is None
-        signal_backend(signal.SIGTERM if running else signal.SIGKILL)
-        if running:
-            try:
-                backend.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                signal_backend(signal.SIGKILL)
-                backend.wait(timeout=10)
+        try:
+            running = backend.poll() is None
+            signal_backend(signal.SIGTERM if running else signal.SIGKILL)
+            if running:
+                try:
+                    backend.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    signal_backend(signal.SIGKILL)
+                    backend.wait(timeout=10)
+        finally:
+            Path(backend_socket).unlink(missing_ok=True)

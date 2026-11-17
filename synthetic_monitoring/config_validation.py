@@ -110,8 +110,19 @@ def with_local_sources(image: modal.Image) -> modal.Image:
 
 probe_image = with_local_sources(base_image)
 # The nightly clients keep the locked Tinker SDK; only regression runs use the cookbook.
+# Work around thinking-machines-lab/tinker-cookbook#1017 until the next release.
 regression_image = with_local_sources(
     base_image.uv_pip_install("tinker-cookbook==0.6.1", "tinker==0.39.0")
+    .add_local_file(
+        str(REPO_ROOT / "synthetic_monitoring/guess_number.patch"),
+        "/opt/guess_number.patch",
+        copy=True,
+    )
+    .run_commands(
+        "python -c 'import site, subprocess; "
+        'subprocess.run(["git", "-C", site.getsitepackages()[0], '
+        '"apply", "/opt/guess_number.patch"], check=True)\''
+    )
 )
 
 slack_secret = modal.Secret.from_name("spindle-bot-slack", environment_name=MODAL_ENV)
