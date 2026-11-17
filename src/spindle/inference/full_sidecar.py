@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from stitch.engines.sglang import SGLangEngine
@@ -25,6 +26,10 @@ def main() -> None:
     parser.add_argument("--pinned-version", type=int)
     parser.add_argument("--scoped-registry")
     args = parser.parse_args()
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(name)s %(message)s"
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     refresh = None
     if args.bulletin_volume:
