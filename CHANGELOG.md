@@ -8,6 +8,22 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
 
+## 0.1.8
+
+### Added
+
+- Pretrained DFlash inference recipes for Qwen3-8B, Qwen3.5-9B, Qwen3.8-27B and GLM-5.3 Flash, plus Qwen3.5-4B native MTP using its cached target checkpoint.
+
+### Changed
+
+- The standard 32K LoRA recipes for Qwen3-8B, Qwen3.5-9B Instruct, Qwen3.8-27B and GLM-5.3 Flash use DFlash; Qwen3.5-4B uses native MTP. These replace the separate `with-spec` and `mtp` variants. Qwen3-8B samples on one B300 instead of two H100 GPUs, and Qwen3.5-4B uses B200 for training and sampling.
+
+### Fixed
+
+- Speculative samplers use a corrected SGLang runtime that honors the earliest matching string, regex or EOS stop within an accepted token block.
+- Draft checkpoint revisions use separate cache directories, and downloads sharing target weights run one at a time.
+- Trainer backends use a local Unix socket so another process cannot take their port while model weights load and make startup fail.
+
 ## 0.1.7 - 2026-11-15
 
 See what each run or team costs on a shared deployment: Spindle records the tokens every session uses, serves them through Tinker's `get_billing_usage`, and `spindle usage` turns them into dollars per run or label. See [Cost attribution](docs/cost-attribution.md).
