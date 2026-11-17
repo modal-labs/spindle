@@ -13,7 +13,7 @@ class Config(Parent):
     inference_max_replicas = 2
     inference_target_concurrency = 128
     overrides = {
-        "miles_cfg.expert_model_parallel_size": 1,
+        "miles_cfg.expert_model_parallel_size": 2,
         "miles_cfg.max_lora_slots": 4,
         "miles_cfg.cli_options.log_probs_chunk_size": 4096,
         "trainer_env.EXPERT_GROUPED_GEMM": "1",
