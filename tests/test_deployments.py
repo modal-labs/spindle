@@ -117,8 +117,17 @@ def test_presets_context_topology_and_backend_options():
     assert large.max_context_length == 65536
     assert backend_config(large)["miles"]["actor_num_gpus_per_node"] == 8
     fft = backend_config(recipe("qwen35-4b-fft-64k"))["megatron"]
-    assert (fft["tensor_model_parallel_size"], fft["context_parallel_size"]) == (2, 4)
     assert fft["provider_overrides"]["recompute_granularity"] == "full"
+    child = recipe("qwen35-9b-fft-64k")
+    child_fft = backend_config(child)["megatron"]
+    assert (
+        child.trainer_gpu,
+        child_fft["tensor_model_parallel_size"],
+        child_fft["context_parallel_size"],
+        child_fft["sequence_parallel"],
+        child_fft["logprob_chunk_tokens"],
+    ) == ("H200", 2, 2, True, None)
+    assert "TORCH_ALLOW_TF32_CUBLAS_OVERRIDE" not in child.trainer_env
 
 
 def test_no_model_catalog_required():

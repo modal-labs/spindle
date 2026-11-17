@@ -65,7 +65,7 @@ def builders(monkeypatch):
     "preset,backend,clients,nproc,gpu",
     [
         ("qwen35-9b-lora-16k", "miles_lora", 6, 1, "H100:4"),
-        ("qwen35-4b-fft-64k", "megatron_fft", 1, 8, "B200:8"),
+        ("qwen35-4b-fft-64k", "megatron_fft", 1, 4, ["B300:4", "B200:4"]),
     ],
 )
 def test_trainer_declaration_and_executor_configuration(
