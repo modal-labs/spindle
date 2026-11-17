@@ -20,7 +20,6 @@ from .bulletin import SnapshotBulletin, SnapshotNotFound
 from .request_replay import RequestReplay
 from .kv_events import KVEventSubscriber
 from .routing_state import (
-    FETCH_METRICS_TIMEOUT_SECONDS,
     ROUTING_SOURCES,
     RoutingSource,
     RoutingState,
@@ -37,6 +36,9 @@ def _routing_adapter(payload: dict) -> str:
     if run_id is not None and constraint.exact_version is not None:
         return VersionRef(str(run_id), constraint.exact_version).identity
     return payload.get("lora_path", "base")
+
+
+FETCH_METRICS_TIMEOUT_SECONDS = 2.0
 
 
 def create_app(

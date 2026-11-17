@@ -19,7 +19,7 @@ ROUTING_SOURCES: tuple[RoutingSource, ...] = ("hook", "kv_events", "compare")
 ROUTING_CATALOG_PATH = Path("/tmp/spindle-routing-work.json")
 ROUTING_CATALOG_REFRESH_SECONDS = 0.5
 ROUTING_SUBSCRIBER_MAX_AGE_SECONDS = 2.5
-FETCH_METRICS_TIMEOUT_SECONDS = 2.0
+LOADS_TIMEOUT_SECONDS = 2.0
 
 
 class RequestWork(TypedDict):
@@ -140,7 +140,7 @@ class RoutingState:
     async def refresh_loads(self) -> None:
         try:
             response = await self.client.get(
-                "/v1/loads?include=core", timeout=FETCH_METRICS_TIMEOUT_SECONDS
+                "/v1/loads?include=core", timeout=LOADS_TIMEOUT_SECONDS
             )
             response.raise_for_status()
             loads = response.json()["loads"]
@@ -241,13 +241,7 @@ class RoutingState:
             "request_ids": list(self.routing_requests),
             "pending_adapters": sorted(set(self.routing_requests.values())),
             "cpu_adapters": work["cpu_adapters"] if work else [],
-            "age_seconds": (
-                time.time() - self.catalog["timestamp"]
-                if self.source == "hook" and self.catalog
-                else work["age_seconds"]
-                if work
-                else None
-            ),
+            "age_seconds": work["age_seconds"] if work else None,
             "work": work,
         }
 
@@ -271,18 +265,14 @@ class RoutingState:
             "age_seconds": view.get("age_seconds"),
         }
 
-    @classmethod
-    def _compare_routing_views(
-        cls,
-        hook: WorkView | None,
-        kv: WorkView | None,
-        subscriber: KVEventSubscriber | None,
-    ) -> CompareBody:
-        hook_prefixes = set((hook or {}).get("prefixes", []))
-        kv_prefixes = set((kv or {}).get("prefixes", []))
+    async def compare_body(self) -> CompareBody:
+        hook = await self.hook_view()
+        kv = self.kv_view()
+        hook_prefixes = set(hook["prefixes"] if hook else [])
+        kv_prefixes = set(kv["prefixes"] if kv else [])
         return {
-            "hook": cls._compare_view(hook),
-            "kv_events": cls._compare_view(kv),
+            "hook": self._compare_view(hook),
+            "kv_events": self._compare_view(kv),
             "intersection": len(hook_prefixes & kv_prefixes),
             "hook_only": len(hook_prefixes - kv_prefixes),
             "kv_events_only": len(kv_prefixes - hook_prefixes),
@@ -290,10 +280,7 @@ class RoutingState:
                 "hook_only": sorted(hook_prefixes - kv_prefixes)[:5],
                 "kv_events_only": sorted(kv_prefixes - hook_prefixes)[:5],
             },
-            "subscriber_ready": bool(subscriber and subscriber.snapshot.ready),
+            "subscriber_ready": bool(
+                self.subscriber and self.subscriber.snapshot.ready
+            ),
         }
-
-    async def compare_body(self) -> CompareBody:
-        hook = await self.hook_view()
-        kv = self.kv_view()
-        return self._compare_routing_views(hook, kv, self.subscriber)
