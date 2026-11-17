@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .config import EngineModelConfig
+from .kernels import pin_fla_block_counts
 
 
 def initialize_megatron(config: EngineModelConfig) -> None:
@@ -17,6 +18,7 @@ def initialize_megatron(config: EngineModelConfig) -> None:
         raise RuntimeError("Megatron model parallel state is already initialized")
 
     config.validate(dist.get_world_size())
+    pin_fla_block_counts()
     if config.gpu_memory_fraction is not None:
         torch.cuda.set_per_process_memory_fraction(config.gpu_memory_fraction)
     parallel_state.initialize_model_parallel(
