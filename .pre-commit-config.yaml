@@ -1,4 +1,9 @@
 repos:
+  - repo: https://github.com/ComPWA/taplo-pre-commit
+    rev: v0.9.3
+    hooks:
+      - id: taplo-lint
+        args: []
   - repo: local
     hooks:
       - id: ruff-format
