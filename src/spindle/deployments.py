@@ -17,8 +17,7 @@ from spindle.backends.deployment import (
     resolve_backend_settings,
     resolve_draft_asset_path,
 )
-from spindle.configuration import BaseConfig
-from spindle.inference.routing_state import ROUTING_SOURCES
+from spindle.configuration import ROUTING_SOURCES, BaseConfig
 
 # Modal's smallest ephemeral disk request.
 MIN_EPHEMERAL_DISK_MIB = 524_288

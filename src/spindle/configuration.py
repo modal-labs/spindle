@@ -1,6 +1,10 @@
 """Flat Python recipes. Modal and the backend validate their own options."""
 
 from copy import deepcopy
+from typing import Literal, get_args
+
+RoutingSource = Literal["hook", "kv_events", "compare"]
+ROUTING_SOURCES: tuple[RoutingSource, ...] = get_args(RoutingSource)
 
 
 def _apply_overrides(values, overrides):

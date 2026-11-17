@@ -12,7 +12,9 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 
-from .routing_state import RoutingSource
+from spindle.configuration import RoutingSource
+
+SGLANG_ENV = {"SGLANG_RETURN_ORIGINAL_LOGPROB": "1"}
 
 
 def start_sglang(

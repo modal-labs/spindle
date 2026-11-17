@@ -20,6 +20,7 @@ from spindle.control_plane import create_control_plane_app
 from spindle.engines import Engine, gpu_count
 from spindle.inference.sampling import sample_task
 from spindle.inference.serving import (
+    SGLANG_ENV,
     start_fft_sidecar,
     start_sglang,
     supervise_children,
@@ -86,6 +87,7 @@ def register_sampler(
         gpu=engine.sampler_gpu,
         cpu=engine.sampler_cpu,
         memory=engine.sampler_memory,
+        env=SGLANG_ENV,
         volumes={"/assets": assets, "/bulletin": bulletin},
         min_containers=0,
         max_containers=pool.max_containers,

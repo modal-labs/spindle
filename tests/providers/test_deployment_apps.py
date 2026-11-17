@@ -63,23 +63,24 @@ def builders(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "preset,backend,clients,nproc",
+    "preset,backend,clients,nproc,gpu",
     [
-        ("qwen35-9b-lora-16k", "miles_lora", 6, 1),
-        ("qwen35-4b-fft-64k", "megatron_fft", 1, 4),
+        ("qwen35-9b-lora-16k", "miles_lora", 6, 1, "H100:4"),
+        ("qwen35-4b-fft-64k", "megatron_fft", 1, 4, ["B300:4", "B200:4"]),
     ],
 )
 def test_trainer_declaration_and_executor_configuration(
-    builders, monkeypatch, preset, backend, clients, nproc
+    builders, monkeypatch, preset, backend, clients, nproc, gpu
 ):
     row = deployment(preset)
+    monkeypatch.setattr(modal, "clustered", lambda **_: lambda fn: fn)
     platform = row.recipe.platform
     platform["storage"]["checkpoints"] = "test-custom-checkpoints"
     image = object()
     app, trainer = deployment_apps.build_trainer_app(row, platform, image=image)
     assert app.tags["spindle_role"] == "trainer"
     declaration, _ = app.functions["trainer"]
-    assert declaration["gpu"] == "H100:4"
+    assert declaration["gpu"] == gpu
     assert declaration["ephemeral_disk"] is None
     assert declaration["region"] is None
     assert declaration["max_containers"] is None
@@ -140,6 +141,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     assert settings["gpu"] == (["B200:1", "H200:1"] if kind == "lora" else "H100:1")
     assert settings["min_containers"] == 0
     assert settings["target_concurrency"] == (128 if kind == "lora" else 32)
+    assert settings["env"]["SGLANG_RETURN_ORIGINAL_LOGPROB"] == "1"
     assert settings.get("scaleup_window") is None
     assert "compute_region" not in settings
     assert "routing_region" not in settings
@@ -195,6 +197,9 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
             "up_proj",
             "down_proj",
             "lm_head",
+            "in_proj_qkvz",
+            "in_proj_ba",
+            "out_proj",
         ]
     else:
         assert "routing_source" not in calls[0][1]
@@ -334,6 +339,7 @@ assert app.APP_NAME == 'spindle'
 assert deployment_configs.FRONTEND_SETTINGS_ENV in app.TRAINER_DEPLOYMENT_ENV
 assert not hasattr(app.DEPLOYMENTS, 'base')
 assert not any(name.startswith('spindle.providers.modal.definitions.') for name in sys.modules)
+assert 'zmq' not in sys.modules and 'spindle.inference.kv_events' not in sys.modules
 print('constructed')
 """,
         ],

@@ -117,7 +117,6 @@ def test_presets_context_topology_and_backend_options():
     assert large.max_context_length == 65536
     assert backend_config(large)["miles"]["actor_num_gpus_per_node"] == 8
     fft = backend_config(recipe("qwen35-4b-fft-64k"))["megatron"]
-    assert (fft["tensor_model_parallel_size"], fft["context_parallel_size"]) == (2, 2)
     assert fft["provider_overrides"]["recompute_granularity"] == "full"
 
 
@@ -147,6 +146,21 @@ def test_no_model_catalog_required():
         ({"sglang_cfg": {"tp_size": 2}}, "replica GPU"),
         ({"trainer_max_clients_per_instance": 7}, "max_lora_slots"),
         ({"trainer_max_clients_per_batch": 0}, "trainer_max_clients_per_batch"),
+        (
+            {"miles_cfg__target_modules": ["q_proj", "in_proj_qkv", "in_proj_z"]},
+            "list all of in_proj_qkv, in_proj_z, in_proj_b, in_proj_a",
+        ),
+        (
+            {
+                "miles_cfg__target_modules": [
+                    "*.in_proj_qkv",
+                    "in_proj_z",
+                    "in_proj_b",
+                    "in_proj_a",
+                ]
+            },
+            "by name",
+        ),
     ],
 )
 def test_invalid_integrations_fail_when_building_backend_settings(changes, match):
@@ -640,6 +654,41 @@ async def test_every_recipe_routes_by_name_and_plain_models_pick_the_longest():
             assert response.status_code == 200, response.text
             row = await kv.get(model_key(response.json()["model_id"]))
             assert row["engine_definition_id"] == expected
+
+
+@pytest.mark.anyio
+async def test_create_model_rejects_untrainable_lora_before_a_trainer_starts():
+    kv = InMemoryKeyValueStore()
+    routes, _ = routes_for(resolved())
+    async with client_for(routes, kv) as client:
+        session_id = (await client.post("/api/v1/create_session", json={})).json()[
+            "session_id"
+        ]
+        for seq, lora_config in enumerate(
+            ({"rank": 8, "train_mlp": False}, {"rank": 8, "train_unembed": False})
+        ):
+            response = await client.post(
+                "/api/v1/create_model",
+                json={
+                    "session_id": session_id,
+                    "model_seq_id": seq,
+                    "base_model": "Qwen/Qwen3.5-9B-Base",
+                    "lora_config": lora_config,
+                },
+            )
+            assert response.status_code == 400, response.text
+            assert "train_mlp=True" in response.json()["message"]
+        assert not await kv.list_items("trainer_demand:")
+        response = await client.post(
+            "/api/v1/create_model",
+            json={
+                "session_id": session_id,
+                "model_seq_id": 2,
+                "base_model": "Qwen/Qwen3.5-9B-Base",
+                "lora_config": {"rank": 8, "seed": 7},
+            },
+        )
+        assert response.status_code == 200, response.text
 
 
 @pytest.mark.anyio

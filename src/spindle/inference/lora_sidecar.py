@@ -14,16 +14,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from stitch.types import VersionConstraint, VersionRef
 
+from spindle.configuration import ROUTING_SOURCES, RoutingSource
 from spindle.startup_timing import timeline
 
 from .bulletin import SnapshotBulletin, SnapshotNotFound
 from .request_replay import RequestReplay
 from .kv_events import KVEventSubscriber
-from .routing_state import (
-    ROUTING_SOURCES,
-    RoutingSource,
-    RoutingState,
-)
+from .routing_state import RoutingState
 
 
 ABORT_TIMEOUT_SECONDS = 2.0

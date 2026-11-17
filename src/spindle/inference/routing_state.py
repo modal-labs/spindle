@@ -8,14 +8,14 @@ import os
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Literal, NotRequired, TypedDict
+from typing import NotRequired, TypedDict
 
 import httpx
 
+from spindle.configuration import RoutingSource
+
 from .kv_events import KVEventSubscriber
 
-RoutingSource = Literal["hook", "kv_events", "compare"]
-ROUTING_SOURCES: tuple[RoutingSource, ...] = ("hook", "kv_events", "compare")
 ROUTING_CATALOG_PATH = Path("/tmp/spindle-routing-work.json")
 ROUTING_CATALOG_REFRESH_SECONDS = 0.5
 ROUTING_SUBSCRIBER_MAX_AGE_SECONDS = 2.5

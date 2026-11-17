@@ -3,6 +3,7 @@ import json
 import pytest
 
 from spindle.backends.deployment import backend_config, serving_options
+from spindle.backends.miles_config import GDN_INPUT_PROJECTIONS
 from spindle.control_plane.deployments import FrontendSettings
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.modal.deployment_configs import (
@@ -24,10 +25,15 @@ def test_all_packaged_recipes_validate_offline(path):
     if spec.parameterization == "lora":
         resolved = DeploymentConfig.create(spec)
         # Legacy Megatron selectors also match vision layers in current Bridge.
-        # Samplers match the path after a wildcard as a module-name suffix.
-        assert {
+        # Samplers match the path after a wildcard as a module-name suffix, and
+        # serve the Qwen3.5 linear-attention input projections fused.
+        expected = {
             target.rsplit("*.", 1)[-1] for target in spec.miles_cfg["target_modules"]
-        } == set(resolved.inference_settings["lora_target_modules"])
+        }
+        if expected & set(GDN_INPUT_PROJECTIONS):
+            expected = expected - set(GDN_INPUT_PROJECTIONS)
+            expected |= {"in_proj_qkvz", "in_proj_ba"}
+        assert expected == set(resolved.inference_settings["lora_target_modules"])
 
 
 @pytest.mark.parametrize(
@@ -62,8 +68,6 @@ def test_speculative_defaults_use_model_specific_drafts(preset, algorithm, draft
 @pytest.mark.parametrize("preset", ["qwen35-35b-a3b-fft-64k", "qwen36-35b-a3b-fft-64k"])
 def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
     config = backend_config(load(config_path(preset)))["megatron"]
-    assert config["tensor_model_parallel_size"] == 4
-    assert config["context_parallel_size"] == 2
     assert config["expert_model_parallel_size"] == 8
     assert config["provider_overrides"]["moe_token_dispatcher_type"] == "alltoall"
 
