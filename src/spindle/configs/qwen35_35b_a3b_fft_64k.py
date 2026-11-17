@@ -8,7 +8,7 @@ class Config(BaseConfig):
     parameterization = "full"
     model = "Qwen/Qwen3.5-35B-A3B"
     max_context_length = 65536
-    trainer_gpu = ["B200", "B300"]
+    trainer_gpu = ["B300", "B200"]
     trainer_gpus_per_node = 8
     backend = "megatron"
     megatron_cfg = {
