@@ -11,6 +11,8 @@ class Config(BaseConfig):
     trainer_gpu = "B200"
     trainer_gpus_per_node = 8
     trainer_rdma = True
+    trainer_cpu = 32
+    trainer_memory_mib = 131072
     trainer_env = {
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
