@@ -1046,7 +1046,7 @@ def test_seed_on_older_image_is_rejected_without_touching_live_slots(tmp_path):
     backend = _backend(tmp_path, runtime)
     backend.accept_model("existing", _spec())
     previous = list(runtime.calls)
-    with pytest.raises(ValueError, match="seed-enabled Miles trainer image"):
+    with pytest.raises(ValueError, match=r"Miles load_slot\(seed="):
         backend.accept_model(
             "seeded",
             ModelSpec(

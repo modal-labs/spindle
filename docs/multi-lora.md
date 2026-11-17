@@ -25,11 +25,6 @@ Clients using the same definition may share an engine depending on available slo
 
 From the perspective of the Tinker client, the usage of multi-lora engines is completely identical to Tinker. Below, we detail some considerations for extracting maximum performance from our multi-lora system. 
 
-Select a [seed-enabled Miles trainer image](deployment-configs.md#images), such
-as `trainer_image = "miles-v0.1.1-ce494f0"`, and redeploy the trainer. Existing
-frozen images continue to support unseeded clients; seeded clients get a clear
-error asking for a newer image.
-
 Pass `seed` to the stock Tinker SDK to reproduce an adapter's initial weights:
 
 ```python
@@ -45,18 +40,7 @@ the default initialization behavior. This controls initialization only; sampling
 uses `tinker.SamplingParams(seed=...)`, and training order can still vary.
 
 Full training reproducibility also requires deterministic kernels and fixed input
-and batching order. The [GPU seed check](../scripts/check_lora_seed_gpu.py)
-reproduced initial and trained weights exactly for Qwen3-8B and DeepSeek-V2-Lite
-on a single H100 with Miles v0.1.1 and v0.2.0, across three optimizer steps.
-The MLA check covers expert adapters and 27 replicated projections. DeepSeek
-required `cli_options` with `deterministic_mode = true`,
-`cross_entropy_loss_fusion = false`, and `tp_comm_overlap = false`, plus
-`NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`, `CUBLAS_WORKSPACE_CONFIG=:4096:8`, and
-`NCCL_ALGO=Ring` in the trainer environment. Its training diverged with the
-same seed when deterministic mode was disabled. These checks do not establish
-reproducibility across different hardware, versions, or batching orders.
-[Validation results](assets/lora-validation/seed-reproducibility.json) record
-the exact Miles commits, settings, and weight hashes.
+and batching order. A seed alone does not guarantee identical training outputs.
 
 ## Submit training work
 

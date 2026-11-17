@@ -619,8 +619,8 @@ class MilesCommandBackend(Backend):
             )
         if state.seed is not None and not self.runtime.supports_seed:
             raise ValueError(
-                "per-model seeds require a seed-enabled Miles trainer image; "
-                "select miles-v0.1.1-ce494f0 or another seed-enabled Miles image"
+                "per-model seeds require Miles load_slot(seed=...); "
+                "update Miles and redeploy the trainer"
             )
         configured = lora_target_flags(self.config.target_modules)
         requested = (state.train_attn, state.train_mlp, state.train_unembed)
