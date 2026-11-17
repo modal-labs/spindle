@@ -117,7 +117,10 @@ class MilesRuntime:
         *,
         checkpoint: str | None = None,
         restore_optimizer: bool = True,
+        seed: int | None = None,
     ) -> None:
+        if seed is not None and checkpoint is None:
+            self._run(self._trainer._execute_slots("seed_slot", slot=slot, seed=seed))
         self._run(
             self._bridge.load_slot(
                 slot,

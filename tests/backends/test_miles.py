@@ -44,7 +44,9 @@ class FakeMilesRuntime:
         *,
         checkpoint=None,
         restore_optimizer=True,
+        seed=None,
     ):
+        self.last_seed = seed
         self.calls.append(
             ("load_slot", slot, rank, alpha, checkpoint, restore_optimizer)
         )
@@ -687,15 +689,26 @@ def test_sampler_snapshots_persist_concurrently_without_crossing_adapters(
     assert not backend._sampler_captures
 
 
-def test_backend_rejects_unsupported_per_model_miles_options(tmp_path) -> None:
-    backend = _backend(tmp_path)
-    with pytest.raises(ValueError, match="per-model seeds"):
+@pytest.mark.parametrize("seed", [None, 0, 7])
+def test_backend_accepts_per_model_seed(tmp_path, seed) -> None:
+    runtime = FakeMilesRuntime()
+    backend = _backend(tmp_path, runtime)
+    spec = ModelSpec(
+        base_model="Qwen/Qwen3-4B",
+        parameterization="lora",
+        lora_config=LoraConfig(rank=8, seed=seed),
+    )
+    backend.accept_model("model-a", spec)
+    backend.accept_model("model-a", spec)
+    assert backend.jobs["model-a"].seed == runtime.last_seed == seed
+    assert len(runtime.calls) == 1
+    with pytest.raises(ValueError, match="different specification"):
         backend.accept_model(
             "model-a",
             ModelSpec(
-                base_model="Qwen/Qwen3-4B",
+                base_model=spec.base_model,
                 parameterization="lora",
-                lora_config=LoraConfig(rank=8, seed=7),
+                lora_config=LoraConfig(rank=8, seed=42),
             ),
         )
 

@@ -86,6 +86,12 @@ class ProfiledActor:
 
     _spindle_profiler: RankProfiler | None = None
 
+    def seed_slot(self, slot: int, seed: int) -> None:
+        # The Megatron helpers are only installed in GPU trainer images.
+        from spindle.backends.lora_seed import reset_adapter_slot_with_seed
+
+        reset_adapter_slot_with_seed(self.model, slot, seed)
+
     def torch_profile_start(self) -> None:
         if not TorchProfileConfig.from_env().profiles_rank(dist.get_rank()):
             self._spindle_profiler = None
