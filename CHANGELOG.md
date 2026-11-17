@@ -10,6 +10,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
+- Malformed `spindle add` fields such as `--=1` reach recipe validation instead of being parsed as abbreviated top-level options.
+
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
 - `miles-v0.2.0` trainers with two GPUs no longer hang at start-up. Ray now starts with enough CPUs for the extra workers this image runs.
 - When a `forward_backward` or `forward` call runs out of GPU memory on a Miles LoRA trainer, the request fails with an out-of-memory error and the trainer keeps serving, with earlier gradients kept. This covers one-GPU trainers and dense models that use only data parallelism. Other layouts still restart the trainer.
