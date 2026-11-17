@@ -28,6 +28,7 @@ from spindle.errors import (
     RecordUnavailable,
     SequenceConflict,
 )
+from spindle.inference.sampling import validate_sample_request
 from spindle.proto import tinker_public_pb2
 from spindle.proto.responses import PROTOBUF_MEDIA_TYPE, EncodedResult, encode_result
 from spindle.providers.contracts import Parameterization
@@ -644,6 +645,7 @@ def create_control_plane_app(
         request = body.model_dump(mode="json")
         if body.cache_affinity_key is None:
             request.pop("cache_affinity_key")
+        validate_sample_request(request)
         request_id = await control_plane.submit_sample(request)
         # Return one sequence id per sample, derived from the idempotent request
         # id so a resubmitted sample gets the same ids. Tinker SDK 0.26 and

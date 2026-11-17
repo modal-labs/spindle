@@ -13,6 +13,7 @@ from spindle.engine import Engine, FutureStatus, backend_http
 from spindle.engine.api import Command, OperationKind
 from spindle.engine.backend_http import HttpBackendClient, create_backend_app
 from spindle.engine.operations import parse_operation_payload
+from spindle.errors import TrainerOutOfMemory
 from tests.support import EchoExecutor
 
 MODEL_SPEC = {"base_model": "test/model", "parameterization": "full"}
@@ -78,11 +79,12 @@ def test_engine_runs_operations_over_backend_http() -> None:
     asyncio.run(run())
 
 
-def test_backend_errors_cross_http() -> None:
+@pytest.mark.parametrize("error", [RuntimeError, TrainerOutOfMemory])
+def test_backend_errors_cross_http(error) -> None:
     async def run() -> None:
         class FailingExecutor(EchoExecutor):
             async def execute(self, model_id, kind, payload):
-                raise RuntimeError("cuda out of memory")
+                raise error("cuda out of memory")
 
         executor = http_executor(FailingExecutor())
         server = Engine(executor)
@@ -90,7 +92,7 @@ def test_backend_errors_cross_http() -> None:
         await server.optim_step({"model_id": "model-a", "seq_id": 1, "adam_params": {}})
         state = await server.retrieve_future("model-a:1", timeout=2.0)
         assert state.status == FutureStatus.FAILED
-        assert state.error == "RuntimeError: cuda out of memory"
+        assert state.error == f"{error.__name__}: cuda out of memory"
         await server.close()
         await executor.close()
 
