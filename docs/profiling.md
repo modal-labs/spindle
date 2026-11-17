@@ -63,6 +63,8 @@ SPINDLE_TORCH_PROFILE_STEP=2 uv run spindle deploy deployment.py --refresh-train
 | `SPINDLE_TORCH_PROFILE_STEP` | unset (off) | Step to trace. Steps count prior `optim_step` calls from 0; avoid 0, which includes kernel compilation. |
 | `SPINDLE_TORCH_PROFILE_RANKS` | `0` | Ranks to trace, such as `0,4` or `all`. About 250 MB each. |
 | `SPINDLE_TORCH_PROFILE_DIR` | `/checkpoints/torch-profile/<config name>` | Output directory on the checkpoint volume. |
+| `SPINDLE_TORCH_PROFILE_SHAPES` | unset | `1` records tensor shapes. Makes the trace larger. |
+| `SPINDLE_TORCH_PROFILE_MEMORY` | unset | `1` records memory allocations. Makes the trace larger. |
 
 - A running trainer keeps its old settings until it idles out. To be sure the
   trace is taken, profile a [variant](deployment-configs.md#variants) with its
@@ -75,8 +77,9 @@ SPINDLE_TORCH_PROFILE_STEP=2 uv run spindle deploy deployment.py --refresh-train
   `spindle/optim_step` and `spindle/export_slot_peft`.
 - Files: `rank<N>.trace.json.gz` (timeline) and `rank<N>.key_averages.txt`
   (top 60 operators by GPU time).
-- Writing the trace takes minutes and delays the next update. Leave the profiled
-  step and the next one out of timing comparisons.
+- A separate process writes the files after the step, so the trainer keeps
+  serving. Each traced rank logs `"state": "written"` when its files are done.
+  Leave the profiled step and the next one out of timing comparisons.
 
 Download from the checkpoint volume (`platform.storage.checkpoints`, default
 `spindle-checkpoints`):

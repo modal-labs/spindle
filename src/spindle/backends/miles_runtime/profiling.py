@@ -1,22 +1,27 @@
 from __future__ import annotations
 
 import contextlib
-import gzip
+import gc
 import json
 import os
-import tempfile
+import signal
 import threading
 import time
+import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import NoReturn
 
 import torch
 
 PROFILE_STEP_ENV = "SPINDLE_TORCH_PROFILE_STEP"
 PROFILE_DIR_ENV = "SPINDLE_TORCH_PROFILE_DIR"
 PROFILE_RANKS_ENV = "SPINDLE_TORCH_PROFILE_RANKS"
+PROFILE_SHAPES_ENV = "SPINDLE_TORCH_PROFILE_SHAPES"
+PROFILE_MEMORY_ENV = "SPINDLE_TORCH_PROFILE_MEMORY"
 
 _MAX_TRACKED_STEPS = 8
+_WRITE_TIMEOUT_S = 15 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +32,8 @@ class TorchProfileConfig:
     output_dir: str
     ranks: frozenset[int] | None = frozenset({0})
     """Trainer ranks that record a trace; ``None`` means every rank."""
+    record_shapes: bool = False
+    profile_memory: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> TorchProfileConfig:
@@ -48,7 +55,13 @@ class TorchProfileConfig:
             "torch-profile",
             env.get("SPINDLE_DEFINITION_ID", "trainer"),
         )
-        return cls(step=step, output_dir=output_dir, ranks=ranks)
+        return cls(
+            step=step,
+            output_dir=output_dir,
+            ranks=ranks,
+            record_shapes=env.get(PROFILE_SHAPES_ENV) == "1",
+            profile_memory=env.get(PROFILE_MEMORY_ENV) == "1",
+        )
 
     @property
     def enabled(self) -> bool:
@@ -166,22 +179,35 @@ class StepPhaseTimer:
 class RankProfiler:
     """Rank-local torch.profiler wrapper usable in any process."""
 
-    def __init__(self) -> None:
+    _writer: threading.Thread | None = None
+
+    def __init__(
+        self, *, record_shapes: bool = False, profile_memory: bool = False
+    ) -> None:
+        self._record_shapes = record_shapes
+        self._profile_memory = profile_memory
         self._profile: torch.profiler.profile | None = None
 
+    @classmethod
+    def wait_for_writer(cls) -> None:
+        if cls._writer is not None:
+            cls._writer.join()
+
     def start(self) -> None:
+        RankProfiler.wait_for_writer()
         self._profile = torch.profiler.profile(
             activities=[
                 torch.profiler.ProfilerActivity.CPU,
                 torch.profiler.ProfilerActivity.CUDA,
             ],
-            record_shapes=True,
-            profile_memory=True,
+            record_shapes=self._record_shapes,
+            profile_memory=self._profile_memory,
             with_stack=False,
         )
         self._profile.__enter__()
 
     def stop(self, output_dir: str, name: str) -> dict[str, str]:
+        """Stop on the thread that called ``start``; a child process writes the files."""
         if self._profile is None:
             raise RuntimeError("RankProfiler.stop() called without start()")
         if torch.cuda.is_available():
@@ -189,24 +215,58 @@ class RankProfiler:
         profile = self._profile
         self._profile = None
         profile.__exit__(None, None, None)
+        paths = {
+            "trace": os.path.join(output_dir, f"{name}.trace.json.gz"),
+            "table": os.path.join(output_dir, f"{name}.key_averages.txt"),
+        }
+        # A child process keeps the GIL-bound export off the training thread.
+        pid = os.fork()
+        if pid == 0:
+            _write_in_child(profile, output_dir, name, paths)
+        RankProfiler._writer = threading.Thread(
+            target=_report_when_written, args=(pid, paths), daemon=True
+        )
+        RankProfiler._writer.start()
+        return paths
+
+
+def _write_in_child(
+    profile: torch.profiler.profile, output_dir: str, name: str, paths: dict[str, str]
+) -> NoReturn:
+    # A collection here would copy the parent's heap and run its finalizers.
+    gc.disable()
+    os.nice(10)
+    code = 0
+    try:
         os.makedirs(output_dir, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", dir=output_dir, delete=False
-        ) as temporary:
-            temporary_path = temporary.name
-        try:
-            profile.export_chrome_trace(temporary_path)
-            trace_path = os.path.join(output_dir, f"{name}.trace.json.gz")
-            with (
-                open(temporary_path, "rb") as source,
-                gzip.open(trace_path, "wb") as target,
-            ):
-                target.write(source.read())
-        finally:
-            os.unlink(temporary_path)
-        table_path = os.path.join(output_dir, f"{name}.key_averages.txt")
-        with open(table_path, "w", encoding="utf-8") as table:
-            table.write(
-                profile.key_averages().table(sort_by="cuda_time_total", row_limit=60)
-            )
-        return {"trace": trace_path, "table": table_path}
+        partial = os.path.join(output_dir, f".{name}.trace.json.gz")
+        profile.export_chrome_trace(partial)
+        os.replace(partial, paths["trace"])
+        table = profile.key_averages().table(sort_by="cuda_time_total", row_limit=60)
+        with open(paths["table"], "w", encoding="utf-8") as file:
+            file.write(table)
+    except BaseException:
+        traceback.print_exc()
+        code = 1
+    os._exit(code)
+
+
+def _report_when_written(pid: int, paths: dict[str, str]) -> None:
+    started = time.perf_counter()
+    while not (finished := os.waitpid(pid, os.WNOHANG))[0]:
+        if time.perf_counter() - started > _WRITE_TIMEOUT_S:
+            os.kill(pid, signal.SIGKILL)
+        time.sleep(1)
+    exit_code = os.waitstatus_to_exitcode(finished[1])
+    print(
+        json.dumps(
+            {
+                "event": "spindle_torch_profile",
+                "state": "written" if exit_code == 0 else "error",
+                "exit_code": exit_code,
+                "files": list(paths.values()),
+                "seconds": round(time.perf_counter() - started, 3),
+            }
+        ),
+        flush=True,
+    )
