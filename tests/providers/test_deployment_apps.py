@@ -26,9 +26,8 @@ from spindle.providers.modal import (
     deployment_configs,
     fft_pool,
     glm53_image,
-    glm53_trainer_image,
     lora_pool,
-    miles_image,
+    miles_v011_image,
     miles_v012_image,
     miles_v020_image,
     rollout_image,
@@ -506,7 +505,7 @@ def test_declared_compute_settings_reach_modal(builders):
 
 def test_recipes_select_trainer_images(builders, monkeypatch):
     image_for = deployment_apps.image_for
-    assert image_for("miles") is miles_image.image_02_52a7a99
+    assert image_for("miles") is miles_v011_image.image_02_52a7a99
     assert image_for("megatron") is deployment_apps.megatron_image
     assert image_for("sglang") is rollout_image.image_01_c4182b2
     assert (
@@ -543,10 +542,9 @@ def test_bundled_configs_pin_their_own_images(path, monkeypatch):
 
 
 FORK_IMAGE_MODULES = (
-    miles_image,
+    miles_v011_image,
     miles_v012_image,
     miles_v020_image,
-    glm53_trainer_image,
     rollout_image,
     deepseek_v41_image,
     glm53_image,
@@ -582,15 +580,15 @@ def image_assignments(module):
 
 @pytest.mark.parametrize("module", FORK_IMAGE_MODULES, ids=lambda m: m.__name__)
 def test_image_variables_build_the_commit_they_are_named_after(module):
-    sequence = []
+    series = {}
     for variable, pins in image_assignments(module):
         number, short = IMAGE_VARIABLE.fullmatch(variable).groups()
         assert pins and all(pin.startswith(short) for pin in pins), variable
-        if (number, short) not in sequence:
-            sequence.append((number, short))
-    assert [number for number, _ in sequence] == [
-        f"{index:02}" for index in range(1, len(sequence) + 1)
-    ]
+        series.setdefault(variable.removesuffix(f"{number}_{short}"), []).append(number)
+    for prefix, numbers in series.items():
+        assert numbers == [f"{index:02}" for index in range(1, len(numbers) + 1)], (
+            prefix
+        )
 
 
 @functools.cache

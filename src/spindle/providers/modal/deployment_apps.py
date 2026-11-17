@@ -35,8 +35,7 @@ from .app_tags import app_tags
 from . import (
     deepseek_v41_image,
     glm53_image,
-    glm53_trainer_image,
-    miles_image,
+    miles_v011_image,
     miles_v012_image,
     miles_v020_image,
     rollout_image,
@@ -65,12 +64,12 @@ from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
 # Named images are frozen: add a new name instead of editing one. See docs/deployment-configs.md#images.
 TRAINER_IMAGES = {
-    "miles-v0.1.1-fdd808c": miles_image.image_01_fdd808c,
-    "miles-v0.1.1-52a7a99": miles_image.image_02_52a7a99,
+    "miles-v0.1.1-fdd808c": miles_v011_image.image_01_fdd808c,
+    "miles-v0.1.1-52a7a99": miles_v011_image.image_02_52a7a99,
     "miles-v0.1.2-f2f8447": miles_v012_image.image_01_f2f8447,
     "miles-v0.1.2-99e1ebe": miles_v012_image.image_02_99e1ebe,
-    "miles-v0.1.2-464efc9-glm53": glm53_trainer_image.image_01_464efc9,
-    "miles-v0.1.2-99e1ebe-glm53": glm53_trainer_image.image_02_99e1ebe,
+    "miles-v0.1.2-464efc9-glm53": miles_v012_image.glm53_image_01_464efc9,
+    "miles-v0.1.2-99e1ebe-glm53": miles_v012_image.glm53_image_02_99e1ebe,
     "miles-v0.2.0-15afe21": miles_v020_image.image_01_15afe21,
     "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
     "megatron-2d1fa8d": megatron_image,
