@@ -72,9 +72,10 @@ The Qwen3.5 variants additionally select `in_proj_qkv`, `in_proj_z`, and
 Miles splits the selected GDN QKV projection into independent Q/K/V adapters.
 The other four models use the native recipes selected by the PR.
 
-The Qwen3.5 validation image applies a local source patch over SGLang
-`90785332`; that patch is not in the default sampler pin. Without it, sampler
-startup fails with `get_hidden_dim not implemented for in_proj_qkv`. The patch
+The Qwen3.5 validation image applied the GDN alias patch over SGLang
+`90785332`. The same model source is now pinned at `ca6f7e1a9`
+([SGLang #100](https://github.com/modal-projects/sglang/pull/100)). Without the fix,
+sampler startup fails with `get_hidden_dim not implemented for in_proj_qkv`. The patch
 maps both trainer names and split adapter names onto `in_proj_qkvz` through
 SGLang's existing model alias mechanism. It leaves the adapter factors
 independent. The aliases cover dense and MoE text and conditional-generation

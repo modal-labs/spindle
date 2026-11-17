@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Fixed
+
+- Qwen3.5 native LoRA sampler startup maps GDN trainer and split-adapter target names to the fused serving buffer.
+
 ### Changed
 
 - The Qwen3-8B, Qwen3-4B, Qwen2.5-3B and Qwen2.5-7B-Instruct LoRA recipes use Miles v0.2.0 native canonical multi-LoRA. Each projection has independent adapter factors. Their previous checkpoints require the original trainer image and adapter layout. Custom recipes can select `trainer_image = "miles-v0.2.0"` and set `megatron_to_hf_mode = "raw"` and `lora_type = "canonical_lora"` in `miles_cfg`.
