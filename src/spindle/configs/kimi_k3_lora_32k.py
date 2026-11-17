@@ -45,6 +45,7 @@ class Config(BaseConfig):
         "default_lora_alpha": 32,
         "cli_options": {
             "model_name": "kimi_k3",
+            "lora_type": "canonical_lora",
             # The adapter layout Kimi K3 LoRA requires, even with routed experts frozen.
             "experts_shared_outer_loras": True,
             "attention_backend": "auto",

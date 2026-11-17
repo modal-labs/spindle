@@ -129,6 +129,14 @@ def backend_config(spec, asset_path="/assets/pending"):
         raise ValueError("expert parallel sizes must divide the trainer GPU allocation")
     if spec.trainer_max_clients_per_instance > config.max_lora_slots:
         raise ValueError("max_clients_per_instance exceeds max_lora_slots")
+    if (
+        spec.trainer_image == "miles-v0.2.0"
+        and config.megatron_to_hf_mode == "raw"
+        and config.cli_options.get("lora_type") != "canonical_lora"
+    ):
+        raise ValueError(
+            "miles-v0.2.0 with megatron_to_hf_mode raw requires lora_type canonical_lora"
+        )
     settings = {"miles": config.model_dump(), "checkpoint_dir": "/checkpoints"}
     if spec.trainer_nodes > 1:
         # Captures on the shared volume let every node's shards be assembled.

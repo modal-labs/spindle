@@ -731,6 +731,12 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
         backend_config(spec)
 
 
+def test_miles_v020_raw_mode_requires_canonical_lora():
+    spec = recipe("kimi-k3-lora-32k", miles_cfg__cli_options__lora_type="lora")
+    with pytest.raises(ValueError, match="canonical_lora"):
+        backend_config(spec)
+
+
 def test_backend_dispatch_rejects_unknown_backend():
     with pytest.raises(ValueError, match="backend"):
         backend_config(recipe(backend="missing"))

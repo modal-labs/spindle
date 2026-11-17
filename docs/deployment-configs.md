@@ -145,7 +145,7 @@ Miles checkpoints require the same runtime commit by default. For debugging only
 
 `trainer_image` selects a named trainer image instead of the backend default; the names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py). The multi-LoRA actor runs on Miles v0.1.1 (the default), v0.1.2 (`miles-v0.1.2`), and v0.2.0 (`miles-v0.2.0`).
 
-`miles-v0.2.0` supports both `megatron_to_hf_mode` values, `bridge` and `raw`. Every Miles image trains the same adapter layout, one `lora_A` shared across each fused projection, and exports a standard PEFT adapter to the samplers.
+By default, every Miles image trains one `lora_A` shared across each fused projection and exports a standard PEFT adapter to the samplers. `miles-v0.2.0` also runs with `megatron_to_hf_mode` set to `raw`. Then set `lora_type` to `canonical_lora` in `cli_options`, because Miles' raw mode gives each projection its own `lora_A`. Spindle rejects the deployment otherwise.
 
 A checkpoint restores only on a trainer with the same Miles revision as the one that saved it, so keep the original image to restore older checkpoints after switching images.
 
