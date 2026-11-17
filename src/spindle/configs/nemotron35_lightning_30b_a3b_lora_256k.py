@@ -1,4 +1,4 @@
-from spindle.configs.nemotron35_lightning_30b_a3b_lora_64k import Config as Parent
+from spindle.configs.nemotron35_lightning_30b_a3b_lora_64k_h200 import Config as Parent
 
 
 class Config(Parent):
