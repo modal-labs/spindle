@@ -781,7 +781,7 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
 )
 def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
     with pytest.raises(ValueError, match=match):
-        backend_config(recipe(trainer_image="miles-v0.2.0-15afe21", **changes))
+        backend_config(recipe(trainer_image="miles-v0.2.0-8c5de26", **changes))
 
 
 def test_backend_dispatch_rejects_unknown_backend():

@@ -65,20 +65,12 @@ from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 # Named images are frozen: add a new name instead of editing one. See docs/deployment-configs.md#images.
 # Each entry notes the fork PR that last changed its commit.
 TRAINER_IMAGES = {
-    # https://github.com/modal-projects/miles/pull/16 Support Tinker SDK 0.29+ in Miles' Tinker layer
-    "miles-v0.1.1-fdd808c": miles_v011_image.image_01_fdd808c,
     # https://github.com/modal-projects/miles/pull/42 Support per-adapter seeds in the v0.1.1 LoRA slot API
     "miles-v0.1.1-52a7a99": miles_v011_image.image_02_52a7a99,
-    # https://github.com/modal-projects/miles/pull/30 Prefetch the DeepSeek-V4.1 Engram tables at load
-    "miles-v0.1.2-f2f8447": miles_v012_image.image_01_f2f8447,
     # https://github.com/modal-projects/miles/pull/43 Support per-adapter seeds in the v0.1.2 LoRA slot API (on top of #31)
     "miles-v0.1.2-99e1ebe": miles_v012_image.image_02_99e1ebe,
-    # https://github.com/modal-projects/miles/pull/31 Support GLM-5.3 with a pinned provider dependency
-    "miles-v0.1.2-464efc9-glm53": miles_v012_image.glm53_image_01_464efc9,
     # https://github.com/modal-projects/miles/pull/43 Support per-adapter seeds in the v0.1.2 LoRA slot API
     "miles-v0.1.2-99e1ebe-glm53": miles_v012_image.glm53_image_02_99e1ebe,
-    # https://github.com/modal-projects/miles/pull/38 Replay Spindle trainer fixes onto Miles v0.2.0
-    "miles-v0.2.0-15afe21": miles_v020_image.image_01_15afe21,
     # https://github.com/modal-projects/miles/pull/44 Support per-adapter seeds in the v0.2.0 LoRA slot API (on top of #37, Beam LoRA)
     "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
     # Upstream NVIDIA/Megatron-LM commit; no Spindle fork
