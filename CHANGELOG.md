@@ -4,7 +4,6 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
-
 ### Changed
 
 - MoE LoRA training on the default Miles images gives the expert token permute a scatter-add backward, which is faster than the BF16 index_add it replaces.
