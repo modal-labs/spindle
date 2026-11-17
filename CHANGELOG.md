@@ -14,6 +14,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - `miles-v0.2.0` trainers with two GPUs no longer hang at start-up. Ray now starts with enough CPUs for the extra workers this image runs.
 - Miles LoRA trainers deployed with `SPINDLE_TORCH_PROFILE_STEP` no longer crash after the profiled step when the client sends the next `forward_backward` while sampler weights are still publishing. The trainer no longer writes `controller.trace.json.gz` or `controller.key_averages.txt`; the per-GPU `rank<N>` traces are unchanged.
 - `create_lora_training_client` now fails right away with a 400 when the deployment can't train the requested LoRA: a rank above its maximum, a different `train_attn` or `train_mlp`, or `train_unembed=False` on a deployment that trains the unembedding. The error names the settings to use. Before, it came only after a trainer had started and loaded the model.
+- When a trainer's container stops without Spindle stopping it, for example when its GPU host is reclaimed, Modal no longer brings up a replacement that loads the base model and sits idle. Its models are still lost; a new trainer starts when a client creates a model again.
 
 ### Changed
 

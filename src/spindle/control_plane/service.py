@@ -867,23 +867,21 @@ class ControlPlane:
     async def _unload_model(self, model_id: str) -> tuple[ModelRecord, bool]:
         model = await self.get_model(model_id)
         placement = await self._placement(model.model_id)
-        live = None
+        released = False
         if placement is not None:
             instance = await self.engines.get_instance(placement.engine_instance_id)
             if instance is not None and not instance.terminal:
-                live = instance
-        if live is not None:
-            await self.engines.client(live.instance_id).unload_model(model.model_id)
-        # First, or a reconcile pass can see it unplaced and start a trainer.
-        await self._forget_demand(model.model_id)
-        if placement is not None:
-            if live is not None:
-                await self._release_placement(
-                    placement.model_id, placement.engine_definition_id
+                await self.engines.client(instance.instance_id).unload_model(
+                    model.model_id
                 )
-            else:
-                await self.kv.delete(placement_key(model.model_id))
-        return model, live is not None
+                released = True
+        # Before the placement, so a reconcile pass never sees an unplaced model.
+        await self._forget_demand(model.model_id)
+        if released:
+            await self._release_placement(model.model_id, model.engine_definition_id)
+        elif placement is not None:
+            await self.kv.delete(placement_key(model.model_id))
+        return model, released
 
     async def retrieve(
         self,
