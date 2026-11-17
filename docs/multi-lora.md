@@ -25,6 +25,11 @@ Clients using the same definition may share an engine depending on available slo
 
 From the perspective of the Tinker client, the usage of multi-lora engines is completely identical to Tinker. Below, we detail some considerations for extracting maximum performance from our multi-lora system. 
 
+Select a [seed-enabled Miles trainer image](deployment-configs.md#images), such
+as `trainer_image = "miles-v0.1.1-ce494f0"`, and redeploy the trainer. Existing
+frozen images continue to support unseeded clients; seeded clients get a clear
+error asking for a newer image.
+
 Pass `seed` to the stock Tinker SDK to reproduce an adapter's initial weights:
 
 ```python

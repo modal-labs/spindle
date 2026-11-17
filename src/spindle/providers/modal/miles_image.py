@@ -1,3 +1,5 @@
+import modal
+
 import json
 import re
 import subprocess
@@ -116,34 +118,38 @@ DSA_KERNEL_INSTALL = (
 )
 
 
-image = (
-    miles_base_image(
-        BASE_IMAGE,
-        {
-            "LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH",
-            "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-        },
+def build_image(miles_commit: str) -> modal.Image:
+    return (
+        miles_base_image(
+            BASE_IMAGE,
+            {
+                "LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH",
+                "CUDA_DEVICE_MAX_CONNECTIONS": "1",
+            },
+        )
+        .pip_install(
+            *MEGATRON_RUNTIME_PACKAGES,
+            "xxhash==3.7.1",
+            "transformers==5.12.1",
+            *MILES_EXTRA_PACKAGES,
+        )
+        .run_function(_check_release, kwargs={"miles_commit": MILES_RELEASE_COMMIT})
+        .run_commands(
+            f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {miles_commit}"
+            f" && git -C {MILES_PATH} checkout -B {MILES_BRANCH} FETCH_HEAD",
+            BRIDGE_IMPORT_CACHE_INSTALL,
+        )
+        .run_commands(
+            "pip install --no-deps 'peft>=0.18.1'",
+            MEGATRON_RUNTIME_CHECK,
+            'python -c "from miles.ray.train.group import TrainerController as T; '
+            "assert all(hasattr(T, name) for name in "
+            "('load_slot', 'unload_slot', 'forward_backward', "
+            "'forward_only', 'optim_step', 'save_slot', 'export_slot'))\"",
+        )
+        .run_commands(DSA_KERNEL_INSTALL)
+        .add_local_python_source("spindle", ignore=ignore_config_source)
     )
-    .pip_install(
-        *MEGATRON_RUNTIME_PACKAGES,
-        "xxhash==3.7.1",
-        "transformers==5.12.1",
-        *MILES_EXTRA_PACKAGES,
-    )
-    .run_function(_check_release, kwargs={"miles_commit": MILES_RELEASE_COMMIT})
-    .run_commands(
-        f"git -C {MILES_PATH} fetch --depth=1 {MILES_REPOSITORY} {MILES_COMMIT}"
-        f" && git -C {MILES_PATH} checkout -B {MILES_BRANCH} FETCH_HEAD",
-        BRIDGE_IMPORT_CACHE_INSTALL,
-    )
-    .run_commands(
-        "pip install --no-deps 'peft>=0.18.1'",
-        MEGATRON_RUNTIME_CHECK,
-        'python -c "from miles.ray.train.group import TrainerController as T; '
-        "assert all(hasattr(T, name) for name in "
-        "('load_slot', 'unload_slot', 'forward_backward', "
-        "'forward_only', 'optim_step', 'save_slot', 'export_slot'))\"",
-    )
-    .run_commands(DSA_KERNEL_INSTALL)
-    .add_local_python_source("spindle", ignore=ignore_config_source)
-)
+
+
+image = build_image(MILES_COMMIT)
