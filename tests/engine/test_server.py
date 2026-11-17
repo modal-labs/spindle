@@ -4,7 +4,12 @@ import json
 import pytest
 
 from spindle.engine import Engine, FutureStatus, OperationKind
-from spindle.errors import EngineSaturated, RecordNotFound, SequenceConflict
+from spindle.errors import (
+    EngineSaturated,
+    RecordNotFound,
+    SequenceConflict,
+    TrainerOutOfMemory,
+)
 from tests.support import EchoExecutor
 
 
@@ -759,6 +764,62 @@ def test_failed_forward_batch_retries_each_forward_alone() -> None:
         bad = await server.retrieve_future("model-b:1", timeout=1.0)
         assert good.status == FutureStatus.COMPLETE
         assert bad.status == FutureStatus.FAILED and "bad input" in bad.error
+        await server.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("error", [TrainerOutOfMemory, RuntimeError])
+def test_packed_forward_backward_out_of_memory_fails_only_the_oversized_request(
+    error,
+) -> None:
+    async def run() -> None:
+        started, release = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        class Executor(EchoExecutor):
+            async def execute(self, model_id, kind, payload):
+                if kind == OperationKind.OPTIM_STEP:
+                    if not started.is_set():
+                        started.set()
+                        await release.wait()
+                    calls.append((model_id, kind.value))
+                return await super().execute(model_id, kind, payload)
+
+            async def execute_forward_backward_batch(self, executions):
+                models = [item.model_id for item in executions]
+                calls.append(tuple(models))
+                if "model-a" in models:
+                    raise error("out of GPU memory")
+                return await super().execute_forward_backward_batch(executions)
+
+        server = Engine(Executor())
+        for model_id in ("model-a", "model-b", "model-c"):
+            await server.accept_model(model_id, {})
+        await server.optim_step({"model_id": "model-c", "seq_id": 1, "adam_params": {}})
+        await started.wait()
+        await forward_backward(server, 1, model_id="model-a")
+        await forward_backward(server, 1, model_id="model-b")
+        await server.optim_step({"model_id": "model-b", "seq_id": 2, "adam_params": {}})
+
+        release.set()
+        oversized = await server.retrieve_future("model-a:1", timeout=1.0)
+        neighbour = await server.retrieve_future("model-b:1", timeout=1.0)
+        await server.retrieve_future("model-b:2", timeout=1.0)
+        assert oversized.status == FutureStatus.FAILED
+        assert "out of GPU memory" in oversized.error
+        if error is TrainerOutOfMemory:
+            assert neighbour.status == FutureStatus.COMPLETE
+            # Each request reruns alone, before the neighbour's next optim_step.
+            assert calls[1:] == [
+                ("model-a", "model-b"),
+                ("model-a",),
+                ("model-b",),
+                ("model-b", "optim_step"),
+            ]
+        else:
+            assert neighbour.status == FutureStatus.FAILED
+            assert calls[1:3] == [("model-a", "model-b"), ("model-b", "optim_step")]
         await server.close()
 
     asyncio.run(run())
