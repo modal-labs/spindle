@@ -10,7 +10,6 @@ class Config(Parent):
         "trainer_gpu": "H200",
         "trainer_gpus_per_node": 4,
         "trainer_rdma": False,
-        "platform.modal.exclude_reserved_capacity": False,
         "megatron_cfg.context_parallel_size": 2,
         "trainer_env": {
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",

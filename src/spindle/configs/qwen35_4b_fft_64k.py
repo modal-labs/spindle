@@ -11,7 +11,10 @@ class Config(BaseConfig):
     trainer_gpu = "B200"
     trainer_gpus_per_node = 8
     trainer_rdma = True
-    overrides = {"platform.modal.exclude_reserved_capacity": True}
+    trainer_env = {
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCHINDUCTOR_COMPILE_THREADS": "1",
+    }
     backend = "megatron"
     megatron_cfg = {
         "tensor_model_parallel_size": 2,

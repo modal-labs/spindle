@@ -125,7 +125,6 @@ def test_presets_context_topology_and_backend_options():
         blackwell.trainer_gpus_per_node,
         blackwell.trainer_rdma,
     ) == ("B200", 8, True)
-    assert blackwell.platform["modal"]["exclude_reserved_capacity"] is True
     inherited = recipe("qwen35-9b-fft-64k")
     assert (
         inherited.trainer_gpu,
@@ -133,7 +132,6 @@ def test_presets_context_topology_and_backend_options():
         inherited.trainer_rdma,
     ) == ("H200", 4, False)
     assert inherited.megatron_cfg["context_parallel_size"] == 2
-    assert inherited.platform["modal"]["exclude_reserved_capacity"] is False
 
 
 def test_no_model_catalog_required():
