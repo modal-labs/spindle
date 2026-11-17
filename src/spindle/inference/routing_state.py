@@ -243,7 +243,7 @@ class RoutingState:
             "cpu_adapters": work["cpu_adapters"] if work else [],
             "age_seconds": (
                 time.time() - self.catalog["timestamp"]
-                if self.source != "kv_events" and self.catalog
+                if self.source == "hook" and self.catalog
                 else work["age_seconds"]
                 if work
                 else None
