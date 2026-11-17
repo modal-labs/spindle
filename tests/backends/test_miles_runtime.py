@@ -22,6 +22,8 @@ from spindle.errors import BackendFailed
 
 def test_worker_env_carries_volume_names_to_other_nodes(monkeypatch):
     """Actors on worker nodes only see what the pre-existing cluster was given."""
+    for name in miles_runtime._WORKER_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "spindle-checkpoints")
     monkeypatch.setenv("SPINDLE_BULLETIN_VOLUME", "spindle-bulletin")
     monkeypatch.delenv("SPINDLE_BULLETIN_ROOT", raising=False)

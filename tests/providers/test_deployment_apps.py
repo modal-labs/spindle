@@ -769,7 +769,7 @@ def test_trainer_can_exclude_reserved_capacity(builders, monkeypatch, rdma):
     app, _ = deployment_apps.build_trainer_app(row, image="test")
     settings, _ = app.functions["trainer"]
     assert settings["experimental_options"] == (
-        {"efa_enabled": True, "exclude_reserved_capacity": True} if rdma else {}
+        {"efa_enabled": True, "exclude_reserved_capacity": True}
     )
 
 
@@ -861,3 +861,28 @@ def test_launchers_do_not_reparse_backend_config(builders, monkeypatch):
     deployment_apps.build_rollout_app(
         row, LoraPoolSpec(row.definition_id), image="test"
     )
+
+
+def test_reserved_capacity_exclusion_survives_config_roundtrip_for_both_gpu_apps(
+    builders, monkeypatch
+):
+    row = deployment()
+    row.recipe.platform["modal"]["exclude_reserved_capacity"] = True
+    row.recipe.trainer_gpus_per_node = row.recipe.inference_gpus_per_node = 8
+    row = DeploymentConfig.model_validate_json(row.model_dump_json())
+    clusters = []
+
+    def clustered(*, size, rdma):
+        clusters.append((size, rdma))
+        return lambda value: value
+
+    monkeypatch.setattr(modal, "clustered", clustered)
+    trainer_app, _ = deployment_apps.build_trainer_app(row, image="test")
+    sampler_app, _ = deployment_apps.build_rollout_app(
+        row, LoraPoolSpec(row.definition_id), image="test"
+    )
+    trainer_options = trainer_app.functions["trainer"][0]["experimental_options"]
+    sampler_options = sampler_app.servers["Server"][0]["experimental_options"]
+    assert trainer_options["exclude_reserved_capacity"] is True
+    assert sampler_options["exclude_reserved_capacity"] is True
+    assert clusters == [(1, True), (1, True)]

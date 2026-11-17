@@ -139,6 +139,7 @@ class MilesBackendConfig(BaseModel):
     )
     max_tokens_per_gpu: PositiveInteger = 8192
     dynamic_batch_size: bool = True
+    shared_prefix_training: bool = Field(default=False, strict=True)
     align_sequences_to_parallel_layout: bool = False
     extra_args: tuple[str, ...] = ()
     cli_options: dict[str, Any] = Field(default_factory=dict)
@@ -212,7 +213,45 @@ class MilesBackendConfig(BaseModel):
                 "actor_num_gpus_per_node on each node"
             )
 
+        if self.shared_prefix_training:
+            self._validate_shared_prefix()
         return self
+
+    def _validate_shared_prefix(self) -> None:
+        required = {
+            "pipeline_model_parallel_size": 1,
+            "context_parallel_size": 1,
+            "expert_tensor_parallel_size": 1,
+            "qkv_format": "thd",
+            "deterministic_mode": True,
+            "use_rollout_routing_replay": False,
+            "enable_mtp_training": False,
+            "attention_dropout": 0.0,
+            "hidden_dropout": 0.0,
+            "moe_aux_loss_coeff": 0.0,
+            "moe_router_bias_update_rate": 0.0,
+        }
+        if self.context_parallel_size != 1 or self.expert_tensor_parallel_size != 1:
+            raise ValueError("shared_prefix_training requires CP=ETP=1")
+        if self.max_lora_slots != 1 or self.actor_num_nodes != 1:
+            raise ValueError(
+                "shared_prefix_training currently requires one adapter slot on one node"
+            )
+        if self.lora_dropout:
+            raise ValueError("shared_prefix_training requires zero LoRA dropout")
+        managed_sequence_length = (
+            len(self.extra_args) == 2
+            and self.extra_args[0] == "--seq-length"
+            and self.extra_args[1].isdecimal()
+            and int(self.extra_args[1]) > 0
+        )
+        if self.extra_args and not managed_sequence_length:
+            raise ValueError(
+                "shared_prefix_training requires cli_options instead of extra_args"
+            )
+        for name, expected in required.items():
+            if self.cli_options.get(name, expected) != expected:
+                raise ValueError(f"shared_prefix_training requires {name}={expected!r}")
 
     def miles_arguments(self) -> list[str]:
         """Arguments owned by the integration, excluding model architecture flags."""
@@ -276,6 +315,8 @@ class MilesBackendConfig(BaseModel):
         ]
         if self.tensor_model_parallel_size > 1:
             arguments.append("--sequence-parallel")
+        if self.shared_prefix_training:
+            arguments.append("--deterministic-mode")
         return [*arguments, *self.extra_args]
 
     def _batching_arguments(self) -> list[str]:
