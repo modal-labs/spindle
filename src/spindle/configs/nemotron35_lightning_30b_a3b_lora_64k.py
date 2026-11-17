@@ -10,7 +10,6 @@ class Config(Parent):
     trainer_cpu = 32
     trainer_memory_mib = 262144
     trainer_max_clients_per_instance = 4
-    # A replica takes about four minutes to start, so add a second one only when the first is full.
     inference_max_replicas = 2
     inference_target_concurrency = 128
     overrides = {
@@ -21,9 +20,9 @@ class Config(Parent):
         "sglang_cfg.max_loaded_loras": 32,
         "sglang_cfg.max_mamba_cache_size": 640,
         "sglang_cfg.mem_fraction_static": 0.9,
-        # Prefill runs eagerly on this model, so batch admissions once 32 requests decode.
         "sglang_cfg.prefill_decode_interval": 16,
         "sglang_cfg.prefill_decode_interval_min_bs": 32,
+        "sglang_cfg.lora_use_virtual_experts": True,
     }
 
 
