@@ -11,7 +11,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
-- The `logprobs` returned with sampled tokens are the model's temperature-1 logprobs at any sampling temperature, as on Tinker and as the trainer computes them. RL scripts that sample at a temperature other than 1 now get matching logprobs for importance sampling, PPO, CISPO and DRO.
+- Sampled-token logprobs are now the model's temperature-1 logprobs at any sampling temperature, matching what the trainer computes. RL scripts that sample at a temperature other than 1 get correct importance ratios for importance sampling, PPO, CISPO and DRO.
 
 ## 0.1.8
 
