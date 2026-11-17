@@ -633,6 +633,41 @@ async def test_every_recipe_routes_by_name_and_plain_models_pick_the_longest():
 
 
 @pytest.mark.anyio
+async def test_create_model_rejects_untrainable_lora_before_a_trainer_starts():
+    kv = InMemoryKeyValueStore()
+    routes, _ = routes_for(resolved())
+    async with client_for(routes, kv) as client:
+        session_id = (await client.post("/api/v1/create_session", json={})).json()[
+            "session_id"
+        ]
+        for seq, lora_config in enumerate(
+            ({"rank": 8, "train_mlp": False}, {"rank": 8, "train_unembed": False})
+        ):
+            response = await client.post(
+                "/api/v1/create_model",
+                json={
+                    "session_id": session_id,
+                    "model_seq_id": seq,
+                    "base_model": "Qwen/Qwen3.5-9B-Base",
+                    "lora_config": lora_config,
+                },
+            )
+            assert response.status_code == 400, response.text
+            assert "train_mlp=True" in response.json()["message"]
+        assert not await kv.list_items("trainer_demand:")
+        response = await client.post(
+            "/api/v1/create_model",
+            json={
+                "session_id": session_id,
+                "model_seq_id": 2,
+                "base_model": "Qwen/Qwen3.5-9B-Base",
+                "lora_config": {"rank": 8, "seed": 7},
+            },
+        )
+        assert response.status_code == 200, response.text
+
+
+@pytest.mark.anyio
 async def test_queues_report_each_recipe():
     async def list_instances():
         return ()

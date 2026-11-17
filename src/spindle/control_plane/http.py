@@ -18,7 +18,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from spindle.backends.miles_config import check_lora_request
 from spindle.engine.api import JSON_OPERATIONS, OperationKind, submit_json_operation
+from spindle.engine.operations import parse_model_spec
 from spindle.errors import (
     EngineSaturated,
     ModelLost,
@@ -573,17 +575,30 @@ def create_control_plane_app(
                     f"{body.base_model}"
                 ),
             )
+        spec = {
+            "base_model": selected.model,
+            "lora_config": body.lora_config,
+            "parameterization": {"type": parameterization},
+            "rollout": body.rollout and body.rollout.model_dump(exclude_none=True),
+            "user_metadata": body.user_metadata,
+        }
+        # Reject before a trainer starts for a LoRA it would refuse.
+        miles = getattr(selected, "trainer_settings", {}).get("miles")
+        lora = parse_model_spec(spec).lora_config
+        if miles is not None and lora is not None:
+            check_lora_request(
+                tuple(miles["target_modules"]),
+                miles["max_lora_rank"],
+                rank=lora.rank,
+                train_attn=lora.train_attn,
+                train_mlp=lora.train_mlp,
+                train_unembed=lora.train_unembed,
+            )
         creation = await control_plane.create_model(
             session_id=body.session_id,
             model_seq_id=body.model_seq_id,
             definition_id=selected.definition_id,
-            spec={
-                "base_model": selected.model,
-                "lora_config": body.lora_config,
-                "parameterization": {"type": parameterization},
-                "rollout": body.rollout and body.rollout.model_dump(exclude_none=True),
-                "user_metadata": body.user_metadata,
-            },
+            spec=spec,
         )
         return {
             "request_id": creation.request_id,
