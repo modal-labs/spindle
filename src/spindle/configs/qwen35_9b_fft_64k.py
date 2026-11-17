@@ -12,6 +12,10 @@ class Config(Parent):
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
             "TORCHINDUCTOR_COMPILE_THREADS": "1",
         },
+        "megatron_cfg.tensor_model_parallel_size": 2,
+        "megatron_cfg.context_parallel_size": 2,
+        "megatron_cfg.sequence_parallel": True,
+        "megatron_cfg.logprob_chunk_tokens": None,
         "inference_gpu": "H200",
         "sglang_cfg.ep_size": 1,
     }

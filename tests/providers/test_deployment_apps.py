@@ -78,7 +78,7 @@ def test_trainer_declaration_and_executor_configuration(
     app, trainer = deployment_apps.build_trainer_app(row, platform, image=image)
     assert app.tags["spindle_role"] == "trainer"
     declaration, _ = app.functions["trainer"]
-    assert declaration["gpu"] == "H100:4"
+    assert declaration["gpu"] == ("B200:4" if backend == "megatron_fft" else "H100:4")
     assert declaration["ephemeral_disk"] is None
     assert declaration["region"] is None
     assert declaration["max_containers"] is None
@@ -136,7 +136,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     )
     settings, _ = app.servers["Server"]
     assert app.name == pool.app_name
-    assert settings["gpu"] == (["B200:1", "H200:1"] if kind == "lora" else "H100:1")
+    assert settings["gpu"] == (["B200:1", "H200:1"] if kind == "lora" else "B200:1")
     assert settings["min_containers"] == 0
     assert settings["target_concurrency"] == (128 if kind == "lora" else 32)
     assert settings["env"]["SGLANG_RETURN_ORIGINAL_LOGPROB"] == "1"

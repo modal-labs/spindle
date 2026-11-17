@@ -117,7 +117,8 @@ def test_presets_context_topology_and_backend_options():
     assert large.max_context_length == 65536
     assert backend_config(large)["miles"]["actor_num_gpus_per_node"] == 8
     fft = backend_config(recipe("qwen35-4b-fft-64k"))["megatron"]
-    assert (fft["tensor_model_parallel_size"], fft["context_parallel_size"]) == (2, 2)
+    assert (fft["tensor_model_parallel_size"], fft["context_parallel_size"]) == (1, 1)
+    assert fft["logprob_chunk_tokens"] == 8192
     assert fft["provider_overrides"]["recompute_granularity"] == "full"
 
 

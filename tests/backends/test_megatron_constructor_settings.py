@@ -59,7 +59,7 @@ def test_config_overrides_reach_megatron(monkeypatch):
     assert actual_provider is not provider
     assert actual_provider.pre_wrap_hook is provider.pre_wrap_hook
     assert actual_provider.post_wrap_hook is provider.post_wrap_hook
-    assert actual_provider.tensor_model_parallel_size == 2
+    assert actual_provider.tensor_model_parallel_size == 1
     assert actual_provider.moe_token_dispatcher_type == "alltoall"
     optimizer = modeling.optimizer_config(config, "bf16", distributed_optimizer=True)
     assert optimizer["native_optimizer_setting"] is False
