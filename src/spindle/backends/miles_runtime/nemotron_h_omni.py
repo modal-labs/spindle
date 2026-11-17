@@ -12,10 +12,14 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Protocol
 
 ARCHITECTURE = "NemotronH_Omni_Reasoning_V3"
 PREFIX = "language_model."
+
+
+class _Mapping(Protocol):
+    hf_param: str | dict[str, str]
 
 
 def install(hf_checkpoint: str) -> None:
@@ -50,14 +54,14 @@ def install(hf_checkpoint: str) -> None:
 
 
 def language_model_bridge(
-    nemotron_h_bridge: Any, mapping_registry: Callable[..., Any]
-) -> Any:
-    class NemotronHOmniBridge(nemotron_h_bridge):
-        def provider_bridge(self, hf_pretrained: Any) -> Any:
+    nemotron_h_bridge: type, mapping_registry: Callable[..., object]
+) -> type:
+    class NemotronHOmniBridge(nemotron_h_bridge):  # ty: ignore[unsupported-base]
+        def provider_bridge(self, hf_pretrained: object) -> object:
             config = getattr(hf_pretrained, "config", hf_pretrained)
             return super().provider_bridge(SimpleNamespace(config=config.llm_config))
 
-        def mapping_registry(self) -> Any:
+        def mapping_registry(self) -> object:
             omni_config = self.hf_config
             self.hf_config = omni_config.llm_config
             try:
@@ -69,7 +73,7 @@ def language_model_bridge(
     return NemotronHOmniBridge
 
 
-def _under_language_model(mapping: Any) -> Any:
+def _under_language_model(mapping: _Mapping) -> _Mapping:
     mapping = copy.copy(mapping)
     names = mapping.hf_param
     mapping.hf_param = (
