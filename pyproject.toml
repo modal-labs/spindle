@@ -151,7 +151,6 @@ ignore = [
 "src/spindle/backends/miles_runtime/volumes.py" = ["ANN"]
 "src/spindle/backends/score_centering.py" = ["ANN"]
 "src/spindle/config_validation.py" = ["ANN"]
-"src/spindle/configuration.py" = ["ANN"]
 "src/spindle/control_plane/deployments.py" = ["ANN"]
 "src/spindle/control_plane/http.py" = ["ANN"]
 "src/spindle/control_plane/service.py" = ["ANN"]
