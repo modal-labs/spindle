@@ -35,6 +35,9 @@ spindle = ["skills/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: waits on real retry backoffs or timeouts; skipped on pull requests, run on main and nightly",
+]
 
 [tool.setuptools.data-files]
 "share/spindle/router" = ["rust/router/Cargo.toml", "rust/router/Cargo.lock", "rust/router/pyproject.toml"]
@@ -330,6 +333,7 @@ dev = [
     "jinja2>=3.1.6",
     "pre-commit>=4.5.1",
     "pytest>=9.1.1",
+    "pytest-xdist>=3.8",
     "ruff==0.16.6",
     "ty==0.0.100",
 ]
