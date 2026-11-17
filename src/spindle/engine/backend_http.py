@@ -16,6 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 
+from spindle import request_timing
 from spindle.errors import BackendFailed
 from spindle.request_timing import mark
 from spindle.startup_timing import BACKEND_COMPONENT, StartupTimeline, timeline
@@ -70,8 +71,33 @@ def create_backend_app(
 
     @app.middleware("http")
     async def collect_measurements(request, call_next):
-        with telemetry.recording(request.headers.get("x-spindle-telemetry") == "1"):
-            return await call_next(request)
+        timing = request_timing.enabled()
+        with telemetry.recording(
+            timing or request.headers.get("x-spindle-telemetry") == "1"
+        ) as measurements:
+            started = time.time_ns()
+            response = await call_next(request)
+            if timing and measurements is not None:
+                print(
+                    json.dumps(
+                        {
+                            "event": "spindle_backend_phases",
+                            "path": request.url.path,
+                            "start_ns": started,
+                            "end_ns": time.time_ns(),
+                            "phases": [
+                                {
+                                    "name": p["name"],
+                                    "s": (p["end_ns"] - p["start_ns"]) / 1e9,
+                                }
+                                for p in measurements.phases
+                                if "end_ns" in p
+                            ],
+                        }
+                    ),
+                    flush=True,
+                )
+            return response
 
     async def run(
         action: Awaitable[object],

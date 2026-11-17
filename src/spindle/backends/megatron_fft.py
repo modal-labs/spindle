@@ -48,6 +48,24 @@ from .megatron_runtime.fft.model import (
     create_fft_optimizer,
 )
 from .megatron_runtime.fft.optimizer import run_fft_optimizer_step
+from .miles_runtime.profiling import RankProfiler, TorchProfileConfig
+
+
+def _log_peak_memory(operation: str, step: int) -> None:
+    print(
+        json.dumps(
+            {
+                "event": "spindle_peak_memory",
+                "operation": operation,
+                "step": step,
+                "rank": dist.get_rank(),
+                "peak_allocated_gb": round(torch.cuda.max_memory_allocated() / 2**30, 2),
+                "peak_reserved_gb": round(torch.cuda.max_memory_reserved() / 2**30, 2),
+            }
+        ),
+        flush=True,
+    )
+    torch.cuda.reset_peak_memory_stats()
 
 
 class FFTMegatronBackend(Backend):
@@ -76,6 +94,8 @@ class FFTMegatronBackend(Backend):
         self._delta_writer = None
         self._sampler_captures: dict[str, Any] = {}
         self._checkpoint_captures: dict[str, dict[str, Any]] = {}
+        self._profile_config = TorchProfileConfig.from_env()
+        self._profiler: RankProfiler | None = None
         self._create_model()
 
     def _create_model(self) -> None:
@@ -138,6 +158,13 @@ class FFTMegatronBackend(Backend):
         )
         if not batch.forward_only and not self.accumulating:
             self._zero_grad()
+            if (
+                self._profile_config.step == self.optimizer_step
+                and self._profiler is None
+                and self._profile_config.profiles_rank(self.rank)
+            ):
+                self._profiler = RankProfiler()
+                self._profiler.start()
         output_collector, metric_collector = run_megatron_pipeline(
             self.model,
             self.optimizer,
@@ -154,6 +181,9 @@ class FFTMegatronBackend(Backend):
         add_packing_metrics(outputs, packing_metrics)
         if not batch.forward_only:
             self.accumulating = True
+        _log_peak_memory(
+            "forward" if batch.forward_only else "forward_backward", self.optimizer_step
+        )
         return outputs
 
     def optim_step(
@@ -177,6 +207,11 @@ class FFTMegatronBackend(Backend):
             adam=adam,
         )
         self.accumulating = False
+        _log_peak_memory("optim_step", self.optimizer_step)
+        if self._profiler is not None:
+            profiler, self._profiler = self._profiler, None
+            paths = profiler.stop(self._profile_config.output_dir, f"rank{self.rank}")
+            print(json.dumps({"event": "spindle_torch_profile", **paths}), flush=True)
         if successful:
             self.optimizer_step += 1
         return OptimStepResponse(
@@ -249,6 +284,11 @@ class FFTMegatronBackend(Backend):
             definition_revision=os.environ.get("SPINDLE_DEFINITION_REVISION"),
         )
         self._sampler_captures[capture_id] = snapshot
+        if self.rank == 0:
+            print(
+                json.dumps({"event": "spindle_fft_capture", **snapshot.metrics}),
+                flush=True,
+            )
         return SamplerPublication(
             publish_version=publish_version,
             base_model=base_model,
