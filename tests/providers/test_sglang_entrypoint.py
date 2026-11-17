@@ -5,16 +5,11 @@ import runpy
 import sys
 from types import ModuleType
 
-import pytest
-
-from spindle.inference.kv_events import KV_EVENTS_CONFIG
 from spindle.deployments import DeploymentConfig, config_path, load
 
 
-@pytest.mark.parametrize("source", [None, "hook", "kv_events", "compare"])
-def test_sglang_constructor_receives_recorded_settings(monkeypatch, source):
+def test_sglang_constructor_receives_recorded_settings(monkeypatch):
     row = DeploymentConfig.create(load(config_path("qwen35-9b-lora-16k")))
-    row.inference_settings["kv_events_config"] = '{"publisher":"null"}'
     calls = []
 
     class ServerArgs:
@@ -37,8 +32,6 @@ def test_sglang_constructor_receives_recorded_settings(monkeypatch, source):
     monkeypatch.setattr(
         sys, "argv", ["sglang", row.asset_path, json.dumps(row.inference_settings)]
     )
-    if source is not None:
-        monkeypatch.setenv("SGLANG_SPINDLE_ROUTING_SOURCE", source)
     runpy.run_module("spindle.inference.sglang", run_name="__main__")
     assert calls == [
         "plugins",
@@ -47,11 +40,6 @@ def test_sglang_constructor_receives_recorded_settings(monkeypatch, source):
             "host": "127.0.0.1",
             "port": 8001,
             **row.inference_settings,
-            **(
-                {"kv_events_config": json.dumps(KV_EVENTS_CONFIG)}
-                if source in {"kv_events", "compare"}
-                else {}
-            ),
         },
         "run",
         "stop",

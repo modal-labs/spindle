@@ -192,10 +192,10 @@ With `inference_lora_routing = "cache_wait"`, the router sends each request to t
 | Value | Source of the prefix list | Works with |
 | --- | --- | --- |
 | `"hook"` (default) | A scheduler hook in Spindle's SGLang fork | Every sampler image |
-| `"kv_events"` | SGLang's KV cache events, with replica load from `/v1/loads` | `sglang-v0.5.23-*` sampler images |
+| `"kv_events"` | SGLang's own KV cache events, with replica load from `/v1/loads`. Uses no fork code | `sglang-v0.5.23-*` sampler images |
 | `"compare"` | The hook, as for `"hook"`. KV events are also collected, and `GET /routing-state/compare` on the replica reports how the two lists differ | `sglang-v0.5.23-*` sampler images |
 
-`"kv_events"` and `"compare"` need KV events that name the adapter each cached block belongs to. Only the `sglang-v0.5.23-*` images have that. The DeepSeek-V4.1-Flash recipes run on `sglang-v0.5.21-a3e0e17`, which does not, so they must keep `"hook"`; any other value fails validation at deploy. Both values also require a LoRA recipe with `cache_wait` routing.
+`"kv_events"` and `"compare"` need KV events that name the adapter each cached block belongs to. SGLang added that in v0.5.22, so the `sglang-v0.5.23-*` images have it. The DeepSeek-V4.1-Flash recipes run on `sglang-v0.5.21-a3e0e17`, which does not, so they must keep `"hook"`; any other value fails validation at deploy. Both values also require a LoRA recipe with `cache_wait` routing.
 
 `GET /routing-state/compare` returns the number of prefixes in each list, how many they share, a few examples found in only one, each list's load numbers and age, and whether the KV event subscriber is ready.
 

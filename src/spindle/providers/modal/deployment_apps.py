@@ -365,11 +365,6 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                 and recipe.inference_lora_routing_source in {"hook", "compare"}
                 else {}
             )
-            | (
-                {"SGLANG_SPINDLE_ROUTING_SOURCE": recipe.inference_lora_routing_source}
-                if lora and recipe.inference_lora_routing == "cache_wait"
-                else {}
-            )
         ),
         min_containers=minimum,
         max_containers=maximum,

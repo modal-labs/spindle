@@ -5,6 +5,14 @@ from typing import Literal, get_args
 
 RoutingSource = Literal["hook", "kv_events", "compare"]
 ROUTING_SOURCES: tuple[RoutingSource, ...] = get_args(RoutingSource)
+# SGLang's publisher and the sidecar's subscriber share these loopback endpoints.
+KV_EVENTS_CONFIG: dict[str, str | bool] = {
+    "publisher": "zmq",
+    "endpoint": "tcp://127.0.0.1:5557",
+    "bind": True,
+    "replay_endpoint": "tcp://127.0.0.1:5558",
+    "topic": "kv-events",
+}
 
 
 def _apply_overrides(values, overrides):

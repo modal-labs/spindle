@@ -241,19 +241,13 @@ def test_routing_source_gates_pool_environment_and_sidecar(
     )
     app, server = deployment_apps.build_rollout_app(row, pool, image="test-image")
     env = app.servers["Server"][0]["env"]
-    assert {
-        k: v for k, v in env.items() if k.startswith("SGLANG_SPINDLE_ROUTING_")
-    } == (
-        {
-            "SGLANG_SPINDLE_ROUTING_SOURCE": source,
-            **(
-                {"SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1"}
-                if source in {"hook", "compare"}
-                else {}
-            ),
-        }
-        if lora and effective == "cache_wait"
-        else {}
+    assert env.get("SGLANG_SPINDLE_ROUTING_OBSERVATIONS") == (
+        "1"
+        if lora and effective == "cache_wait" and source in {"hook", "compare"}
+        else None
+    )
+    assert ("kv_events_config" in row.inference_settings) == (
+        source in {"kv_events", "compare"}
     )
 
     process = object()

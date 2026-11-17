@@ -25,21 +25,15 @@ import xxhash
 import zmq
 import zmq.asyncio
 
+from spindle.configuration import KV_EVENTS_CONFIG
+
 logger = logging.getLogger(__name__)
 
-TOPIC = b"kv-events"
+TOPIC = str(KV_EVENTS_CONFIG["topic"]).encode()
 MAX_PREFIXES = 8192
 SUB_RECEIVE_HIGH_WATER_MARK = 20_000  # Twice the publisher's replay buffer.
 SNAPSHOT_INTERVAL_SECONDS = 0.25
 REPLAY_STALL_TIMEOUT_SECONDS = 2.0
-
-
-class PublisherConfig(TypedDict):
-    publisher: Literal["zmq"]
-    endpoint: str
-    bind: bool
-    replay_endpoint: str
-    topic: str
 
 
 class KVEvent(TypedDict):
@@ -59,15 +53,6 @@ class KVSnapshot(NamedTuple):
     ready: bool
     checked_at: float
     prefixes: tuple[str, ...]
-
-
-KV_EVENTS_CONFIG: PublisherConfig = {
-    "publisher": "zmq",
-    "endpoint": "tcp://127.0.0.1:5557",
-    "bind": True,
-    "replay_endpoint": "tcp://127.0.0.1:5558",
-    "topic": TOPIC.decode(),
-}
 
 
 class _BlockIndex:
@@ -528,8 +513,8 @@ class KVEventSubscriber:
 
     def __init__(
         self,
-        endpoint: str = "tcp://127.0.0.1:5557",
-        replay_endpoint: str = "tcp://127.0.0.1:5558",
+        endpoint: str = str(KV_EVENTS_CONFIG["endpoint"]),
+        replay_endpoint: str = str(KV_EVENTS_CONFIG["replay_endpoint"]),
     ) -> None:
         self.endpoint = endpoint
         self.replay_endpoint = replay_endpoint

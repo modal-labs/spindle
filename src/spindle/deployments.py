@@ -17,7 +17,7 @@ from spindle.backends.deployment import (
     resolve_backend_settings,
     resolve_draft_asset_path,
 )
-from spindle.configuration import ROUTING_SOURCES, BaseConfig
+from spindle.configuration import KV_EVENTS_CONFIG, ROUTING_SOURCES, BaseConfig
 
 # Modal's smallest ephemeral disk request.
 MIN_EPHEMERAL_DISK_MIB = 524_288
@@ -155,6 +155,9 @@ class DeploymentConfig(BaseModel):
                     'Use inference_lora_routing_source="hook" with SGLang v0.5.21 '
                     "sampler images; their KV events carry no adapter names"
                 )
+            deployment.inference_settings["kv_events_config"] = json.dumps(
+                KV_EVENTS_CONFIG
+            )
         if routing == "cache_wait":
             if recipe.inference_routing_balance_absolute is None:
                 running = deployment.inference_settings["max_running_requests"]
