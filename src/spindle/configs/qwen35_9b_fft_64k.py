@@ -8,6 +8,12 @@ class Config(Parent):
     model = "Qwen/Qwen3.5-9B"
     overrides = {
         "trainer_gpu": "H200",
+        "trainer_gpus_per_node": 4,
+        "trainer_rdma": False,
+        "trainer_cpu": 8,
+        "trainer_memory_mib": 32768,
+        "megatron_cfg.context_parallel_size": 2,
+        "megatron_cfg.max_tokens_per_microbatch": 65536,
         "trainer_env": {
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
             "TORCHINDUCTOR_COMPILE_THREADS": "1",
