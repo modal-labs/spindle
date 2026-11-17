@@ -14,10 +14,10 @@ from spindle.backends.megatron_runtime.common.forward_backward import (  # noqa:
     _loss_config,
     _packed_seq_idx,
     _vocab_parallel_logprobs,
-    log_packing,
-    pack_microbatches,
     assign_microbatches,
     balance_by_tokens,
+    log_packing,
+    pack_microbatches,
     pad_microbatches,
     prepare_microbatches,
 )
@@ -453,15 +453,19 @@ def test_balance_by_tokens_evens_tokens_across_ranks() -> None:
 
 
 def test_assign_microbatches_keeps_bin_plan_when_batch_nearly_fills_ranks() -> None:
+    # Balancing sequences gives 190 tokens per rank but three micro-batches on one.
     sequences = build_microbatches(
-        packed_batch(60, 40, 40, 30, 30), {"model-a": 0}, max_slots=1, max_seq_length=64
+        packed_batch(100, 80, 80, 70, 30, 20),
+        {"model-a": 0},
+        max_slots=1,
+        max_seq_length=100,
     )
     groups = assign_microbatches(
         sequences,
         2,
         lambda items: pack_microbatches(items, max_tokens=100, pad_to_multiple=1),
     )
-    assert [len(group) for group in groups] == [1, 1]
+    assert [len(group) for group in groups] == [2, 2]
 
 
 def test_prepare_microbatches_splits_work_across_context_parallel_ranks(
@@ -475,7 +479,7 @@ def test_prepare_microbatches_splits_work_across_context_parallel_ranks(
         max_tokens_per_microbatch=64,
         seq_length=64,
     )
-    batch = packed_batch(50, 37, 21, 9, 8, 3, 3)
+    batch = packed_batch(50, 50, 50, 50, 37, 21, 9, 3)
     state = SimpleNamespace(
         get_context_parallel_world_size=lambda: 2,
         get_data_parallel_world_size=lambda with_context_parallel: 4,
@@ -487,6 +491,7 @@ def test_prepare_microbatches_splits_work_across_context_parallel_ranks(
 
     owners = {}
     counts = set()
+    dummies = 0
     for rank in range(4):
         state.get_data_parallel_rank = lambda with_context_parallel, rank=rank: rank
         local, _ = prepare_microbatches(batch, None, config=config, rank=rank)
@@ -495,12 +500,14 @@ def test_prepare_microbatches_splits_work_across_context_parallel_ranks(
             assert (
                 microbatch["tokens"].numel() % config.sequence_padding_multiple() == 0
             )
+            dummies += all(microbatch["is_dummy"])
             for job, index in zip(microbatch["job_ids"], microbatch["output_indices"]):
                 if index >= 0:
                     assert (job, index) not in owners
                     owners[job, index] = rank
-    assert len(counts) == 1
-    assert sorted(owners) == [(0, index) for index in range(7)]
+    assert counts == {2}
+    assert dummies == 2
+    assert sorted(owners) == [(0, index) for index in range(8)]
 
 
 @pytest.mark.parametrize(

@@ -128,7 +128,6 @@ def _loss_config(loss_name: str, config: dict[str, float]) -> dict[str, float]:
     return values
 
 
-# Length of the no-loss micro-batch that pads a rank with fewer micro-batches.
 DUMMY_TOKENS = 128
 
 RL_LOSSES = frozenset(
@@ -456,15 +455,15 @@ def assign_microbatches(
 ) -> list[list[dict[str, Any]]]:
     """Pack sequences into each data-parallel rank's micro-batches.
 
-    Balancing sequences before packing evens out ranks best, but can need an
-    extra micro-batch when the batch nearly fills every rank; balancing packed
-    bins never does. Keep whichever plan has the lighter busiest rank.
+    Balancing sequences before packing evens out tokens best, but can need an
+    extra micro-batch when the batch nearly fills every rank. Keep the plan
+    with fewer micro-batches, then the one with the lighter busiest rank.
     """
 
     def cost(groups):
         return (
-            max(sum(int(mb["tokens"].numel()) for mb in group) for group in groups),
             max(len(group) for group in groups),
+            max(sum(int(mb["tokens"].numel()) for mb in group) for group in groups),
         )
 
     by_sequence = [
