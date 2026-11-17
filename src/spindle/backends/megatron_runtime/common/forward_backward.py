@@ -544,7 +544,6 @@ def make_forward_step(
             ),
         }
         packed_seq_params = get_packed_seq_params(packed_metadata)
-        # A tensor here makes FlashAttention 4 recompile its backward on every call.
         packed_seq_params.max_seqlen_q = batch["max_seqlen"]
         packed_seq_params.max_seqlen_kv = batch["max_seqlen"]
 
