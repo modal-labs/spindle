@@ -13,7 +13,7 @@ class Config(BaseConfig):
     weights_revision = "f831ab66814297da540d832a5235f8e904f29d06"
     max_context_length = 32768
     backend = "miles"
-    trainer_image = "spindle.providers.modal.kimi_k3_image:trainer_image"
+    trainer_image = "miles-v0.2.0"
     trainer_gpu = "B300"
     trainer_gpus_per_node = 8
     trainer_nodes = 2

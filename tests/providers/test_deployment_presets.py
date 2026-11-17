@@ -1,8 +1,10 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from spindle.backends.deployment import backend_config, serving_options
+from spindle.backends.miles_config import MilesBackendConfig
 from spindle.control_plane.deployments import FrontendSettings
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.modal.deployment_configs import (
@@ -28,6 +30,35 @@ def test_all_packaged_recipes_validate_offline(path):
         assert {
             target.rsplit("*.", 1)[-1] for target in spec.miles_cfg["target_modules"]
         } == set(resolved.inference_settings["lora_target_modules"])
+
+
+@pytest.mark.parametrize(
+    "preset,algorithm,draft",
+    [
+        ("qwen3-8b-lora-32k", "DFLASH", "z-lab/Qwen3-8B-DFlash-b16"),
+        ("qwen35-9b-instruct-lora-32k", "DFLASH", "modal-labs/Qwen3.5-9B-DFlash"),
+        ("qwen38-27b-lora-32k", "DFLASH", "incoai/Qwen3.8-27B-DFlash2"),
+        ("glm53-flash-lora-32k", "DFLASH", "modal-labs/GLM-5.3-Flash-DFlash"),
+        ("qwen35-4b-lora-32k", "NEXTN", ""),
+        ("qwen3-4b-lora-32k", None, ""),
+        ("qwen25-7b-instruct-lora-32k", None, ""),
+        ("qwen25-3b-lora-32k", None, ""),
+        ("qwen35-2b-lora-32k", None, ""),
+    ],
+)
+def test_speculative_defaults_use_model_specific_drafts(preset, algorithm, draft):
+    spec = load(config_path(preset))
+    deployment = DeploymentConfig.create(spec)
+    assert spec.inference_draft_model == draft
+    serving = deployment.inference_settings
+    assert serving.get("speculative_algorithm") == algorithm
+    if draft:
+        assert serving["speculative_draft_model_path"] == deployment.draft_asset_path
+    elif algorithm == "NEXTN":
+        assert serving["speculative_draft_model_path"] == deployment.asset_path
+    else:
+        assert "speculative_draft_model_path" not in serving
+        assert spec.inference_gpu == "H100"
 
 
 @pytest.mark.parametrize("preset", ["qwen35-35b-a3b-fft-64k", "qwen36-35b-a3b-fft-64k"])
@@ -94,13 +125,21 @@ def test_single_client_recipe_keeps_shared_backend_capacity():
 
 
 def test_beam_preserves_distinct_attention_and_mlp_gates():
-    deployment = DeploymentConfig.create(load(config_path("beam-501b-a23b-lora-5k")))
-    assert deployment.recipe.trainer_image == "miles-v0.2.0"
-    assert deployment.recipe.miles_cfg["cli_options"]["lora_type"] == "lora"
-    assert deployment.recipe.miles_cfg["cli_options"]["qkv_format"] == "thd"
-    targets = deployment.inference_settings["lora_target_modules"]
+    spec = load(Path(__file__).parents[2] / "reference_runs/beam_config.py")
+    assert spec.trainer_image == "miles-v0.2.0"
+    assert spec.miles_cfg["cli_options"]["lora_type"] == "lora"
+    assert spec.miles_cfg["cli_options"]["qkv_format"] == "thd"
+    targets = MilesBackendConfig(
+        hf_checkpoint="/assets/pending",
+        actor_num_gpus_per_node=spec.trainer_gpus_per_node,
+        actor_num_nodes=spec.trainer_nodes,
+        **spec.miles_cfg,
+    ).peft_target_modules
     assert "self_attn.gate_proj" in targets
     assert "mlp.gate_proj" in targets
+    settings = backend_config(spec, "/assets/pending")
+    assert settings["miles"]["actor_num_nodes"] == 2
+    assert settings["capture_dir"].startswith("/checkpoints/")
 
 
 def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):

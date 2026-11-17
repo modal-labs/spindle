@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 from copy import deepcopy
@@ -512,12 +513,18 @@ def test_deepseek_v41_lora_trainer_image_is_registered():
     )
 
 
-@pytest.mark.parametrize("name", ["beam-501b-a23b-lora-5k", "kimi-k3-lora-32k"])
+@pytest.mark.parametrize(
+    "recipe_path",
+    [
+        Path(__file__).parents[2] / "reference_runs/beam_config.py",
+        config_path("kimi-k3-lora-32k"),
+    ],
+)
 @pytest.mark.parametrize(
     "backend,field", [("miles", "trainer_image"), ("sglang", "inference_image")]
 )
-def test_model_runtime_images_resolve(name, backend, field):
-    recipe = load(config_path(name))
+def test_model_runtime_images_resolve(recipe_path, backend, field):
+    recipe = load(recipe_path)
     assert isinstance(
         deployment_apps.image_for(backend, getattr(recipe, field)), modal.Image
     )

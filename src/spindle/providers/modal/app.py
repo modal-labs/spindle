@@ -14,6 +14,7 @@ from huggingface_hub import snapshot_download
 from stitch.pools.modal_flash import ModalFlashPool
 
 from spindle.control_plane import ControlPlane, create_control_plane_app
+from spindle.control_plane.usage import SessionUsageWriter
 from spindle.control_plane.deployments import DeploymentRoutes, RegistryUnavailable
 from spindle.control_plane.keys import model_key, placement_key, trainer_demand_key
 from spindle.control_plane.queues import RECENT_WINDOW_S, prune_queue_events
@@ -25,6 +26,7 @@ from spindle.providers.contracts import (
 )
 from spindle.startup_timing import StartupTimeline
 from spindle.telemetry.otlp import sample_trace
+from spindle.usage import label_keys_from_env, meter_sample, usage_window
 from spindle.version import COMMIT_ENV, deployment_tag, source_commit
 
 from .app_tags import app_tags
@@ -74,6 +76,7 @@ from .lora_pool import (
     stop_pool as stop_lora_pool,
 )
 from .sampling import ModalSamplingTaskPlatform
+from .usage import USAGE_ROOT, sample_meter, usage_sink, usage_volume
 from .router_image import with_router
 from .trainer_reconciler import (
     TRANSIENT_POLL_ERRORS,
@@ -193,23 +196,39 @@ proxy_secret = modal.Secret.from_name(
 )
 async def prepare_model_assets(definition_id: str) -> None:
     definition = await module_for(definition_id)
-    checkpoint = os.path.normpath(definition.asset_path)  # noqa: ASYNC240 - normpath is lexical, not I/O
-    if (
-        os.path.commonpath((MODEL_ASSET_ROOT, checkpoint)) != MODEL_ASSET_ROOT
-        or checkpoint == MODEL_ASSET_ROOT
-    ):
-        raise ValueError(f"invalid model asset path: {checkpoint}")
     started = time.time()
-    await asyncio.to_thread(
-        snapshot_download,
-        repo_id=definition.weights_repo,
-        revision=definition.recipe.weights_revision or None,
-        local_dir=checkpoint,
-    )
+    assets = [
+        (
+            definition.weights_repo,
+            definition.recipe.weights_revision,
+            definition.asset_path,
+        ),
+    ]
+    if definition.recipe.inference_draft_model:
+        assets.append(
+            (
+                definition.recipe.inference_draft_model,
+                definition.recipe.inference_draft_model_revision,
+                definition.draft_asset_path,
+            )
+        )
+    for repo_id, revision, checkpoint in assets:
+        checkpoint = os.path.normpath(checkpoint)  # noqa: ASYNC240 - lexical normalization, no I/O
+        if (
+            os.path.commonpath((MODEL_ASSET_ROOT, checkpoint)) != MODEL_ASSET_ROOT
+            or checkpoint == MODEL_ASSET_ROOT
+        ):
+            raise ValueError(f"invalid model asset path: {checkpoint}")
+        await asyncio.to_thread(
+            snapshot_download,
+            repo_id=repo_id,
+            revision=revision or None,
+            local_dir=checkpoint,
+        )
     await model_assets.commit.aio()
-    StartupTimeline("model-assets", origin=started, labels={"path": checkpoint}).mark(
-        "assets_ready"
-    )
+    StartupTimeline(
+        "model-assets", origin=started, labels={"path": definition.asset_path}
+    ).mark("assets_ready")
     await shared_kv().put(await _weights_ready_key(definition_id), time.time())
 
 
@@ -269,7 +288,10 @@ class WeightsDownloadFailed(ValueError):
 
 
 def _weights_of(definition) -> str:
-    return f"{definition.asset_path}@{definition.recipe.weights_revision}"
+    draft = definition.draft_asset_path
+    draft_revision = definition.recipe.inference_draft_model_revision
+    suffix = f"|draft:{draft}@{draft_revision}" if draft else ""
+    return f"{definition.asset_path}@{definition.recipe.weights_revision}{suffix}"
 
 
 async def _weights_id(definition_id: str) -> str:
@@ -281,8 +303,10 @@ async def _weights_ready_key(definition_id: str) -> str:
 
 
 async def _weights_call_key(definition_id: str) -> str:
-    # Revisions of one repo download into the same folder, so one runs at a time.
-    return f"model_assets_call:{(await module_for(definition_id)).asset_path}"
+    definition = await module_for(definition_id)
+    # Different drafters still share the target directory. Join its active
+    # download, then let the readiness check start any missing draft download.
+    return f"model_assets_call:{definition.asset_path}"
 
 
 async def _legacy_weights_ready(store, weights: str) -> bool:
@@ -441,12 +465,26 @@ async def _ready_lora_pool(spec: LoraPoolSpec) -> str:
     retries=2,
     nonpreemptible=True,
     secrets=[proxy_secret, modal.Secret.from_name(API_SECRET_NAME)],
+    volumes={USAGE_ROOT: usage_volume(APP_NAME)},
 )
 @modal.concurrent(max_inputs=128, target_inputs=16)
 async def execute_sample(task: dict) -> dict:
     stats: dict = {}
     with sample_trace(task, stats):
-        return await _execute_sample(task, stats)
+        result = await _execute_sample(task, stats)
+    meter = sample_meter(APP_NAME)
+    if meter is not None:
+        try:
+            meter_sample(
+                meter,
+                app_name=stats["pool_app_name"],
+                base_model=str(task["base_model"]),
+                session_id=str(task["session_id"]),
+                stats=stats,
+            )
+        except Exception:  # noqa: BLE001 - usage must not fail a sample
+            logging.getLogger(__name__).warning("usage metering failed")
+    return result
 
 
 async def _execute_sample(task: dict, stats: dict) -> dict:
@@ -465,6 +503,7 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
         await _ensure_weights_ready(definition_id)
     if parameterization == "lora":
         spec = LoraPoolSpec(definition_id, APP_NAME)
+        stats["pool_app_name"] = spec.app_name
         gateway = await _ready_lora_pool(spec)
         router = None
         if definition.recipe.inference_lora_routing == "cache_wait":
@@ -520,6 +559,7 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
     ):
         await ensure_fft_pool.remote.aio(spec.as_dict())
     await _touch_fft_pool(spec)
+    stats["pool_app_name"] = spec.app_name
     return await sample_task(
         task,
         await pool_gateway(spec),
@@ -763,6 +803,7 @@ def _plane():
         trainer_autoscaling=lambda _: True,
         trainer_slots=trainer_slots,
         trainer_gpu_wait=gpu_wait(_trainer_function, _trainer_gpus),
+        usage=SessionUsageWriter(usage_sink(APP_NAME), label_keys_from_env()),
     )
 
 
@@ -772,7 +813,7 @@ def _plane():
     region=FRONTEND_REGION,
     routing_region=FRONTEND_REGION,
     timeout=20 * 60,
-    volumes={CHECKPOINT_ROOT: checkpoint_volume},
+    volumes={CHECKPOINT_ROOT: checkpoint_volume, USAGE_ROOT: usage_volume(APP_NAME)},
     secrets=[modal.Secret.from_name(API_SECRET_NAME, required_keys=["TINKER_API_KEY"])],
 )
 @modal.concurrent(max_inputs=128, target_inputs=16)
@@ -789,7 +830,25 @@ def server():
         apps_status=_apps_status,
         deploy_apps=_start_app_deploy,
         stop_apps=_stop_apps,
+        usage_sink=usage_sink(APP_NAME),
     )
+
+
+@app.function(
+    image=image,
+    region=FRONTEND_REGION,
+    timeout=10 * 60,
+    volumes={USAGE_ROOT: usage_volume(APP_NAME)},
+)
+def usage_rows(starting_on: str, ending_before: str) -> dict:
+    """The window's usage rows and each session's labels, for `spindle usage`."""
+    sink = usage_sink(APP_NAME)
+    start, end = usage_window(starting_on, ending_before)
+    rows = sink.read(start.timestamp(), end.timestamp())
+    return {
+        "rows": [asdict(row) for row in rows],
+        "sessions": sink.sessions({row.session_id for row in rows if row.session_id}),
+    }
 
 
 APP_DEPLOY_CLAIM_S = 60.0
@@ -1005,7 +1064,13 @@ async def _cleanup_lora_pools() -> tuple[str, ...]:
     return tuple(stopped)
 
 
-@app.function(image=image, schedule=SWEEP_PERIOD)
+@app.function(
+    image=image,
+    schedule=SWEEP_PERIOD,
+    volumes={USAGE_ROOT: usage_volume(APP_NAME)},
+    # Its session sweep writes labels, so it reads SPINDLE_USAGE_LABEL_KEYS like the server.
+    secrets=[modal.Secret.from_name(API_SECRET_NAME)],
+)
 def cleaner():
     async def run() -> None:
         plane = _plane()
@@ -1020,4 +1085,11 @@ def cleaner():
         await _cleanup_fft_pools()
         await _cleanup_lora_pools()
 
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    finally:
+        # Last, so a slow Volume never delays freeing idle GPUs.
+        try:
+            usage_sink(APP_NAME).compact()
+        except Exception:
+            logging.getLogger(__name__).exception("compact usage")

@@ -26,15 +26,7 @@ CONFIG_DIR = Path(__file__).with_name("configs")
 SERVED_TIMEOUT_S = 20
 CONTEXT_CHOICES = (2_048, 16_384, 32_768, 65_536, 131_072, 262_144)
 DEFAULT_CONTEXT = 32_768
-PROVIDER_ORDER = (
-    "Qwen",
-    "openai",
-    "nvidia",
-    "deepseek-ai",
-    "zai-org",
-    "moonshotai",
-    "reflection",
-)
+PROVIDER_ORDER = ("Qwen", "openai", "nvidia", "deepseek-ai", "zai-org", "moonshotai")
 MODE_LABELS = {"lora": "LoRA", "full": "Full fine-tune"}
 
 

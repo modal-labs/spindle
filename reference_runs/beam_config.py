@@ -1,4 +1,4 @@
-"""Beam BF16 LoRA on sixteen H200 trainers and one eight-B300 sampler."""
+"""Experimental two-node Beam LoRA recipe on Miles v0.2.0."""
 
 from spindle.configuration import BaseConfig
 
