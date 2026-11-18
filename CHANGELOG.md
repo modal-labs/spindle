@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- `nemotron35-super-vl-120b-a12b-lora-64k-b300` trains Nemotron 3.5 Super VL 120B-A12B LoRA adapters on four B300s and samples on two. Use it when B300s are available; `nemotron35-super-vl-120b-a12b-lora-64k` keeps the H200 layout.
+- `nemotron35-super-vl-120b-a12b-lora-64k-b300` runs the Nemotron 3.5 Super VL 120B-A12B LoRA recipe on half the GPUs: four B300s for the trainer and two for the sampler. Training checkpoints don't load across this recipe and `nemotron35-super-vl-120b-a12b-lora-64k`.
 - `glm53-flash-lora-256k`: GLM-5.3 Flash LoRA with 256K-token context on one 8×B300 node, with expert-routing replay. It trains on a new image, `miles-v0.1.2-99e1ebe-kpool-glm53`, which changes GLM's sparse-attention indexer so 256K sequences fit in GPU memory.
 
 ### Changed
