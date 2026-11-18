@@ -47,6 +47,8 @@ def test_gate_defaults_off_and_roundtrips_when_explicit() -> None:
         {"cli_options": {"enable_mtp_training": True}},
         {"cli_options": {"pipeline_model_parallel_size": 2}},
         {"cli_options": {"moe_aux_loss_coeff": 0.1}},
+        {"cli_options": {"moe_aux_loss_coeff": [0.1]}},
+        {"cli_options": {"moe_aux_loss_coeff": 0.0}},
         {"cli_options": {"qkv_format": "bshd"}},
     ],
 )
@@ -118,6 +120,7 @@ def test_example_gate_survives_full_deployment_serialization(
     assert backend.megatron_to_hf_mode == "raw"
     assert backend.lora_type == "canonical_lora"
     assert backend.cli_options["lora_kernel_policy"] == "rowwise"
+    assert backend.cli_options["moe_aux_loss_coeff"] == [0.0]
     assert backend.extra_args == ("--seq-length", "32768")
     assert backend.max_lora_slots == 1
     assert restored.recipe.platform["modal"]["exclude_reserved_capacity"] is True

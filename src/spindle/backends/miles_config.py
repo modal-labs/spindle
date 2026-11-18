@@ -232,7 +232,7 @@ class MilesBackendConfig(BaseModel):
             "enable_mtp_training": False,
             "attention_dropout": 0.0,
             "hidden_dropout": 0.0,
-            "moe_aux_loss_coeff": 0.0,
+            "moe_aux_loss_coeff": [0.0],
             "moe_router_bias_update_rate": 0.0,
             "moe_permute_fusion": False,
             "lora_kernel_policy": "rowwise",

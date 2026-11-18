@@ -57,7 +57,7 @@ class Config(Parent):
             "enable_mtp_training": False,
             "moe_permute_fusion": False,
             "moe_router_fusion": False,
-            "moe_aux_loss_coeff": 0.0,
+            "moe_aux_loss_coeff": [0.0],
             "cross_entropy_loss_fusion": False,
             "tp_comm_overlap": False,
             "recompute_granularity": "full",
