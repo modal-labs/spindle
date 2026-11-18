@@ -1,8 +1,11 @@
+import ast
 import asyncio
+import functools
 import importlib
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 from copy import deepcopy
@@ -18,10 +21,16 @@ from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.local import InMemoryKeyValueStore
 from tests.support import RoutedTestStore
 from spindle.providers.modal import (
+    deepseek_v41_image,
     deployment_apps,
     deployment_configs,
     fft_pool,
+    glm53_image,
     lora_pool,
+    miles_v011_image,
+    miles_v012_image,
+    miles_v020_image,
+    rollout_image,
 )
 from spindle.providers.modal.fft_pool import FFTPoolSpec
 from spindle.providers.modal.lora_pool import LoraPoolSpec
@@ -576,11 +585,11 @@ def test_declared_compute_settings_reach_modal(builders):
 
 def test_recipes_select_trainer_images(builders, monkeypatch):
     image_for = deployment_apps.image_for
-    assert image_for("miles") is deployment_apps.miles_image
+    assert image_for("miles") is miles_v011_image.image_02_52a7a99
     assert image_for("megatron") is deployment_apps.megatron_image
-    assert image_for("sglang") is deployment_apps.rollout_image
+    assert image_for("sglang") is rollout_image.image_01_c4182b2
     assert (
-        image_for("sglang", "sglang-v0.5.23-c4182b2") is deployment_apps.rollout_image
+        image_for("sglang", "sglang-v0.5.23-c4182b2") is rollout_image.image_01_c4182b2
     )
     with pytest.raises(ValueError, match="unknown trainer image"):
         image_for("miles", "missing")
@@ -612,11 +621,124 @@ def test_bundled_configs_pin_their_own_images(path, monkeypatch):
     deployment_apps.image_for("sglang", recipe.inference_image)
 
 
-def test_deepseek_v41_lora_trainer_image_is_registered():
-    assert (
-        deployment_apps.image_for("miles", "miles-v0.1.2-f2f8447")
-        is deployment_apps.miles_v012_image
+FORK_IMAGE_MODULES = (
+    miles_v011_image,
+    miles_v012_image,
+    miles_v020_image,
+    rollout_image,
+    deepseek_v41_image,
+    glm53_image,
+)
+IMAGE_VARIABLE = re.compile(r"\w*image_(\d{2})_([0-9a-f]{7})")
+FULL_COMMIT = re.compile(r"[0-9a-f]{40}")
+
+
+def image_assignments(module):
+    """Yield (variable, pins) for each `image_NN_<short>` assignment in an image module.
+
+    Pins are the full fork commits written in the assignment and the short
+    commits of other `image_NN_<short>` variables it builds on.
+    """
+    for node in ast.parse(inspect.getsource(module)).body:
+        if not isinstance(node, ast.Assign) or not isinstance(
+            node.targets[0], ast.Name
+        ):
+            continue
+        if IMAGE_VARIABLE.fullmatch(node.targets[0].id) is None:
+            continue
+        pins = [
+            leaf.value
+            for leaf in ast.walk(node.value)
+            if isinstance(leaf, ast.Constant) and FULL_COMMIT.fullmatch(str(leaf.value))
+        ] + [
+            IMAGE_VARIABLE.fullmatch(leaf.id)[2]
+            for leaf in ast.walk(node.value)
+            if isinstance(leaf, ast.Name) and IMAGE_VARIABLE.fullmatch(leaf.id)
+        ]
+        yield node.targets[0].id, pins
+
+
+@pytest.mark.parametrize("module", FORK_IMAGE_MODULES, ids=lambda m: m.__name__)
+def test_image_variables_build_the_commit_they_are_named_after(module):
+    series = {}
+    for variable, pins in image_assignments(module):
+        number, short = IMAGE_VARIABLE.fullmatch(variable).groups()
+        assert pins and all(pin.startswith(short) for pin in pins), variable
+        series.setdefault(variable.removesuffix(f"{number}_{short}"), []).append(number)
+    for prefix, numbers in series.items():
+        assert numbers == [f"{index:02}" for index in range(1, len(numbers) + 1)], (
+            prefix
+        )
+
+
+@functools.cache
+def fork_branch_head(repository, branch, workdir):
+    subprocess.run(
+        ["git", "fetch", "--quiet", "--filter=tree:0", "--no-tags", repository, branch],
+        cwd=workdir,
+        check=True,
     )
+    return subprocess.run(
+        ["git", "rev-parse", "FETCH_HEAD"],
+        cwd=workdir,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+@pytest.fixture(scope="module")
+def fork_clone(tmp_path_factory):
+    workdir = tmp_path_factory.mktemp("forks")
+    subprocess.run(["git", "init", "--quiet"], cwd=workdir, check=True)
+    return str(workdir)
+
+
+@pytest.mark.parametrize(
+    ("module", "commit"),
+    [
+        pytest.param(module, pin, id=f"{module.__name__.rsplit('.', 1)[-1]}-{pin[:7]}")
+        for module in FORK_IMAGE_MODULES
+        for _, pins in image_assignments(module)
+        for pin in pins
+        if FULL_COMMIT.fullmatch(pin)
+    ],
+)
+def test_pinned_fork_commits_are_on_the_branch_their_module_names(
+    module, commit, fork_clone
+):
+    names = vars(module)
+    repository = names.get("MILES_REPOSITORY", rollout_image.SGLANG_REPOSITORY)
+    branch = names.get("MILES_BRANCH") or names["SGLANG_BRANCH"]
+    head = fork_branch_head(repository, branch, fork_clone)
+    on_branch = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, head],
+        cwd=fork_clone,
+        capture_output=True,
+    )
+    assert on_branch.returncode == 0, (
+        f"{module.__name__} pins {commit}, which is not on {branch} of {repository}"
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        name
+        for name in (*deployment_apps.TRAINER_IMAGES, *deployment_apps.SAMPLER_IMAGES)
+        if not name.startswith("megatron-")
+    ],
+)
+def test_image_names_match_the_fork_commit_they_install(name):
+    image = {**deployment_apps.TRAINER_IMAGES, **deployment_apps.SAMPLER_IMAGES}[name]
+    [path] = [
+        f"{module.__name__}.{variable}"
+        for module in FORK_IMAGE_MODULES
+        for variable, value in vars(module).items()
+        if value is image
+    ]
+    assert IMAGE_VARIABLE.fullmatch(path.rsplit(".", 1)[1])[2] in name.split("-")
+    assert name.endswith("-glm53") == ("glm53" in path)
 
 
 def test_gpu_type_lists_become_modal_fallbacks(builders):
