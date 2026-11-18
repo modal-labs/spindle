@@ -34,6 +34,46 @@ MAX_PREFIXES = 8192
 SUB_RECEIVE_HIGH_WATER_MARK = 20_000  # Twice the publisher's replay buffer.
 SNAPSHOT_INTERVAL_SECONDS = 0.25
 REPLAY_STALL_TIMEOUT_SECONDS = 2.0
+# rust/router/src/lib.rs hashes every 64 tokens; change both together.
+PREFIX_TOKENS = 64
+BLOCK_HASH_BYTES = 8
+BLOCK_HASH_ARRAY_CODE = "q"
+BITS_PER_BYTE = 8
+NARROW_REF_BYTES = 4
+WIDE_REF_BYTES = 8
+NARROW_REF_ARRAY_CODE = "I"
+WIDE_REF_ARRAY_CODE = "Q"
+BYTE_ARRAY_CODE = "B"
+SLOT_STATE_BYTES = 1
+EMPTY_SLOT = 0
+LIVE_SLOT = 1
+TOMBSTONE_SLOT = 2
+INITIAL_INDEX_SLOTS = 1024
+INDEX_GROWTH_FACTOR = 2
+LOAD_FACTOR_DENOMINATOR = 10
+RESIZE_OCCUPIED_NUMERATOR = 7  # Resize at 70% occupied slots.
+GROW_LIVE_NUMERATOR = 5  # Grow at 50% live slots; otherwise drop tombstones.
+CHAIN_BLOCK_INDEX_BITS = 16
+BLOCKS_PER_CHAIN = 1 << CHAIN_BLOCK_INDEX_BITS
+CHAIN_BLOCK_INDEX_MASK = BLOCKS_PER_CHAIN - 1
+NARROW_CHAIN_ID_LIMIT = 1 << (NARROW_REF_BYTES * BITS_PER_BYTE - CHAIN_BLOCK_INDEX_BITS)
+MMAP_THRESHOLD_BYTES = 4096  # Smaller chains avoid the cost of an mmap.
+ANONYMOUS_MMAP_FD = -1
+REPLAY_YIELD_MASK = 31  # Yield after every 32 replay batches.
+SEQUENCE_FRAME_BYTES = 8
+SEQUENCE_BYTE_ORDER = "big"
+REPLAY_END_SEQUENCE = -1  # Also denotes no sequence received yet.
+REPLAY_FRAMES_WITHOUT_TOPIC = 3
+REPLAY_FRAMES_WITH_TOPIC = 4
+EVENT_BATCH_INDEX = 1
+SOCKET_LINGER_MS = 0
+THREAD_START_TIMEOUT_SECONDS = 2
+THREAD_STOP_TIMEOUT_SECONDS = 2
+SUBSCRIBER_RETRY_SECONDS = 0.5
+SUBSCRIBER_POLL_SECONDS = 0.5
+REPLAY_REFRESH_SECONDS = 1.5
+UNASSIGNED_CHAIN_ID = -1
+ADAPTER_HASH_SEPARATOR = "\0"
 
 
 class KVEvent(TypedDict):
@@ -65,17 +105,21 @@ class _BlockIndex:
 
     def __init__(self) -> None:
         self.wide = False
-        self._allocate(1024)
+        self._allocate(INITIAL_INDEX_SLOTS)
         self.count = 0
         self.occupied = 0
 
     def _allocate(self, size: int) -> None:
-        width = 8 if self.wide else 4
-        self.storage = mmap.mmap(-1, size * (9 + width))
+        width = WIDE_REF_BYTES if self.wide else NARROW_REF_BYTES
+        self.storage = mmap.mmap(
+            ANONYMOUS_MMAP_FD, size * (BLOCK_HASH_BYTES + width + SLOT_STATE_BYTES)
+        )
         view = memoryview(self.storage)
-        self.keys = view[: size * 8].cast("q")
-        self.refs = view[size * 8 : size * (8 + width)].cast("Q" if self.wide else "I")
-        self.states = view[size * (8 + width) :]
+        self.keys = view[: size * BLOCK_HASH_BYTES].cast(BLOCK_HASH_ARRAY_CODE)
+        self.refs = view[
+            size * BLOCK_HASH_BYTES : size * (BLOCK_HASH_BYTES + width)
+        ].cast(WIDE_REF_ARRAY_CODE if self.wide else NARROW_REF_ARRAY_CODE)
+        self.states = view[size * (BLOCK_HASH_BYTES + width) :]
         view.release()
 
     def __len__(self) -> int:
@@ -85,13 +129,15 @@ class _BlockIndex:
         return self.get(key) is not None
 
     def __iter__(self) -> Iterator[int]:
-        return (self.keys[i] for i, state in enumerate(self.states) if state == 1)
+        return (
+            self.keys[i] for i, state in enumerate(self.states) if state == LIVE_SLOT
+        )
 
     def get(self, key: int) -> int | None:
         mask = len(self.states) - 1
         slot = hash(key) & mask
         while self.states[slot]:
-            if self.states[slot] == 1 and self.keys[slot] == key:
+            if self.states[slot] == LIVE_SLOT and self.keys[slot] == key:
                 return self.refs[slot]
             slot = (slot + 1) & mask
         return None
@@ -99,20 +145,23 @@ class _BlockIndex:
     def _insert(self, key: int, ref: int) -> None:
         mask = len(self.states) - 1
         slot = hash(key) & mask
-        while self.states[slot] == 1:
+        while self.states[slot] == LIVE_SLOT:
             slot = (slot + 1) & mask
-        if self.states[slot] == 0:
+        if self.states[slot] == EMPTY_SLOT:
             self.occupied += 1
-        self.states[slot] = 1
+        self.states[slot] = LIVE_SLOT
         self.keys[slot] = key
         self.refs[slot] = ref
         self.count += 1
 
     def insert(self, key: int, ref: int) -> None:
-        if (self.occupied + 1) * 10 >= len(self.states) * 7:
+        if (self.occupied + 1) * LOAD_FACTOR_DENOMINATOR >= len(
+            self.states
+        ) * RESIZE_OCCUPIED_NUMERATOR:
             self._resize(
-                len(self.states) * 2
-                if self.count * 10 >= len(self.states) * 5
+                len(self.states) * INDEX_GROWTH_FACTOR
+                if self.count * LOAD_FACTOR_DENOMINATOR
+                >= len(self.states) * GROW_LIVE_NUMERATOR
                 else len(self.states)
             )
         self._insert(key, ref)
@@ -121,8 +170,8 @@ class _BlockIndex:
         mask = len(self.states) - 1
         slot = hash(key) & mask
         while self.states[slot]:
-            if self.states[slot] == 1 and self.keys[slot] == key:
-                self.states[slot] = 2
+            if self.states[slot] == LIVE_SLOT and self.keys[slot] == key:
+                self.states[slot] = TOMBSTONE_SLOT
                 self.count -= 1
                 return self.refs[slot]
             slot = (slot + 1) & mask
@@ -134,7 +183,7 @@ class _BlockIndex:
         self._allocate(size)
         self.count = self.occupied = 0
         for i, state in enumerate(old_states):
-            if state == 1:
+            if state == LIVE_SLOT:
                 self._insert(old_keys[i], old_refs[i])
         old_keys.release()
         old_refs.release()
@@ -183,28 +232,30 @@ class _Chain:
         tokens: array,
         size: int,
     ) -> None:
-        self.id = -1
+        self.id = UNASSIGNED_CHAIN_ID
         self.parent = parent
         self.adapter = adapter
         self.length = length
         self.size = size
-        self.store_tokens = size % 64 != 0 or length % 64 != 0
+        self.store_tokens = size % PREFIX_TOKENS != 0 or length % PREFIX_TOKENS != 0
         self.start_digest = digest
         self.count = len(keys)
-        storage_size = (len(keys) + len(tokens) * self.store_tokens) * 8
+        storage_size = (len(keys) + len(tokens) * self.store_tokens) * BLOCK_HASH_BYTES
         self.storage = (
-            mmap.mmap(-1, storage_size)
-            if storage_size >= 4096
+            mmap.mmap(ANONYMOUS_MMAP_FD, storage_size)
+            if storage_size >= MMAP_THRESHOLD_BYTES
             else bytearray(storage_size)
         )
         view = memoryview(self.storage)
-        view[: len(keys) * 8] = array("q", keys).tobytes()
+        view[: len(keys) * BLOCK_HASH_BYTES] = array(
+            BLOCK_HASH_ARRAY_CODE, keys
+        ).tobytes()
         if self.store_tokens:
-            view[len(keys) * 8 :] = tokens.tobytes()
-        self.keys = view[: len(keys) * 8].cast("q")
-        self.tokens = view[len(keys) * 8 :].cast("q")
+            view[len(keys) * BLOCK_HASH_BYTES :] = tokens.tobytes()
+        self.keys = view[: len(keys) * BLOCK_HASH_BYTES].cast(BLOCK_HASH_ARRAY_CODE)
+        self.tokens = view[len(keys) * BLOCK_HASH_BYTES :].cast(BLOCK_HASH_ARRAY_CODE)
         view.release()
-        self.positions = array("I")
+        self.positions = array(NARROW_REF_ARRAY_CODE)
         self.digests = []
         self.prefixes = []
         self.endpoint = None
@@ -217,23 +268,25 @@ class _Chain:
                 self.storage.close()
             self.count = 0
             return
-        storage_size = count * (self.size * self.store_tokens + 1) * 8
+        storage_size = count * (self.size * self.store_tokens + 1) * BLOCK_HASH_BYTES
         storage = (
-            mmap.mmap(-1, storage_size)
-            if storage_size >= 4096
+            mmap.mmap(ANONYMOUS_MMAP_FD, storage_size)
+            if storage_size >= MMAP_THRESHOLD_BYTES
             else bytearray(storage_size)
         )
         view = memoryview(storage)
-        view[: count * 8] = self.keys[:count].cast("B")
+        view[: count * BLOCK_HASH_BYTES] = self.keys[:count].cast(BYTE_ARRAY_CODE)
         if self.store_tokens:
-            view[count * 8 :] = self.tokens[: count * self.size].cast("B")
+            view[count * BLOCK_HASH_BYTES :] = self.tokens[: count * self.size].cast(
+                BYTE_ARRAY_CODE
+            )
         self.keys.release()
         self.tokens.release()
         if isinstance(self.storage, mmap.mmap):
             self.storage.close()
         self.storage = storage
-        self.keys = view[: count * 8].cast("q")
-        self.tokens = view[count * 8 :].cast("q")
+        self.keys = view[: count * BLOCK_HASH_BYTES].cast(BLOCK_HASH_ARRAY_CODE)
+        self.tokens = view[count * BLOCK_HASH_BYTES :].cast(BLOCK_HASH_ARRAY_CODE)
         view.release()
         self.count = count
 
@@ -247,7 +300,11 @@ class _Chain:
             digest = self.start_digest.copy()
             start = 0
         if start < end:
-            digest.update(memoryview(self.tokens).cast("B")[start * 8 : end * 8])
+            digest.update(
+                memoryview(self.tokens).cast(BYTE_ARRAY_CODE)[
+                    start * BLOCK_HASH_BYTES : end * BLOCK_HASH_BYTES
+                ]
+            )
         return digest
 
 
@@ -326,8 +383,8 @@ class KVCache:
         ref = self.blocks.get(key)
         if ref is None:
             return None
-        chain = self.chains[ref >> 16]
-        return cast(_Chain, chain), ref & 65535
+        chain = self.chains[ref >> CHAIN_BLOCK_INDEX_BITS]
+        return cast(_Chain, chain), ref & CHAIN_BLOCK_INDEX_MASK
 
     def remove(self, key: int) -> None:
         found = self._chain_ref(key)
@@ -440,19 +497,19 @@ class KVCache:
         if len(set(keys)) != len(keys):
             return
         try:
-            packed = array("q", tokens)
+            packed = array(BLOCK_HASH_ARRAY_CODE, tokens)
         except OverflowError:
             return
         if not keys:
             return
         if sys.byteorder != "little":
             packed.byteswap()
-        for start in range(0, len(keys), 65536):
-            stop = min(start + 65536, len(keys))
+        for start in range(0, len(keys), BLOCKS_PER_CHAIN):
+            stop = min(start + BLOCKS_PER_CHAIN, len(keys))
             group_keys = keys[start:stop]
             group_tokens = packed[start * size : stop * size]
             if ancestor is None:
-                digest = xxhash.xxh3_128((adapter + "\0").encode())
+                digest = xxhash.xxh3_128((adapter + ADAPTER_HASH_SEPARATOR).encode())
                 length = 0
             else:
                 digest = ancestor[0].digest_at(ancestor[1])
@@ -462,7 +519,7 @@ class KVCache:
             )
             chain_id = self.free_chains.pop() if self.free_chains else len(self.chains)
             chain.id = chain_id
-            if chain_id >= 65536 and not self.blocks.wide:
+            if chain_id >= NARROW_CHAIN_ID_LIMIT and not self.blocks.wide:
                 self.blocks.widen()
             if chain_id == len(self.chains):
                 self.chains.append(chain)
@@ -485,24 +542,26 @@ class KVCache:
                 siblings.add(chain_id)
                 if ancestor is not None and ancestor[1] == ancestor[0].count - 1:
                     self._set_endpoint(ancestor[0])
-            data = memoryview(group_tokens).cast("B")
+            data = memoryview(group_tokens).cast(BYTE_ARRAY_CODE)
             offset = 0
-            next_boundary = 64 - length % 64
+            next_boundary = PREFIX_TOKENS - length % PREFIX_TOKENS
             for index, key in enumerate(group_keys):
                 end = (index + 1) * size
                 while offset + next_boundary <= end:
                     boundary = offset + next_boundary
-                    digest.update(data[offset * 8 : boundary * 8])
+                    digest.update(
+                        data[offset * BLOCK_HASH_BYTES : boundary * BLOCK_HASH_BYTES]
+                    )
                     offset = boundary
                     chain.positions.append(boundary)
                     chain.digests.append(digest.copy())
                     prefix = digest.hexdigest()
                     chain.prefixes.append(prefix)
                     self.prefix_counts[prefix] = self.prefix_counts.pop(prefix, 0) + 1
-                    next_boundary = 64
-                self.blocks.insert(key, chain_id << 16 | index)
+                    next_boundary = PREFIX_TOKENS
+                self.blocks.insert(key, chain_id << CHAIN_BLOCK_INDEX_BITS | index)
             if offset < len(group_tokens):
-                digest.update(data[offset * 8 :])
+                digest.update(data[offset * BLOCK_HASH_BYTES :])
             self._set_endpoint(chain)
             parent = group_keys[-1]
             ancestor = (chain, len(group_keys) - 1)
@@ -519,7 +578,7 @@ class KVEventSubscriber:
         self.endpoint = endpoint
         self.replay_endpoint = replay_endpoint
         self.cache = KVCache()
-        self.sequence = -1
+        self.sequence = REPLAY_END_SEQUENCE
         self.anchor: bytes | None = None
         self.ready = False
         self.checked_at = 0.0
@@ -549,7 +608,10 @@ class KVEventSubscriber:
     def start_thread(self) -> None:
         self._thread = threading.Thread(target=self._run_thread, daemon=True)
         self._thread.start()
-        if not self._thread_started.wait(2) or self._loop is None:
+        if (
+            not self._thread_started.wait(THREAD_START_TIMEOUT_SECONDS)
+            or self._loop is None
+        ):
             raise RuntimeError("KV event subscriber thread did not start")
 
     def _run_thread(self) -> None:
@@ -565,7 +627,7 @@ class KVEventSubscriber:
                 except Exception:
                     logger.exception("KV event subscriber failed; restarting")
                 self.reset()
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(SUBSCRIBER_RETRY_SECONDS)
 
         try:
             asyncio.run(worker())
@@ -579,7 +641,7 @@ class KVEventSubscriber:
             self._loop = None
             self._thread_started.set()
 
-    def stop_thread(self, timeout: float = 2) -> None:
+    def stop_thread(self, timeout: float = THREAD_STOP_TIMEOUT_SECONDS) -> None:
         if self._thread is None:
             return
         if self._loop is not None and self._run_task is not None:
@@ -597,7 +659,7 @@ class KVEventSubscriber:
 
     def reset(self) -> None:
         self.cache.clear()
-        self.sequence = -1
+        self.sequence = REPLAY_END_SEQUENCE
         self.anchor = None
         self.ready = False
         self._rebuild_started_at = None
@@ -609,7 +671,7 @@ class KVEventSubscriber:
         if sequence != self.sequence + 1:
             return False
         batch = msgspec.msgpack.decode(payload)
-        for event in batch[1]:
+        for event in batch[EVENT_BATCH_INDEX]:
             self.cache.apply(event)
         self.sequence = sequence
         self.anchor = payload
@@ -629,26 +691,28 @@ class KVEventSubscriber:
     async def replay(self, context: zmq.asyncio.Context) -> None:
         socket = context.socket(zmq.DEALER)
         try:
-            socket.setsockopt(zmq.LINGER, 0)
+            socket.setsockopt(zmq.LINGER, SOCKET_LINGER_MS)
             socket.connect(self.replay_endpoint)
 
             async def fetch(start: int) -> list[tuple[int, bytes]]:
-                await socket.send_multipart([b"", start.to_bytes(8, "big")])
+                await socket.send_multipart(
+                    [b"", start.to_bytes(SEQUENCE_FRAME_BYTES, SEQUENCE_BYTE_ORDER)]
+                )
                 batches: list[tuple[int, bytes]] = []
                 while True:
                     async with asyncio.timeout(REPLAY_STALL_TIMEOUT_SECONDS):
                         frames = await socket.recv_multipart()
                     topic = TOPIC
-                    if len(frames) == 3:
+                    if len(frames) == REPLAY_FRAMES_WITHOUT_TOPIC:
                         delimiter, seq, payload = frames
-                    elif len(frames) == 4:
+                    elif len(frames) == REPLAY_FRAMES_WITH_TOPIC:
                         delimiter, topic, seq, payload = frames
                     else:
                         raise ValueError("Invalid KV replay frame count")
-                    if delimiter != b"" or len(seq) != 8:
+                    if delimiter != b"" or len(seq) != SEQUENCE_FRAME_BYTES:
                         raise ValueError("Invalid KV replay frames")
-                    sequence = int.from_bytes(seq, "big", signed=True)
-                    if sequence == -1:
+                    sequence = int.from_bytes(seq, SEQUENCE_BYTE_ORDER, signed=True)
+                    if sequence == REPLAY_END_SEQUENCE:
                         return batches
                     if topic != TOPIC:
                         raise ValueError("Invalid KV replay topic")
@@ -677,7 +741,7 @@ class KVEventSubscriber:
                     self.cache.clear()
                     self.sequence = sequence - 1
                 self.apply(sequence, payload, publish=False)
-                if index & 31 == 31:
+                if index & REPLAY_YIELD_MASK == REPLAY_YIELD_MASK:
                     await asyncio.sleep(0)
             self.ready = True
             # A replay endpoint verifies continuity through its final batch.
@@ -690,14 +754,14 @@ class KVEventSubscriber:
                 )
                 self._rebuild_started_at = None
         finally:
-            socket.close(0)
+            socket.close(SOCKET_LINGER_MS)
 
     async def run(self) -> None:
         context = zmq.asyncio.Context()
         socket = None
         try:
             socket = context.socket(zmq.SUB)
-            socket.setsockopt(zmq.LINGER, 0)
+            socket.setsockopt(zmq.LINGER, SOCKET_LINGER_MS)
             socket.setsockopt(zmq.SUBSCRIBE, TOPIC)
             socket.setsockopt(zmq.RCVHWM, SUB_RECEIVE_HIGH_WATER_MARK)
             socket.connect(self.endpoint)
@@ -709,10 +773,10 @@ class KVEventSubscriber:
                         try:
                             await self.replay(context)
                         except TimeoutError:
-                            next_replay = time.monotonic() + 0.5
+                            next_replay = time.monotonic() + SUBSCRIBER_RETRY_SECONDS
                         else:
                             replay = False
-                            next_replay = time.monotonic() + 1.5
+                            next_replay = time.monotonic() + REPLAY_REFRESH_SECONDS
                     wait = (
                         max(
                             0.0,
@@ -720,13 +784,13 @@ class KVEventSubscriber:
                             - (time.monotonic() - self._last_snapshot_at),
                         )
                         if self._snapshot_dirty
-                        else 0.5
+                        else SUBSCRIBER_POLL_SECONDS
                     )
                     async with asyncio.timeout(wait):
                         topic, seq, payload = await socket.recv_multipart()
-                        if topic != TOPIC or len(seq) != 8:
+                        if topic != TOPIC or len(seq) != SEQUENCE_FRAME_BYTES:
                             raise ValueError("Invalid KV publication frames")
-                        sequence = int.from_bytes(seq, "big")
+                        sequence = int.from_bytes(seq, SEQUENCE_BYTE_ORDER)
                         if not self.apply_publication(sequence, payload):
                             if not replay:
                                 next_replay = 0.0
@@ -748,10 +812,10 @@ class KVEventSubscriber:
                     logger.exception("KV event subscription failed; discarding hints")
                     self.reset()
                     replay = True
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(SUBSCRIBER_RETRY_SECONDS)
         finally:
             self.ready = False
             self.snapshot = KVSnapshot(False, 0.0, ())
             if socket is not None:
-                socket.close(0)
-            context.destroy(linger=0)
+                socket.close(SOCKET_LINGER_MS)
+            context.destroy(linger=SOCKET_LINGER_MS)
