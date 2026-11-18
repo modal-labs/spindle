@@ -14,6 +14,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 ### Changed
 
 - `qwen38-27b-lora-256k` uses `miles-v0.2.0-8c5de26` and local trainer compiler caches to avoid corrupt generated modules observed with shared caches. Checkpoints saved with the previous `miles-v0.1.1-52a7a99` default cannot restore with the new image. Set `trainer_image` back to `miles-v0.1.1-52a7a99` to restore those checkpoints.
+- Miles LoRA checkpoints restore on a trainer running a different Miles commit, as long as the checkpoint format, adapter layout, base model and LoRA settings match. Before, any commit change rejected the restore, so moving a config to a newer image stranded its saved training states. Training states saved with 0.1.7 or earlier now restore on the current v0.1.x images without setting `trainer_image`. Checkpoints saved on `miles-v0.1.x` images still don't restore on `miles-v0.2.0` images, which use a different checkpoint format.
+- A checkpoint that a Miles v0.2.0 trainer refuses to load, for example because its expert adapters don't match, now fails only that request. Before, it stopped the trainer and every model on it.
 - DeepSeek-V4.1-Flash samplers run SGLang v0.5.23 like every other sampler, with decoder SWA bounded replay turned off. On v0.5.23 that feature made LoRA samplers crash on long prompts, and its logprobs don't match a full prefill. The samplers switch over at their next deploy (#304).
 
 ### Fixed
