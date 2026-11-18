@@ -11,6 +11,7 @@ class Config(Parent):
     inference_gpus_per_node = 2
     overrides = {
         "miles_cfg.expert_model_parallel_size": 4,
+        "trainer_env.EXPERT_GROUPED_GEMM": "1",
         "sglang_cfg.tp_size": 2,
         "sglang_cfg.ep_size": 2,
     }
