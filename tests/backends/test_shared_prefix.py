@@ -1,5 +1,6 @@
 """Opt-in and numerical failure gates require no GPU runtime."""
 
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import pytest
@@ -123,5 +124,13 @@ def test_example_gate_survives_full_deployment_serialization(
     assert backend.cli_options["moe_aux_loss_coeff"] == [0.0]
     assert backend.extra_args == ("--seq-length", "32768")
     assert backend.max_lora_slots == 1
+    assert any(
+        fnmatchcase("model.language_model.layers.3.mlp.experts.gate_up_proj", target)
+        for target in backend.target_modules
+    )
+    assert not any(
+        fnmatchcase("model.visual.blocks.0.mlp.gate_proj", target)
+        for target in backend.target_modules
+    )
     assert restored.recipe.platform["modal"]["exclude_reserved_capacity"] is True
     assert restored.recipe.trainer_image.endswith(":image")
