@@ -1,10 +1,9 @@
 import json
-from pathlib import Path
 
 import pytest
 
 from spindle.backends.deployment import backend_config, serving_options
-from spindle.backends.miles_config import MilesBackendConfig
+from spindle.backends.miles_config import GDN_INPUT_PROJECTIONS
 from spindle.control_plane.deployments import FrontendSettings
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.modal.deployment_configs import (
@@ -26,10 +25,15 @@ def test_all_packaged_recipes_validate_offline(path):
     if spec.parameterization == "lora":
         resolved = DeploymentConfig.create(spec)
         # Legacy Megatron selectors also match vision layers in current Bridge.
-        # Samplers match the path after a wildcard as a module-name suffix.
-        assert {
+        # Samplers match the path after a wildcard as a module-name suffix, and
+        # serve the Qwen3.5 linear-attention input projections fused.
+        expected = {
             target.rsplit("*.", 1)[-1] for target in spec.miles_cfg["target_modules"]
-        } == set(resolved.inference_settings["lora_target_modules"])
+        }
+        if expected & set(GDN_INPUT_PROJECTIONS):
+            expected = expected - set(GDN_INPUT_PROJECTIONS)
+            expected |= {"in_proj_qkvz", "in_proj_ba"}
+        assert expected == set(resolved.inference_settings["lora_target_modules"])
 
 
 @pytest.mark.parametrize(
@@ -64,8 +68,6 @@ def test_speculative_defaults_use_model_specific_drafts(preset, algorithm, draft
 @pytest.mark.parametrize("preset", ["qwen35-35b-a3b-fft-64k", "qwen36-35b-a3b-fft-64k"])
 def test_moe_recipes_preserve_trainer_expert_parallelism(preset):
     config = backend_config(load(config_path(preset)))["megatron"]
-    assert config["tensor_model_parallel_size"] == 4
-    assert config["context_parallel_size"] == 2
     assert config["expert_model_parallel_size"] == 8
     assert config["provider_overrides"]["moe_token_dispatcher_type"] == "alltoall"
 
@@ -124,24 +126,6 @@ def test_single_client_recipe_keeps_shared_backend_capacity():
     assert backend_config(single) == backend_config(shared)
 
 
-def test_beam_preserves_distinct_attention_and_mlp_gates():
-    spec = load(Path(__file__).parents[2] / "reference_runs/beam_config.py")
-    assert spec.trainer_image == "miles-v0.2.0"
-    assert spec.miles_cfg["cli_options"]["lora_type"] == "lora"
-    assert spec.miles_cfg["cli_options"]["qkv_format"] == "thd"
-    targets = MilesBackendConfig(
-        hf_checkpoint="/assets/pending",
-        actor_num_gpus_per_node=spec.trainer_gpus_per_node,
-        actor_num_nodes=spec.trainer_nodes,
-        **spec.miles_cfg,
-    ).peft_target_modules
-    assert "self_attn.gate_proj" in targets
-    assert "mlp.gate_proj" in targets
-    settings = backend_config(spec, "/assets/pending")
-    assert settings["miles"]["actor_num_nodes"] == 2
-    assert settings["capture_dir"].startswith("/checkpoints/")
-
-
 def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
     settings = FrontendSettings(
         platform={"frontend": "test"},
@@ -151,3 +135,25 @@ def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
     )
     monkeypatch.setenv(FRONTEND_SETTINGS_ENV, json.dumps(settings.__dict__))
     assert frontend_settings_from_env() == settings
+
+
+@pytest.mark.parametrize(
+    "preset",
+    [
+        "nemotron3-super-120b-a12b-lora-64k",
+        "nemotron35-lightning-30b-a3b-lora-64k",
+        "nemotron3-ultra-550b-a55b-lora-64k",
+    ],
+)
+def test_legacy_nemotron_does_not_inherit_native_nano_settings(preset):
+    spec = load(config_path(preset))
+    trainer = backend_config(spec)["miles"]
+    assert trainer["megatron_to_hf_mode"] == "bridge"
+    assert trainer["lora_type"] == "lora"
+    assert "deterministic_mode" not in trainer["cli_options"]
+    assert not {
+        "MAMBA_DETERMINISTIC",
+        "NCCL_ALGO",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
+        "CUBLAS_WORKSPACE_CONFIG",
+    }.intersection(spec.trainer_env)

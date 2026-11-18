@@ -8,13 +8,16 @@ from types import ModuleType
 import torch
 import torch.distributed as dist
 from torch.distributed.constants import default_pg_timeout
+from megatron.core import parallel_state
 from miles.ray import train_actor
 from miles.utils import distributed_utils
+from miles.utils.replay_base import all_replay_managers
 
+from spindle.patching import same_signature
 from spindle.startup_timing import timeline
 
+from . import out_of_memory
 from .profiling import RankProfiler, TorchProfileConfig
-from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
 from .replay import install_replay_hooks
 from .replay_data import install_distribution_sharding
 from .score_centering import install_losses
@@ -30,8 +33,6 @@ def install_replay_patches(
     fill_replay_data: object,
     routing_replay_manager: object,
     train_data_conversion: ModuleType,
-    qwen3_vl_model: ModuleType,
-    miles_qwen3_vl: ModuleType,
 ) -> None:
     """Install the Miles patches every image needs, given that image's modules."""
     install_replay_hooks(
@@ -45,14 +46,13 @@ def install_replay_patches(
     )
     install_losses(tinker_losses, logit_processors)
     install_distribution_sharding(train_data_conversion)
-    install_qwen3_vl_cp_position_ids(
-        bridge_model=qwen3_vl_model, miles_qwen3_vl=miles_qwen3_vl
-    )
+    out_of_memory.install(megatron_model=megatron_model, lora_model=lora_model)
 
 
 def use_distributed_timeout_for_gloo(minutes: int) -> None:
     timeout = max(timedelta(minutes=minutes), default_pg_timeout)
 
+    @same_signature(train_actor.init_gloo_group)
     def init_gloo_group() -> object:
         if distributed_utils.GLOO_GROUP is None:
             distributed_utils.GLOO_GROUP = dist.new_group(
@@ -85,12 +85,16 @@ class ProfiledActor:
     """Mixin placed before Miles' actor class: profiling and peak-memory logs per training call."""
 
     _spindle_profiler: RankProfiler | None = None
+    _out_of_memory_configured = False
 
     def torch_profile_start(self) -> None:
-        if not TorchProfileConfig.from_env().profiles_rank(dist.get_rank()):
+        config = TorchProfileConfig.from_env()
+        if not config.profiles_rank(dist.get_rank()):
             self._spindle_profiler = None
             return
-        self._spindle_profiler = RankProfiler()
+        self._spindle_profiler = RankProfiler(
+            record_shapes=config.record_shapes, profile_memory=config.profile_memory
+        )
         self._spindle_profiler.start()
 
     def torch_profile_stop(self, output_dir: str) -> dict | None:
@@ -100,14 +104,46 @@ class ProfiledActor:
         self._spindle_profiler = None
         return profiler.stop(output_dir, f"rank{dist.get_rank()}")
 
+    def torch_profile_wait(self) -> None:
+        RankProfiler.wait_for_writer()
+
     def forward_backward(self, *args: object, **kwargs: object) -> object:
-        return self._profiled("forward_backward", *args, **kwargs)
+        return self._fail_request_on_out_of_memory("forward_backward", args, kwargs)
 
     def forward_only(self, *args: object, **kwargs: object) -> object:
-        return self._profiled("forward_only", *args, **kwargs)
+        return self._fail_request_on_out_of_memory("forward_only", args, kwargs)
 
     def optim_step(self, *args: object, **kwargs: object) -> object:
         return self._profiled("optim_step", *args, **kwargs)
+
+    def _fail_request_on_out_of_memory(
+        self, operation: str, args: tuple, kwargs: dict
+    ) -> object:
+        if not self._out_of_memory_configured:
+            self._configure_out_of_memory()
+        result = out_of_memory.run(
+            lambda: self._profiled(operation, *args, **kwargs),
+            replay_managers=all_replay_managers,
+        )
+        if isinstance(result, dict) and result.get(out_of_memory.OUT_OF_MEMORY):
+            log_peak_memory(f"{operation}_out_of_memory")
+        return result
+
+    def _configure_out_of_memory(self) -> None:
+        world_size = dist.get_world_size()
+        # Other layouts and MoE routers run collectives mid-pass, where a failed rank would strand its peers.
+        dense_data_parallel = (
+            parallel_state.get_data_parallel_world_size() == world_size
+            and not any(
+                chunk.config.num_moe_experts or chunk.ddp_config.overlap_grad_reduce
+                for chunk in self.model
+            )
+        )
+        out_of_memory.configure(
+            recoverable=world_size == 1 or dense_data_parallel,
+            group=distributed_utils.get_gloo_group() if world_size > 1 else None,
+        )
+        self._out_of_memory_configured = True
 
     def _profiled(self, operation: str, *args: object, **kwargs: object) -> object:
         with torch.profiler.record_function(f"spindle/{operation}"):

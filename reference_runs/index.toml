@@ -1,0 +1,59 @@
+# Execution provenance is recorded here; validation definitions do not select runtime versions.
+
+[[runs]]
+id = "dapo-qwen35-4b-miles-v011"
+validation = "dapo_qwen35_4b"
+output = "outputs/dapo-qwen35-4b-miles-v011.jsonl"
+spindle_commit = "e24a4fdcb68414e3e04dfc4fcc6b89f9c47b7c76"
+trainer_image = "Miles v0.1.1"
+miles_commit = "fdd808c008175d4895fd8c57c95ef4fa5bb6a2a0"
+tinker_sdk = "0.26.0"
+hardware = "Four H100 80GB trainer GPUs; two single-H100 80GB sampler replicas."
+notes = '''
+Historical 20-update execution, imported without modifying the metrics. It predates
+this TOML catalog. Client and deployment source: e24a4fd; server: Spindle 0.1.6.
+Trainer source and GPU allocation were verified in executing containers. All GPUs
+reported 81,559 MiB. Trainer TP1/DP4, one client, fixed sampler replica count.
+A two-update smoke run warmed this dedicated deployment. Platform-only overrides
+selected the app/environment, enabled proxy auth and omitted the optional HF secret;
+storage used the recipe's default volumes. Image digests were not recorded.
+All 20 updates were accepted. Held-out accuracy: 53/256 -> 107/256. Median interval:
+73.5 seconds. Total recorded time: 1,766 seconds. Times exclude startup, model and
+dataset loading, and client creation; intervals include eval/publication/checkpoints.
+One seed; evaluations reuse problems/seeds. Checkpoints were saved, not restored.
+'''
+
+[[runs]]
+id = "dapo-qwen35-4b-miles-v020"
+validation = "dapo_qwen35_4b"
+output = "outputs/dapo-qwen35-4b-miles-v020.jsonl"
+spindle_commit = "016debf318ba38292627f3d51e179b19b2b73b1c"
+trainer_image = "Miles v0.2.0"
+miles_commit = "a94f7ae"
+tinker_sdk = "0.26.0"
+hardware = "Four H100 trainer GPUs; two single-H100 sampler replicas."
+region = "us-east"
+notes = '''
+Historical 20-update execution from PR #289, imported without modifying the metrics.
+It predates this TOML catalog. The saved deployment used the same fixed-H100 recipe
+with the v0.2.0 trainer image and frontend/trainer/samplers in us-east. All 20 updates
+were accepted. Held-out accuracy: 51/256 -> 103/256; median interval: 64.1 seconds.
+Image digests were not recorded. Source and measurement details:
+https://github.com/modal-labs/spindle/pull/289
+These metrics record checkpoint saves, not the separate restore tests in that PR.
+One run per image, with different placement settings, does not establish learning
+or performance parity. Reproduction requires the historical source revisions.
+'''
+
+[[runs]]
+id = "dapo-qwen38-27b-miles-v011"
+validation = "dapo_qwen38_27b_multinode"
+output = "outputs/dapo-qwen38-27b-miles-v011.jsonl"
+spindle_commit = "8970cb1f69675e917db9baee9ad4b0abfbecdf61"
+spindle_version = "0.1.7"
+trainer_image = "miles-v0.1.1-52a7a99"
+miles_commit = "52a7a99d9f9e6188ece91a0583ef417093601025"
+tinker_sdk = "0.26.0"
+hardware = "Two eight-H200 trainer nodes (TP2/CP8); two four-H200 sampler replicas. All GPUs reported 143771 MiB, driver 610.57.04."
+region = "Trainers: us-south. Samplers: us-south and eu-south."
+notes = "Completed 20-update stock-Tinker execution. Server commit/version were captured from get_server_capabilities before cleanup; four critical runtime file hashes matched that commit on all four GPU containers. Trainer Miles revision and H200 allocation were verified inside the executing containers. Sampler image sglang-v0.5.23-c4182b2 overlays fork c4182b22139a5730c9f18907cc0b178a305bb0f1 onto its upstream base. Cached base-weight snapshot: 37561816e66b5b9153b1b64c10968c18c1e6f4a0. Initial model download and client creation are excluded from recorded time; first-step compilation and subsequent warmup are included. All updates were accepted with finite metrics; evaluations completed at 0/5/10/15/20, publications at 0 through 20, checkpoints saved at 0/10/20. Held-out accuracy: 65/256 to 137/256. Median interval 559.4 seconds; total recorded time 13809.8 seconds. One workload seed; checkpoints saved, not restored. Compiler caches used the shared volume. This execution predates the new tooling PR and does not validate its head end to end."

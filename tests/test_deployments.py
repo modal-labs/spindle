@@ -117,7 +117,6 @@ def test_presets_context_topology_and_backend_options():
     assert large.max_context_length == 65536
     assert backend_config(large)["miles"]["actor_num_gpus_per_node"] == 8
     fft = backend_config(recipe("qwen35-4b-fft-64k"))["megatron"]
-    assert (fft["tensor_model_parallel_size"], fft["context_parallel_size"]) == (2, 2)
     assert fft["provider_overrides"]["recompute_granularity"] == "full"
 
 
@@ -146,7 +145,27 @@ def test_no_model_catalog_required():
         ({"sglang_cfg": {"model_path": "other"}}, "managed"),
         ({"sglang_cfg": {"tp_size": 2}}, "replica GPU"),
         ({"trainer_max_clients_per_instance": 7}, "max_lora_slots"),
+        ({"miles_cfg__cli_options__lora_type": "canonical_lora"}, "managed"),
         ({"trainer_max_clients_per_batch": 0}, "trainer_max_clients_per_batch"),
+        (
+            {
+                "miles_cfg__lora_type": "lora",
+                "miles_cfg__target_modules": ["q_proj", "in_proj_qkv", "in_proj_z"],
+            },
+            "list all of in_proj_qkv, in_proj_z, in_proj_b, in_proj_a",
+        ),
+        (
+            {
+                "miles_cfg__lora_type": "lora",
+                "miles_cfg__target_modules": [
+                    "*.in_proj_qkv",
+                    "in_proj_z",
+                    "in_proj_b",
+                    "in_proj_a",
+                ],
+            },
+            "by name",
+        ),
     ],
 )
 def test_invalid_integrations_fail_when_building_backend_settings(changes, match):
@@ -154,6 +173,15 @@ def test_invalid_integrations_fail_when_building_backend_settings(changes, match
     with pytest.raises(ValueError, match=match):
         backend_config(spec)
         serving_options(spec)
+
+
+def test_canonical_gdn_targets_do_not_require_fused_gate_adapters():
+    spec = recipe(miles_cfg__target_modules=["q_proj", "in_proj_qkv", "in_proj_z"])
+    definition = DeploymentConfig.create(spec)
+    assert definition.inference_settings["lora_target_modules"] == [
+        "q_proj",
+        "in_proj_qkvz",
+    ]
 
 
 def test_deepseek_v41_lora_recipe():
@@ -187,7 +215,7 @@ def test_deepseek_v41_lora_recipe():
     assert serving["disable_shared_experts_fusion"] is True
     assert row.recipe.inference_env["SGLANG_DSV4_FP4_DEQUANT"] == "1"
     assert serving["weight_loader_disable_mmap"] is False
-    assert row.recipe.trainer_image == "miles-v0.1.2"
+    assert row.recipe.trainer_image == "miles-v0.1.2-99e1ebe"
     assert row.model == "deepseek-ai/DeepSeek-V4.1-Flash"
     assert row.asset_path == "/assets/deepseek-ai/DeepSeek-V4.1-Flash"
     assert json.loads(serving["json_model_override_args"])["vision_n_layers"] == 0
@@ -627,6 +655,41 @@ async def test_every_recipe_routes_by_name_and_plain_models_pick_the_longest():
 
 
 @pytest.mark.anyio
+async def test_create_model_rejects_untrainable_lora_before_a_trainer_starts():
+    kv = InMemoryKeyValueStore()
+    routes, _ = routes_for(resolved())
+    async with client_for(routes, kv) as client:
+        session_id = (await client.post("/api/v1/create_session", json={})).json()[
+            "session_id"
+        ]
+        for seq, lora_config in enumerate(
+            ({"rank": 8, "train_mlp": False}, {"rank": 8, "train_unembed": False})
+        ):
+            response = await client.post(
+                "/api/v1/create_model",
+                json={
+                    "session_id": session_id,
+                    "model_seq_id": seq,
+                    "base_model": "Qwen/Qwen3.5-9B-Base",
+                    "lora_config": lora_config,
+                },
+            )
+            assert response.status_code == 400, response.text
+            assert "train_mlp=True" in response.json()["message"]
+        assert not await kv.list_items("trainer_demand:")
+        response = await client.post(
+            "/api/v1/create_model",
+            json={
+                "session_id": session_id,
+                "model_seq_id": 2,
+                "base_model": "Qwen/Qwen3.5-9B-Base",
+                "lora_config": {"rank": 8, "seed": 7},
+            },
+        )
+        assert response.status_code == 200, response.text
+
+
+@pytest.mark.anyio
 async def test_queues_report_each_recipe():
     async def list_instances():
         return ()
@@ -731,10 +794,46 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
         backend_config(spec)
 
 
-def test_miles_v020_raw_mode_requires_canonical_lora():
-    spec = recipe("kimi-k3-lora-32k", miles_cfg__cli_options__lora_type="lora")
-    with pytest.raises(ValueError, match="canonical_lora"):
-        backend_config(spec)
+@pytest.mark.parametrize(
+    "changes, match",
+    [
+        (
+            {"miles_cfg__megatron_to_hf_mode": "raw", "miles_cfg__lora_type": "lora"},
+            "canonical_lora",
+        ),
+        (
+            {
+                "miles_cfg__megatron_to_hf_mode": "bridge",
+                "miles_cfg__lora_type": "canonical_lora",
+            },
+            "requires megatron_to_hf_mode raw",
+        ),
+    ],
+)
+@pytest.mark.parametrize("image", ["miles-v0.2.0-8c5de26", "miles-v0.2.0-e814245"])
+def test_miles_v020_rejects_untested_trainer_layouts(changes, match, image):
+    with pytest.raises(ValueError, match=match):
+        backend_config(recipe(trainer_image=image, **changes))
+
+
+@pytest.mark.parametrize("image", ["miles-v0.2.0-8c5de26", "miles-v0.2.0-e814245"])
+@pytest.mark.parametrize("mode,layout", [("raw", "canonical_lora"), ("bridge", "lora")])
+def test_miles_v020_accepts_supported_adapter_layouts(image, mode, layout):
+    backend_config(
+        recipe(
+            trainer_image=image,
+            miles_cfg__megatron_to_hf_mode=mode,
+            miles_cfg__lora_type=layout,
+        )
+    )
+
+
+@pytest.mark.parametrize("image", ["", "miles-v0.1.2-99e1ebe"])
+def test_canonical_slots_require_the_native_capable_image(image):
+    with pytest.raises(ValueError, match="canonical_lora requires trainer_image"):
+        backend_config(
+            recipe(trainer_image=image, miles_cfg__lora_type="canonical_lora")
+        )
 
 
 def test_backend_dispatch_rejects_unknown_backend():

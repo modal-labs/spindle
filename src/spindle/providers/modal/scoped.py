@@ -20,6 +20,7 @@ from spindle.control_plane import create_control_plane_app
 from spindle.engines import Engine, gpu_count
 from spindle.inference.sampling import sample_task
 from spindle.inference.serving import (
+    SGLANG_ENV,
     start_fft_sidecar,
     start_sglang,
     supervise_children,
@@ -37,7 +38,7 @@ from .image_dependencies import CORE_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE
 from .kernel_cache import KERNEL_CACHE_ENV, KERNEL_CACHE_ROOT, kernel_cache_volume
 from .kv import ModalSessionKeyValueStores, shared_kv
 from .megatron_image import image as default_trainer_image
-from .rollout_image import image as default_sampler_image
+from .rollout_image import image_01_c4182b2 as default_sampler_image
 from .sampling import ModalSamplingTaskPlatform
 from .scoped_assignment import claim_model
 from .scoped_control import ScopedControlPlane
@@ -86,6 +87,7 @@ def register_sampler(
         gpu=engine.sampler_gpu,
         cpu=engine.sampler_cpu,
         memory=engine.sampler_memory,
+        env=SGLANG_ENV,
         volumes={"/assets": assets, "/bulletin": bulletin},
         min_containers=0,
         max_containers=pool.max_containers,

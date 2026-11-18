@@ -3,6 +3,8 @@ from spindle.configs.nemotron3_nano_30b_a3b_lora_64k import Config as Parent
 
 class Config(Parent):
     name = "nemotron3-ultra-550b-a55b-lora-64k"
+    trainer_image = "miles-v0.1.1-52a7a99"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
     trainer_gpu = "B300"
     trainer_nodes = 2
@@ -17,6 +19,9 @@ class Config(Parent):
     inference_startup_timeout_s = 3600
     inference_memory_mib = 1048576
     inference_cpu = 32
+    # Use the shared defaults without Nano's native backend overrides.
+    miles_cfg = Parent.miles_cfg
+    trainer_env = Parent.trainer_env
     overrides = {
         "trainer_env.TORCHINDUCTOR_CACHE_DIR": "/tmp/spindle-inductor",
         "miles_cfg.model_type": "nemotron-3-ultra-550b-a55b",

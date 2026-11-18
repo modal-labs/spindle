@@ -5,6 +5,8 @@ from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
 
 class Config(Parent):
     name = "qwen35-9b-instruct-lora-256k"
+    trainer_image = "miles-v0.2.0-e814245"
+    inference_image = "sglang-v0.5.23-e003cf9"
     max_context_length = 262144
     trainer_gpu = "B300"
     trainer_gpus_per_node = 4
@@ -21,6 +23,8 @@ class Config(Parent):
     inference_memory_mib = 65536
     inference_startup_timeout_s = 1800
     overrides = {
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
         "miles_cfg.tensor_model_parallel_size": 1,
         "miles_cfg.context_parallel_size": 4,
         "miles_cfg.max_tokens_per_gpu": 65536,

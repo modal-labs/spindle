@@ -130,7 +130,9 @@ def test_real_sdk_training_loop(base_url: str) -> None:
         }
     ]
 
-    training = service.create_lora_training_client(base_model=BASE_MODEL, rank=32)
+    training = service.create_lora_training_client(
+        base_model=BASE_MODEL, rank=32, seed=42
+    )
 
     datum = types.Datum(
         model_input=types.ModelInput.from_ints([1, 2, 3]),

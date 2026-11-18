@@ -12,7 +12,12 @@ from typing import Protocol
 from tinker.types.forward_backward_input import ForwardBackwardInput
 
 from spindle.encoding import fingerprint
-from spindle.errors import EngineSaturated, RecordNotFound, SequenceConflict
+from spindle.errors import (
+    EngineSaturated,
+    RecordNotFound,
+    SequenceConflict,
+    TrainerOutOfMemory,
+)
 from spindle.request_timing import mark
 from spindle.usage import ContainerUsage
 from spindle.usage.meter import WINDOW_S
@@ -538,9 +543,12 @@ class Engine:
                 )
             except Exception as exc:  # noqa: BLE001
                 error = _failure(exc, f"{operation.kind.value} x{len(operations)}")  # ty: ignore[invalid-argument-type]
-                if operation.kind == OperationKind.FORWARD and len(operations) > 1:  # ty: ignore[invalid-argument-type]
-                    # Forwards change no state: retry alone so one client's bad
-                    # input does not fail the others it was batched with.
+                if len(operations) > 1 and (  # ty: ignore[invalid-argument-type]
+                    operation.kind == OperationKind.FORWARD
+                    or isinstance(exc, TrainerOutOfMemory)
+                ):
+                    # Forwards, and passes skipped after running out of memory, change no
+                    # state: retry alone so one client's request doesn't fail the others.
                     states = tuple(
                         [await self._execute_alone(item) for item in operations]  # ty: ignore[invalid-argument-type]
                     )

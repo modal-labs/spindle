@@ -19,8 +19,8 @@ from transformers import PreTrainedTokenizerFast
 
 @dataclasses.dataclass(frozen=True)
 class Config:
-    model: str = "Qwen/Qwen3.5-4B"
-    tokenizer_revision: str = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+    model: str
+    tokenizer_revision: str
     enable_thinking: bool = False
     dataset: str = "zhuzilin/dapo-math-17k"
     dataset_revision: str = "2e65612930298bde4c5d58fd97b3f23a483aaff9"
@@ -38,14 +38,6 @@ class Config:
     loss: types.LossFnType = "importance_sampling"
     learning_rate: float = 4e-5
 
-
-HARDWARE = {
-    "trainer": {"gpu": "H100!", "gpus": 4},
-    "sampler": {"gpu": "H100!", "gpus_per_replica": 1, "replicas": 2},
-}
-RECIPE = "dapo-math-qwen35-4b-h100"
-
-SMOKE = Config(updates=2, groups=4, eval_problems=8, evaluation_interval=1)
 
 Problem = tuple[list[int], str]
 Group = tuple[list[int], list[types.SampledSequence], list[float]]
@@ -115,15 +107,34 @@ def datum(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--smoke", action="store_true", help=f"use {SMOKE}")
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument(
+        "--base-model", required=True, help="model ID or deployment name"
+    )
+    parser.add_argument(
+        "--output", type=Path, required=True, help="new JSONL output file"
+    )
+    parser.add_argument(
+        "--smoke", action="store_true", help="use two updates and four groups"
+    )
+    parser.add_argument(
+        "--tokenizer",
+        required=True,
+        nargs=2,
+        metavar=("MODEL", "REVISION"),
+        help="pinned tokenizer",
+    )
     args = parser.parse_args()
-    config = SMOKE if args.smoke else Config()
-    args.output.mkdir(parents=True)
+    config = Config(model=args.tokenizer[0], tokenizer_revision=args.tokenizer[1])
+    if args.smoke:
+        config = dataclasses.replace(
+            config, updates=2, groups=4, eval_problems=8, evaluation_interval=1
+        )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.touch(exist_ok=False)
 
     def record(event: str, **fields: object) -> None:
-        with (args.output / "metrics.jsonl").open("a") as stream:
+        with args.output.open("a") as stream:
             line = {"time": time.time(), "event": event, **fields}
             stream.write(json.dumps(line, allow_nan=False) + "\n")
 
@@ -152,15 +163,14 @@ def main() -> None:
     ]
     held_out = problems[: config.eval_problems]
     service = tinker.ServiceClient()
-    training = service.create_lora_training_client(RECIPE, config.lora_rank)
+    training = service.create_lora_training_client(args.base_model, config.lora_rank)
     adam = types.AdamParams(learning_rate=config.learning_rate)
     record(
         "run",
         config=dataclasses.asdict(config),
         adam=adam.model_dump(),
         tinker_sdk=importlib.metadata.version("tinker"),
-        recipe=RECIPE,
-        hardware=HARDWARE,
+        recipe=args.base_model,
     )
     clock, previous = time.monotonic, None
     for step in range(config.updates + 1):

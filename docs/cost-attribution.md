@@ -123,6 +123,8 @@ The lines add up to those costs:
 - `unattributed`: cost with no tokens to split it by, such as the frontend, a pool that served nothing, or a trainer that only saved weights.
 - `unknown`: usage from sessions without that label.
 
+To group by several labels, list them separated by commas, such as `--group-by team_id,run_id`. Each label gets its own column.
+
 Add `--hide-overhead` to show only the groups; `total` is then their sum.
 
 Add `--format csv` for CSV.

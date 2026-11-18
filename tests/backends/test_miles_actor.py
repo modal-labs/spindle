@@ -1,5 +1,6 @@
 import importlib
 import importlib.util
+import builtins
 import sys
 import threading
 import types
@@ -106,6 +107,8 @@ def _load_actor(monkeypatch):
     # These need real torch; import them before torch is stubbed below.
     importlib.import_module("spindle.backends.miles_runtime.replay_data")
     importlib.import_module("spindle.backends.score_centering")
+    importlib.import_module("spindle.backends.miles_runtime.moe_permute")
+    importlib.import_module("spindle.backends.miles_runtime.out_of_memory")
     monkeypatch.delitem(
         sys.modules, "spindle.backends.miles_runtime.actor_shared", raising=False
     )
@@ -115,7 +118,8 @@ def _load_actor(monkeypatch):
     _module(monkeypatch, "torch.distributed.constants").default_pg_timeout = timedelta(
         minutes=30
     )
-    _module(monkeypatch, "miles.ray.train_actor")
+    train_actor = _module(monkeypatch, "miles.ray.train_actor")
+    train_actor.init_gloo_group = lambda: None
     _module(monkeypatch, "miles.utils.distributed_utils").GLOO_GROUP = None
     megatron_bridge = _module(monkeypatch, "megatron.bridge")
     megatron_bridge.AutoBridge = type("AutoBridge", (), {})
@@ -125,19 +129,25 @@ def _load_actor(monkeypatch):
         "megatron.core.dist_checkpointing"
     )
     _module(monkeypatch, "megatron.core.dist_checkpointing")
+    _module(monkeypatch, "megatron.core.parallel_state")
 
     fsdp_actor = _module(monkeypatch, "miles.backends.fsdp_utils.actor")
     megatron_actor = _module(monkeypatch, "miles.backends.megatron_utils.actor")
     megatron_model = _module(monkeypatch, "miles.backends.megatron_utils.model")
     megatron_model.get_batch = lambda *args, **kwargs: {}
+    megatron_model.get_packed_seq_params = lambda *args, **kwargs: None
+    megatron_model.finalize_model_grads_with_empty_cache = lambda *args, **kwargs: None
     checkpoint = _module(monkeypatch, "miles.backends.megatron_utils.lora.checkpoint")
-    _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
+    lora_model = _module(monkeypatch, "miles.backends.megatron_utils.lora.model")
+    lora_model.run_forward_backward = lambda *args, **kwargs: None
+    lora_model.run_forward_backward_pass = lambda *args, **kwargs: None
+    lora_model.aggregate_train_losses = lambda *args, **kwargs: {}
     _module(
         monkeypatch, "miles.backends.training_utils.replay_data"
     ).fill_replay_data = lambda **kwargs: None
-    _module(
-        monkeypatch, "miles.utils.replay_base"
-    ).routing_replay_manager = types.SimpleNamespace()
+    replay_base = _module(monkeypatch, "miles.utils.replay_base")
+    replay_base.routing_replay_manager = types.SimpleNamespace()
+    replay_base.all_replay_managers = []
     lora_actor = _module(monkeypatch, "miles.backends.megatron_utils.lora.actor")
     lora_actor.MultiLoRATrainRayActor = type("MultiLoRATrainRayActor", (), {})
     training_cp_utils = _module(monkeypatch, "miles.backends.training_utils.cp_utils")
@@ -250,6 +260,12 @@ class _FakeVolume:
         self.events.append(("copy", tuple(src_paths), dst_path, recursive))
 
 
+def test_training_passes_keep_earlier_gradients(monkeypatch) -> None:
+    _load_actor(monkeypatch)
+    lora_model = sys.modules["miles.backends.megatron_utils.lora.model"]
+    assert lora_model.run_forward_backward_pass.__spindle_gradient_accumulation__
+
+
 @pytest.mark.parametrize("minutes, expected", [(120, 120), (10, 30)])
 def test_gloo_group_waits_as_long_as_the_distributed_timeout(
     monkeypatch, minutes, expected
@@ -262,6 +278,73 @@ def test_gloo_group_waits_as_long_as_the_distributed_timeout(
     actor._use_distributed_timeout_for_gloo(minutes)
     assert sys.modules["miles.ray.train_actor"].init_gloo_group() == "gloo"
     assert groups == [{"backend": "gloo", "timeout": timedelta(minutes=expected)}]
+
+
+def test_v020_native_worker_starts_without_loading_the_bridge_provider(monkeypatch):
+    _load_actor(monkeypatch)
+    from spindle.backends.score_centering import REPLAY_LOSSES
+
+    old_hub = sys.modules["miles.backends.training_utils.loss_hub"]
+    hub = _module(monkeypatch, "miles.backends.training_utils.loss.hub")
+    hub.logit_processors = old_hub.logit_processors
+    hub.math_utils = old_hub.math_utils
+    hub.tinker_losses = old_hub.tinker_losses
+    hub.tinker_losses._target_logprobs = lambda *args: None
+    hub.tinker_losses.TINKER_LOSS_FUNCTIONS = {
+        loss: (lambda *args: None) for loss in REPLAY_LOSSES
+    }
+    _module(
+        monkeypatch, "miles.backends.training_utils.replay.data"
+    ).fill_replay_data = lambda **kwargs: None
+    _module(
+        monkeypatch, "miles.backends.training_utils.checkpoint.adapter.adapter_dir"
+    ).save_adapter_dir = lambda *args, **kwargs: None
+    _module(
+        monkeypatch, "miles.backends.training_utils.checkpoint.adapter.adapter_state"
+    ).agree_on_failure_context = None
+    sys.modules[
+        "miles.backends.megatron_utils.lora.checkpoint"
+    ].LayerWiseSlotMembers = type("LayerWiseSlotMembers", (), {})
+    _module(
+        monkeypatch, "spindle.backends.miles_runtime.native_checkpoint"
+    ).validate_adapter = None
+
+    parent = sys.modules[
+        "miles.backends.megatron_utils.lora.actor"
+    ].MultiLoRATrainRayActor
+
+    def initialize(self, args, role, **kwargs):
+        self.mode = args.megatron_to_hf_mode
+        return 0
+
+    monkeypatch.setattr(parent, "init", initialize, raising=False)
+    original_import = builtins.__import__
+
+    def without_bridge(name, *args, **kwargs):
+        if name.startswith("megatron.bridge") or name == "miles_plugins.models":
+            raise AssertionError(f"native Spindle worker imported {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_bridge)
+    path = (
+        Path(__file__).parents[2] / "src/spindle/backends/miles_runtime/actor_v020.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "spindle.backends.miles_runtime._test_actor_v020", path
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "mark_actor_initialized", lambda: None)
+    actor = module.SpindleMilesTrainRayActor()
+    result = actor.init(
+        types.SimpleNamespace(
+            megatron_to_hf_mode="raw",
+            backend=types.SimpleNamespace(distributed_timeout_minutes=30),
+        ),
+        "actor",
+    )
+    assert result == 0
+    assert actor.mode == "raw"
 
 
 def test_checkpoint_is_published_from_committed_state(monkeypatch, tmp_path) -> None:

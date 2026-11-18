@@ -1,16 +1,14 @@
 """Score alternative labels using the same model forward pass.
 
-Miles keeps its CP sequence slicing and TP vocabulary layout. When every datum has the same
-number of label columns, all columns go through Miles in one pass and share one softmax over
-the vocabulary. Otherwise each column is scored separately with single-target semantics.
+Miles keeps its CP sequence slicing and TP vocabulary layout. Candidate columns are
+padded to a common width to share one vocabulary softmax, then trimmed per datum.
+Unsupported scoring modes keep the per-column single-target path.
 """
 
 from functools import wraps
 
 import torch
 import torch.distributed as dist
-
-from .config import backend_config
 
 
 class CandidateLogProbs(torch.autograd.Function):
@@ -44,11 +42,17 @@ class CandidateLogProbs(torch.autograd.Function):
         return picked - sum_exp.log()
 
     @staticmethod
-    def backward(ctx, grad):
+    def backward(ctx, grad):  # ty: ignore[incompatible-method-override]
         softmax, local, outside = ctx.saved_tensors
         grad_logits = softmax.mul_(-grad.sum(dim=-1, keepdim=True))
         grad_logits.scatter_add_(-1, local, grad.masked_fill(outside, 0.0))
         return grad_logits, None, None
+
+
+def _context_parallel_size(args) -> int:
+    # Miles v0.2.0 keeps parallel sizes under args.backend.
+    size = getattr(args, "context_parallel_size", None)
+    return size if size is not None else args.backend.context_parallel_size
 
 
 def install_multi_target_hooks(tinker_losses, math_utils=None) -> None:
@@ -62,19 +66,16 @@ def install_multi_target_hooks(tinker_losses, math_utils=None) -> None:
         if all(target.ndim == 1 for target in targets):
             return original_target(args, batch, logits)
         widths = [target.shape[1] if target.ndim == 2 else 1 for target in targets]
-        shared = {target.shape[1] for target in targets if target.ndim == 2}
-        width = max(shared)
+        width = max(widths)
         if (
             math_utils is not None
-            and shared == {width}
-            and width > 1
             # A CP rank may own no rows of a short 1-D padding row; Miles hands back that
             # shard as 1-D and the v0.1.1 CP gather would all-reduce mismatched shapes.
             and (
-                backend_config(args).context_parallel_size == 1
+                _context_parallel_size(args) == 1
                 or all(target.ndim == 2 for target in targets)
             )
-            and not backend_config(args).allgather_cp
+            and not args.allgather_cp
             and not args.true_on_policy_mode
             and "rollout_sampling_mask_ids" not in batch
         ):
@@ -84,16 +85,18 @@ def install_multi_target_hooks(tinker_losses, math_utils=None) -> None:
                 for tokens in batch["unconcat_tokens"]
             ]
             joint_batch["target_tokens"] = [
-                target if target.ndim == 2 else target[:, None].expand(-1, width)
-                for target in targets
+                torch.cat([target, target[:, -1:].expand(-1, width - count)], dim=-1)
+                if target.ndim == 2
+                else target[:, None].expand(-1, width)
+                for target, count in zip(targets, widths, strict=True)
             ]
             scores = original_target(args, joint_batch, logits)
             # An empty CP shard comes back 1-D.
             return [
-                score.reshape(-1, width)
+                score.reshape(-1, width)[:, :count]
                 if target.ndim == 2
                 else score.reshape(-1, width)[:, 0]
-                for score, target in zip(scores, targets, strict=True)
+                for score, target, count in zip(scores, targets, widths, strict=True)
             ]
         columns = []
         for column in range(max(widths)):

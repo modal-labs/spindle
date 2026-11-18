@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import modal
-import torch
 from stitch.types import VersionRef
 from tinker import AdamParams, ForwardBackwardOutput, OptimStepResponse
 
@@ -29,14 +28,16 @@ from .contract import (
     SamplerPublication,
 )
 from .miles_config import (
+    GDN_INPUT_PROJECTIONS,
     MilesBackendConfig,
+    check_lora_request,
     lora_target_flags,
     parse_backend_config,
 )
 from .miles_runtime.data import build_outputs, pad_slot_rows, prepare_batch
-from .miles_runtime.profiling import RankProfiler, StepPhaseTimer, TorchProfileConfig
+from .miles_runtime.profiling import StepPhaseTimer, TorchProfileConfig
 from .miles_runtime.runtime import MilesRuntime
-from .miles_runtime.volumes import on_checkpoint_volume
+from .miles_runtime.volumes import checkpoint_volume_path
 
 
 @dataclass(slots=True)
@@ -75,7 +76,7 @@ class MilesCommandBackend(Backend):
         self.slot_to_job: dict[int, str] = {}
         # A volume refresh must not race checkpoint writes on the persistence lane.
         self._checkpoint_io_lock = threading.RLock()
-        self._captures_on_volume = on_checkpoint_volume(capture_dir)
+        self._captures_on_volume = checkpoint_volume_path(capture_dir) is not None
         self._native = self.runtime.checkpoint_format == "miles_adapter_state"
         self._checkpoint_captures: dict[str, dict[str, Any]] = {}
         self._sampler_captures: dict[str, dict[str, Any]] = {}
@@ -83,8 +84,9 @@ class MilesCommandBackend(Backend):
         self._profile = TorchProfileConfig.from_env()
         self._profiling_active = False
         self._profile_step_done = False
+        # The command and sampler-publish threads can both reach the stop.
+        self._profile_stop_lock = threading.Lock()
         self._firsts: set[str] = set()
-        self._controller_profiler: RankProfiler | None = None
         self._closed = False
         if self._profile.enabled:
             print(
@@ -153,7 +155,7 @@ class MilesCommandBackend(Backend):
         self.job_to_slot[model_id] = slot
         self.slot_to_job[slot] = model_id
         try:
-            self.runtime.load_slot(slot, state.rank, state.alpha)
+            self.runtime.load_slot(slot, state.rank, state.alpha, seed=state.seed)
         except BaseException:
             self._release(model_id, slot)
             self.jobs.pop(model_id, None)
@@ -209,10 +211,7 @@ class MilesCommandBackend(Backend):
                     )
         phase_name = "forward_only" if batch.forward_only else "forward_backward"
         started = time.perf_counter()
-        with (
-            self._timer.phase(phase_name, step, model_id=batch.items[0].model_id),
-            self._record(f"spindle/{phase_name}"),
-        ):
+        with self._timer.phase(phase_name, step, model_id=batch.items[0].model_id):
             slot_rows = pad_slot_rows(
                 prepared.slot_rows,
                 self.config.data_parallel_size,
@@ -254,10 +253,7 @@ class MilesCommandBackend(Backend):
         }
         step = self.jobs[model_ids[0]].optimizer_step
         started = time.perf_counter()
-        with (
-            self._timer.phase("optim_step", step, model_id=model_ids[0]),
-            self._record("spindle/optim_step"),
-        ):
+        with self._timer.phase("optim_step", step, model_id=model_ids[0]):
             outcomes = self.runtime.optim_step(by_slot)
         self._first(
             "first_optim_step_done",
@@ -306,18 +302,6 @@ class MilesCommandBackend(Backend):
         capture_path = self.capture_dir / "checkpoints" / snapshot_id
         capture_path.parent.mkdir(parents=True, exist_ok=True)
         state = self.jobs[model_id]
-        with (
-            self._timer.phase(
-                "save_checkpoint", state.optimizer_step, model_id=model_id
-            ),
-            self._record("spindle/save_checkpoint"),
-            self._volume_capture_io(),
-        ):
-            self.runtime.save_slot(
-                self.job_to_slot[model_id],
-                str(capture_path / "miles"),
-                include_optimizer=include_optimizer,
-            )
         metadata = {
             "schema_version": 1,
             "checkpoint_format": self.runtime.checkpoint_format,
@@ -327,12 +311,14 @@ class MilesCommandBackend(Backend):
             "engine_definition_id": os.environ.get("SPINDLE_DEFINITION_ID"),
             "parameterization": {"type": "lora"},
             "lora_config": {
+                "lora_type": self.config.lora_type,
                 "rank": state.rank,
                 "alpha": state.alpha,
                 "seed": state.seed,
                 "train_attn": state.train_attn,
                 "train_mlp": state.train_mlp,
                 "train_unembed": state.train_unembed,
+                "target_modules": list(self.config.target_modules),
             },
             "optimizer_step": state.optimizer_step,
             "has_optimizer": include_optimizer,
@@ -348,12 +334,21 @@ class MilesCommandBackend(Backend):
                 "pipeline_model_parallel_size": 1,
             },
         }
-        if self._native:
-            metadata["lora_config"]["target_modules"] = list(self.config.target_modules)
-        (capture_path / "metadata.json").write_text(
-            json.dumps(metadata, sort_keys=True),
-            encoding="utf-8",
-        )
+        with (
+            self._timer.phase(
+                "save_checkpoint", state.optimizer_step, model_id=model_id
+            ),
+            self._volume_capture_io(),
+        ):
+            self.runtime.save_slot(
+                self.job_to_slot[model_id],
+                str(capture_path / "miles"),
+                include_optimizer=include_optimizer,
+            )
+            (capture_path / "metadata.json").write_text(
+                json.dumps(metadata, sort_keys=True),
+                encoding="utf-8",
+            )
         self._checkpoint_captures[snapshot_id] = {
             "model_id": model_id,
             "destination": destination,
@@ -376,11 +371,8 @@ class MilesCommandBackend(Backend):
                 target = self.checkpoint_dir / destination / model_id
                 job = self.jobs.get(model_id)
                 persist_step = job.optimizer_step if job is not None else -1
-                with (
-                    self._timer.phase(
-                        "persist_checkpoint", persist_step, model_id=model_id
-                    ),
-                    self._record("spindle/persist_checkpoint"),
+                with self._timer.phase(
+                    "persist_checkpoint", persist_step, model_id=model_id
                 ):
                     if self._native:
                         _install_directory(capture["path"], target, overwrite=overwrite)
@@ -445,7 +437,6 @@ class MilesCommandBackend(Backend):
             self._timer.phase(
                 "save_sampler_weights", state.optimizer_step, model_id=model_id
             ),
-            self._record("spindle/save_sampler_weights"),
             self._volume_capture_io(),
         ):
             self.runtime.export_slot_peft(
@@ -487,7 +478,6 @@ class MilesCommandBackend(Backend):
                 self._timer.phase(
                     "publish_weights", publish_step, model_id=capture["model_id"]
                 ),
-                self._record("spindle/publish_weights"),
                 self._volume_capture_io(),
             ):
                 bulletin.publish(
@@ -528,6 +518,9 @@ class MilesCommandBackend(Backend):
         self._closed = True
         if self._profiling_active:
             self._stop_profiling()
+        if self._profile_step_done:
+            with contextlib.suppress(Exception):
+                self.runtime.torch_profile_wait()
         self.runtime.close()
 
     def _first(self, name: str, **fields: Any) -> None:
@@ -535,17 +528,9 @@ class MilesCommandBackend(Backend):
             self._firsts.add(name)
             timeline(BACKEND_COMPONENT).mark(name, **fields)
 
-    def _record(self, name: str):
-        """Controller-side profiler span; inert when profiling is off."""
-        if self._controller_profiler is None:
-            return contextlib.nullcontext()
-        return torch.profiler.record_function(name)
-
     def _start_profiling(self, step: int) -> None:
         try:
             self.runtime.torch_profile_start()
-            self._controller_profiler = RankProfiler(activities_cpu_only=True)
-            self._controller_profiler.start()
             self._profiling_active = True
             print(
                 json.dumps(
@@ -560,7 +545,6 @@ class MilesCommandBackend(Backend):
             )
         except Exception:  # noqa: BLE001 - profiling must not kill training
             self._profiling_active = False
-            self._controller_profiler = None
             print(
                 json.dumps(
                     {"event": "spindle_torch_profile", "state": "error", "step": step}
@@ -569,18 +553,17 @@ class MilesCommandBackend(Backend):
             )
 
     def _stop_profiling(self) -> None:
+        with self._profile_stop_lock:
+            if not self._profiling_active:
+                return
+            self._profiling_active = False
+            self._profile_step_done = True
         files: list[str] = []
         try:
             results = self.runtime.torch_profile_stop(self._profile.output_dir)
             for result in results or []:
                 if result:
                     files.extend(result.values())
-            if self._controller_profiler is not None:
-                controller = self._controller_profiler.stop(
-                    self._profile.output_dir, "controller"
-                )
-                files.extend(controller.values())
-            _commit_volume(os.environ.get("SPINDLE_CHECKPOINT_VOLUME"))
         except Exception as exc:  # noqa: BLE001 - profiling must not kill training
             print(
                 json.dumps(
@@ -592,10 +575,6 @@ class MilesCommandBackend(Backend):
                 ),
                 flush=True,
             )
-        finally:
-            self._profiling_active = False
-            self._profile_step_done = True
-            self._controller_profiler = None
         if files:
             print(
                 json.dumps(
@@ -624,18 +603,19 @@ class MilesCommandBackend(Backend):
         return replace(state, train_unembed=False)
 
     def _validate_job(self, state: MilesJobState) -> None:
-        if not 0 < state.rank <= self.config.max_lora_rank:
+        check_lora_request(
+            self.config.target_modules,
+            self.config.max_lora_rank,
+            rank=state.rank,
+            train_attn=state.train_attn,
+            train_mlp=state.train_mlp,
+            train_unembed=state.train_unembed,
+        )
+        if state.seed is not None and not self.runtime.supports_seed:
             raise ValueError(
-                f"LoRA rank must be between 1 and {self.config.max_lora_rank}"
-            )
-        if state.seed is not None:
-            raise ValueError("Miles multi-LoRA does not support per-model seeds")
-        configured = lora_target_flags(self.config.target_modules)
-        requested = (state.train_attn, state.train_mlp, state.train_unembed)
-        if requested != configured:
-            raise ValueError(
-                "Miles uses deployment-wide LoRA targets; model train_attn, "
-                "train_mlp, and train_unembed must match the deployment"
+                "per-model seeds require Miles load_slot(seed=...); set trainer_image "
+                "to a seed-enabled image such as miles-v0.1.1-52a7a99 and redeploy "
+                "the trainer (see docs/deployment-configs.md#images)"
             )
 
     def _require_jobs(self, model_ids: tuple[str, ...]) -> None:
@@ -660,24 +640,18 @@ class MilesCommandBackend(Backend):
             raise ValueError("unsupported Miles checkpoint schema")
         if metadata.get("backend") != "miles":
             raise ValueError("checkpoint was not created by the Miles backend")
-        if (
-            metadata.get("miles_revision") != self.runtime.revision
-            and not self.config.dangerously_allow_checkpoint_revision_mismatch
-        ):
+        if metadata.get("miles_revision") != self.runtime.revision:
             raise ValueError("checkpoint Miles revision does not match the deployment")
         if metadata.get("checkpoint_format") != self.runtime.checkpoint_format:
             raise ValueError("unsupported Miles checkpoint format")
         if metadata.get("base_model") != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")
         lora = metadata.get("lora_config") or {}
+        if lora.get("lora_type", "lora") != self.config.lora_type:
+            raise ValueError("checkpoint LoRA layout does not match the deployment")
         if (
             int(lora.get("rank", 0)) != state.rank
             or float(lora.get("alpha", 0)) != state.alpha
-        ):
-            raise ValueError("checkpoint LoRA configuration does not match the model")
-        # Checked here because a target mismatch found by Miles disables the whole trainer.
-        if self._native and lora.get("target_modules") != list(
-            self.config.target_modules
         ):
             raise ValueError("checkpoint LoRA configuration does not match the model")
         expected_targets = {
@@ -687,6 +661,23 @@ class MilesCommandBackend(Backend):
         }
         if any(lora.get(name) != value for name, value in expected_targets.items()):
             raise ValueError("checkpoint LoRA targets do not match the model")
+        saved_modules = lora.get("target_modules")
+        modules = list(self.config.target_modules)
+        # Legacy checkpoints lack the field and never trained linear-attention adapters.
+        legacy = (
+            saved_modules is None
+            and not self._native
+            and not set(modules) & set(GDN_INPUT_PROJECTIONS)
+        )
+        # Checked here because a target mismatch found by Miles disables the whole trainer.
+        if not legacy and set(saved_modules or ()) != set(modules):
+            raise ValueError(
+                "checkpoint LoRA target_modules do not match the deployment: "
+                f"saved {saved_modules or 'none recorded'}, deployment {modules}. "
+                "Load it into a config whose miles_cfg.target_modules match the "
+                "saved list; see 'Older Qwen3.5 LoRA checkpoints' in "
+                "docs/deployment-configs.md"
+            )
         expected_topology = {
             "world_size": self.config.world_size,
             "data_parallel_size": self.config.data_parallel_size,
@@ -739,22 +730,19 @@ def _install_capture(
     every node's shards, and a server-side copy from it needs no local view.
     """
     volume_name = os.environ.get("SPINDLE_CHECKPOINT_VOLUME")
-    root = Path(os.environ.get("SPINDLE_CHECKPOINT_ROOT") or "/checkpoints")
-    try:
-        relative = (str(source.relative_to(root)), str(target.relative_to(root)))
-    except ValueError:
-        relative = None
-    if volume_name is None or relative is None:
+    source_relative = checkpoint_volume_path(source)
+    target_relative = checkpoint_volume_path(target)
+    if volume_name is None or source_relative is None or target_relative is None:
         _install_directory(source, target, overwrite=overwrite)
         return
 
     volume = modal.Volume.from_name(volume_name)
     volume.commit()
-    entries = [entry.path for entry in volume.listdir(relative[0])]
+    entries = [entry.path for entry in volume.listdir(source_relative)]
     shards = [path for path in entries if path.endswith(".distcp")]
     if shards and len(shards) < world_size:
         raise RuntimeError(
-            f"capture {relative[0]} holds {len(shards)} of {world_size} shards; "
+            f"capture {source_relative} holds {len(shards)} of {world_size} shards; "
             "a checkpoint short of a node's shards fails only on the resume "
             "that needs it"
         )
@@ -764,9 +752,9 @@ def _install_capture(
         shutil.rmtree(target)
     target.mkdir(parents=True, exist_ok=True)
     volume.commit()
-    volume.copy_files(entries, relative[1], recursive=True)
+    volume.copy_files(entries, target_relative, recursive=True)
     print(
-        f"spindle_checkpoint_install path={relative[1]} files={len(entries)} "
+        f"spindle_checkpoint_install path={target_relative} files={len(entries)} "
         f"shards={len(shards)}",
         flush=True,
     )

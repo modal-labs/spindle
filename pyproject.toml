@@ -35,6 +35,9 @@ spindle = ["skills/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: waits on real retry backoffs or timeouts; skipped on pull requests, run on main and nightly",
+]
 
 [tool.setuptools.data-files]
 "share/spindle/router" = ["rust/router/Cargo.toml", "rust/router/Cargo.lock", "rust/router/pyproject.toml"]
@@ -73,8 +76,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Files written before ANN was enforced. Remove a file once its functions are typed.
-"reference_runs/beam.py" = ["ANN"]
-"src/spindle/backends/miles_runtime/config.py" = ["ANN"]
 "examples/codeforces-codegolf/codegolf/app.py" = ["ANN"]
 "examples/codeforces-codegolf/codegolf/cli.py" = ["ANN"]
 "examples/codeforces-codegolf/codegolf/config.py" = ["ANN"]
@@ -107,7 +108,6 @@ ignore = [
 "examples/shared-server/with_proxy_auth.py" = ["ANN"]
 "examples/swe-gym-9b-256k/deploy.py" = ["ANN"]
 "examples/swe-gym-9b-256k/supervise.py" = ["ANN"]
-"scripts/check_multi_targets_gpu.py" = ["ANN"]
 "scripts/dapo_math_comparison_common.py" = ["ANN"]
 "scripts/dapo_math_dataset.py" = ["ANN"]
 "scripts/e2e_longrlvr_qwen3_5_35b_a3b_full.py" = ["ANN"]
@@ -172,7 +172,6 @@ ignore = [
 "src/spindle/inference/sglang.py" = ["ANN"]
 "src/spindle/providers/modal/app.py" = ["ANN"]
 "src/spindle/providers/modal/checkpoint_storage.py" = ["ANN"]
-"src/spindle/providers/modal/deployment_apps.py" = ["ANN"]
 "src/spindle/providers/modal/deployment_configs.py" = ["ANN"]
 "src/spindle/providers/modal/fft_pool.py" = ["ANN"]
 "src/spindle/providers/modal/image_dependencies.py" = ["ANN"]
@@ -211,6 +210,7 @@ ignore = [
 "tests/backends/test_miles.py" = ["ANN"]
 "tests/backends/test_miles_actor.py" = ["ANN"]
 "tests/backends/test_miles_data.py" = ["ANN"]
+"tests/backends/test_miles_out_of_memory.py" = ["ANN"]
 "tests/backends/test_miles_runtime.py" = ["ANN"]
 "tests/backends/test_miles_score_centering.py" = ["ANN"]
 "tests/backends/test_multi_targets.py" = ["ANN"]
@@ -235,7 +235,6 @@ ignore = [
 "tests/engine/test_server.py" = ["ANN"]
 "tests/engine/test_spmd.py" = ["ANN"]
 "tests/engine/test_training_transport.py" = ["ANN"]
-"tests/gpu/multi_targets_worker.py" = ["ANN"]
 "tests/inference/test_bulletin.py" = ["ANN"]
 "tests/inference/test_full_bulletin.py" = ["ANN"]
 "tests/inference/test_lora_sidecar.py" = ["ANN"]
@@ -286,7 +285,6 @@ ignore = [
 "tests/test_deployment_cli.py" = ["ANN"]
 "tests/test_deployments.py" = ["ANN"]
 "tests/test_proto_responses.py" = ["ANN"]
-"tests/test_reference_run.py" = ["ANN"]
 "tests/test_startup_timing.py" = ["ANN"]
 "tests/test_synmon_regression.py" = ["ANN"]
 "tests/test_system.py" = ["ANN"]
@@ -327,12 +325,22 @@ not-subscriptable = "ignore"
 redundant-condition = "ignore"
 unsupported-operator = "ignore"
 
+# These ignores apply only once torch or the pinned Miles is installed.
+[[tool.ty.overrides]]
+include = [
+    "src/spindle/backends/miles_runtime/actor.py",
+    "src/spindle/backends/miles_runtime/targets.py",
+    "src/spindle/backends/score_centering.py",
+]
+rules = { unused-ignore-comment = "ignore" }
+
 [dependency-groups]
 dev = [
     "matplotlib>=3.10",
     "jinja2>=3.1.6",
     "pre-commit>=4.5.1",
     "pytest>=9.1.1",
+    "pytest-xdist>=3.8",
     "ruff==0.16.6",
     "ty==0.0.100",
 ]

@@ -16,7 +16,13 @@ _PEFT_TARGETS = {
     "linear_fc1_up": ("up_proj",),
     "linear_fc2": ("down_proj",),
     "output_layer": ("lm_head",),
+    # SGLang serves the Qwen3.5 linear-attention input projections as in_proj_qkvz and in_proj_ba.
+    "in_proj_qkv": ("in_proj_qkvz",),
+    "in_proj_z": ("in_proj_qkvz",),
+    "in_proj_b": ("in_proj_ba",),
+    "in_proj_a": ("in_proj_ba",),
 }
+GDN_INPUT_PROJECTIONS = ("in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a")
 _ATTN_LEAVES = frozenset(
     {
         "linear_qkv",
@@ -41,6 +47,8 @@ _ATTN_LEAVES = frozenset(
         "wkv",
         "wq_b",
         "wo_b",
+        *GDN_INPUT_PROJECTIONS,
+        "out_proj",
     }
 )
 _MLP_LEAVES = frozenset(
@@ -77,6 +85,28 @@ def lora_target_flags(target_modules: tuple[str, ...]) -> tuple[bool, bool, bool
     )
 
 
+def check_lora_request(
+    target_modules: tuple[str, ...],
+    max_lora_rank: int,
+    *,
+    rank: int,
+    train_attn: bool,
+    train_mlp: bool,
+    train_unembed: bool,
+) -> None:
+    """Reject a LoRA the deployment cannot train. A requested unembedding the
+    deployment does not target is allowed; the trainer keeps it frozen."""
+    if not 0 < rank <= max_lora_rank:
+        raise ValueError(f"LoRA rank must be between 1 and {max_lora_rank}")
+    attn, mlp, unembed = lora_target_flags(target_modules)
+    if (train_attn, train_mlp) != (attn, mlp) or (unembed and not train_unembed):
+        raise ValueError(
+            f"this deployment trains LoRA with train_attn={attn}, "
+            f"train_mlp={mlp}, train_unembed={unembed}; "
+            "create the model with matching settings"
+        )
+
+
 PositiveInteger = Annotated[int, Field(strict=True, gt=0)]
 NonEmptyString = Annotated[str, Field(min_length=1)]
 
@@ -91,6 +121,7 @@ class MilesBackendConfig(BaseModel):
     actor_num_gpus_per_node: PositiveInteger
     actor_num_nodes: PositiveInteger = 1
     megatron_to_hf_mode: Literal["bridge", "raw"] = "bridge"
+    lora_type: Literal["lora", "canonical_lora"] = "lora"
     tensor_model_parallel_size: PositiveInteger = 1
     context_parallel_size: PositiveInteger = 1
     expert_model_parallel_size: PositiveInteger = 1
@@ -111,9 +142,6 @@ class MilesBackendConfig(BaseModel):
     align_sequences_to_parallel_layout: bool = False
     extra_args: tuple[str, ...] = ()
     cli_options: dict[str, Any] = Field(default_factory=dict)
-    dangerously_allow_checkpoint_revision_mismatch: bool = Field(
-        default=False, strict=True
-    )
 
     @property
     def world_size(self) -> int:
@@ -152,6 +180,20 @@ class MilesBackendConfig(BaseModel):
         if not self.model_type and not self.cli_options:
             raise ValueError(
                 "model_type or explicit native architecture options are required"
+            )
+        gdn_targets = [
+            name
+            for name in self.target_modules
+            if name.rsplit(".", 1)[-1] in GDN_INPUT_PROJECTIONS
+        ]
+        if (
+            self.lora_type == "lora"
+            and gdn_targets
+            and sorted(gdn_targets) != sorted(GDN_INPUT_PROJECTIONS)
+        ):
+            raise ValueError(
+                "linear-attention LoRA trains one adapter over the fused input "
+                f"projection; list all of {', '.join(GDN_INPUT_PROJECTIONS)} by name"
             )
         model_parallel_size = (
             self.tensor_model_parallel_size * self.context_parallel_size
@@ -203,9 +245,8 @@ class MilesBackendConfig(BaseModel):
             str(int(self.default_lora_alpha)),
             "--lora-dropout",
             str(self.lora_dropout),
-            # Miles v0.2.0 defaults serve entries to canonical_lora; v0.1.x multi-LoRA supports only lora.
             "--lora-type",
-            "lora",
+            self.lora_type,
             "--target-modules",
             ",".join(self.target_modules),
             "--no-gradient-accumulation-fusion",

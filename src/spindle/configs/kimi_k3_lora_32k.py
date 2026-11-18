@@ -13,7 +13,7 @@ class Config(BaseConfig):
     weights_revision = "f831ab66814297da540d832a5235f8e904f29d06"
     max_context_length = 32768
     backend = "miles"
-    trainer_image = "miles-v0.2.0"
+    trainer_image = "miles-v0.2.0-e814245"
     trainer_gpu = "B300"
     trainer_gpus_per_node = 8
     trainer_nodes = 2
@@ -25,6 +25,7 @@ class Config(BaseConfig):
     miles_cfg = {
         "model_type": "kimi-k3",
         "megatron_to_hf_mode": "raw",
+        "lora_type": "canonical_lora",
         "tensor_model_parallel_size": 8,
         "expert_model_parallel_size": 16,
         "expert_tensor_parallel_size": 1,
@@ -45,7 +46,6 @@ class Config(BaseConfig):
         "default_lora_alpha": 32,
         "cli_options": {
             "model_name": "kimi_k3",
-            "lora_type": "canonical_lora",
             # The adapter layout Kimi K3 LoRA requires, even with routed experts frozen.
             "experts_shared_outer_loras": True,
             "attention_backend": "auto",
@@ -65,7 +65,7 @@ class Config(BaseConfig):
         "NCCL_MNNVL_ENABLE": "0",
         "NCCL_NVLS_ENABLE": "0",
     }
-    inference_image = "spindle.providers.modal.kimi_k3_image:inference_image"
+    inference_image = "sglang-v0.5.23-c4182b2"
     # The 1.5 TB MXFP4 checkpoint fits on one node only with B300 memory.
     inference_gpu = "B300"
     inference_gpus_per_node = 8

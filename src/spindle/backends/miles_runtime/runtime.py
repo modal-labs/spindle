@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import shlex
 import shutil
@@ -20,12 +21,14 @@ import torch
 
 from spindle.backends.miles_arguments import defer_config_overrides
 from spindle.backends.miles_config import MilesBackendConfig
-from spindle.errors import BackendFailed
+from spindle.errors import BackendFailed, TrainerOutOfMemory
 from spindle.startup_timing import BACKEND_COMPONENT, timeline
 
+from . import nemotron_h_omni
 from .native_checkpoint import materialize_adapter
+from .out_of_memory import OUT_OF_MEMORY
 from .replay_data import install_bridge_replay, validate_routed_experts
-from .volumes import on_checkpoint_volume, sync_checkpoint_volume
+from .volumes import checkpoint_volume_path, sync_checkpoint_volume
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
 _runtime_import_error = None
@@ -67,6 +70,10 @@ class MilesRuntime:
                 "MilesRuntime requires Miles and Ray in the trainer image"
             ) from _runtime_import_error
         self.config = config
+        self.supports_seed = (
+            "seed"
+            in inspect.signature(tinker_runtime.MilesBackend.load_slot).parameters
+        )
         self._v020 = None
         if os.environ.get("SPINDLE_MILES_API") == "0.2":
             # This API module requires dependencies absent in legacy trainer images.
@@ -119,6 +126,7 @@ class MilesRuntime:
         *,
         checkpoint: str | None = None,
         restore_optimizer: bool = True,
+        seed: int | None = None,
     ) -> None:
         self._run(
             self._bridge.load_slot(
@@ -127,6 +135,7 @@ class MilesRuntime:
                 alpha,
                 ckpt_path=checkpoint,
                 load_optimizer=restore_optimizer,
+                **({"seed": seed} if seed is not None and checkpoint is None else {}),
             )
         )
 
@@ -206,7 +215,7 @@ class MilesRuntime:
 
     def _gather_capture(self, written: Path, path: Path) -> None:
         """Make every node's writes to a capture on the checkpoint volume visible here."""
-        if not on_checkpoint_volume(path):
+        if checkpoint_volume_path(path) is None:
             return
         try:
             self._run_best_effort(
@@ -224,6 +233,9 @@ class MilesRuntime:
         return self._run_best_effort(
             self._trainer._execute_slots("torch_profile_stop", output_dir=output_dir)
         )
+
+    def torch_profile_wait(self) -> None:
+        self._run_best_effort(self._trainer._execute_slots("torch_profile_wait"))
 
     def close(self) -> None:
         if self._closed:
@@ -243,11 +255,18 @@ class MilesRuntime:
             raise BackendFailed("Miles trainer is unavailable") from self._failure
         try:
             result = self._call(coroutine)
-            _check_result(result)
-            return result
+            out_of_memory = isinstance(result, dict) and result.get(OUT_OF_MEMORY)
+            if not out_of_memory:
+                _check_result(result)
         except Exception as exc:
             self._failure = exc
             raise BackendFailed(f"Miles trainer failed: {exc}") from exc
+        if out_of_memory:
+            raise TrainerOutOfMemory(
+                "The trainer ran out of GPU memory on this batch and skipped it. "
+                f"Send fewer or shorter sequences per request. ({result['error']})"
+            )
+        return result
 
     def _run_best_effort(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
         """Like ``_run`` but an exception does not mark the trainer as failed."""
@@ -278,6 +297,7 @@ class MilesRuntime:
         os.environ.setdefault("no_proxy", "127.0.0.1")
 
         install_bridge_replay(tinker_runtime)
+        nemotron_h_omni.install(self.config.hf_checkpoint)
         if self._v020 is not None:
             self._v020.configure_actor()
         else:
@@ -329,7 +349,7 @@ class MilesRuntime:
                 ignore_reinit_error=False,
                 include_dashboard=False,
                 log_to_driver=True,
-                num_cpus=max(4, self.config.world_size * 2),
+                num_cpus=self.config.world_size * 2 + 2,
                 num_gpus=self.config.world_size,
             )
         self._owns_ray = True
@@ -408,6 +428,7 @@ _WORKER_ENV_VARS = (
     "TORCHINDUCTOR_CACHE_DIR",
     "TILELANG_CACHE_DIR",
     "EXPERT_LORA_COMPAT",
+    "EXPERT_GROUPED_GEMM",
 )
 
 
@@ -581,6 +602,16 @@ def _allow_context_parallel_multi_lora(lora_arguments) -> None:
 
     @wraps(original)
     def validate(args) -> None:
+        estimator = getattr(args, "advantage_estimator", None)
+        if args.context_parallel_size > 1 and estimator in (
+            "ppo",
+            "reinforce_plus_plus",
+        ):
+            raise ValueError(
+                f"--advantage-estimator {estimator} has no effect on multi-LoRA "
+                "training, and Spindle doesn't support it with context parallelism "
+                "above 1. Remove the flag or set --context-parallel-size 1."
+            )
         context_parallel_size = args.context_parallel_size
         args.context_parallel_size = 1
         try:

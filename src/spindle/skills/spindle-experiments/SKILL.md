@@ -45,7 +45,7 @@ Same config, real batch size. Compare step timing (rollout / train / publish) an
 | --- | --- |
 | 408s, hangs, slow cold start | startup |
 | Slow steps, idle trainer, rollout bottleneck | throughput |
-| Where a step's GPU time goes | [profiling.md](references/profiling.md) |
+| Where a step's or a sampler's GPU time goes; rollout benchmark | [profiling.md](references/profiling.md) |
 | logprob drift, nondeterminism | numerics |
 | 410 `model_lost`, uncertain updates, retries | recovery |
 | Unrecognized API error | errors |

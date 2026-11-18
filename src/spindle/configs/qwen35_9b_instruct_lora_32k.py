@@ -3,6 +3,8 @@ from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
 
 class Config(Parent):
     name = "qwen35-9b-instruct-lora-32k"
+    trainer_image = "miles-v0.2.0-e814245"
+    inference_image = "sglang-v0.5.23-e003cf9"
     max_context_length = 32768
     trainer_gpu = "B200"
     trainer_gpus_per_node = 1
@@ -16,6 +18,8 @@ class Config(Parent):
     inference_draft_model = "modal-labs/Qwen3.5-9B-DFlash"
     inference_draft_model_revision = "28407c638832073e50f1aacd89e1d15a288b7b1c"
     overrides = {
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
         "trainer_env.TORCH_COMPILE_DISABLE": "1",
         "miles_cfg.tensor_model_parallel_size": 1,
         "miles_cfg.max_lora_slots": 1,

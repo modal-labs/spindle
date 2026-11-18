@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 import json
@@ -478,8 +479,17 @@ class PrintVersion(argparse.Action):
         parser.exit()
 
 
+def label_keys(value: str) -> tuple[str, ...]:
+    keys = tuple(key.strip() for key in value.split(","))
+    if not all(keys):
+        raise argparse.ArgumentTypeError(
+            f"expected comma-separated label keys, got {value!r}"
+        )
+    return keys
+
+
 def parser():
-    result = argparse.ArgumentParser(prog="spindle")
+    result = argparse.ArgumentParser(prog="spindle", allow_abbrev=False)
     result.add_argument("--version", action=PrintVersion)
     commands = result.add_subparsers(dest="command", required=True)
     config = commands.add_parser("config").add_subparsers(dest="action", required=True)
@@ -555,8 +565,9 @@ def parser():
     usage.add_argument("--env", help="Modal environment the apps run in")
     usage.add_argument(
         "--group-by",
-        default="run_id",
-        help="Label key to group sessions by, such as run_id or team_id",
+        type=label_keys,
+        default=("run_id",),
+        help="Comma-separated label keys to group sessions by, such as team_id or team_id,run_id",
     )
     usage.add_argument("--format", choices=("table", "csv"), default="table")
     usage.add_argument(
@@ -674,29 +685,51 @@ def print_usage_costs(args) -> None:
     costs = attribute_cost(
         rows, app_costs, sessions=usage["sessions"], group_by=args.group_by
     )
-    groups = sorted(
-        ((name, usd) for name, usd in costs.items() if name not in OVERHEAD_LINES),
-        key=lambda item: -item[1],
-    )
+    blank = ("",) * (len(args.group_by) - 1)
+    reserved = (*OVERHEAD_LINES, "total")
+    groups = [
+        (
+            tuple(
+                f"{value} ({key})" if value in reserved else value
+                for value, key in zip(group, args.group_by)
+            ),
+            usd,
+        )
+        for group, usd in costs.items()
+        if isinstance(group, tuple)
+    ]
+    groups.sort(key=lambda item: -item[1])
     overhead = [
-        (name, costs[name])
+        ((name, *blank), costs[name])
         for name in OVERHEAD_LINES
         if name in costs and not args.hide_overhead
     ]
     if args.format == "csv":
-        print(f"{args.group_by},usd")
-        for name, usd in groups + overhead:
-            print(f"{name},{usd:.2f}")
+        writer = csv.writer(sys.stdout, lineterminator="\n")
+        writer.writerow((*args.group_by, "usd"))
+        for group, usd in groups + overhead:
+            writer.writerow((*group, f"{usd:.2f}"))
         return
-    width = max([len(args.group_by), *(len(name) for name, _ in groups + overhead)])
-    print(f"{args.group_by:<{width}}  {'USD':>10}")
-    for name, usd in groups:
-        print(f"{name:<{width}}  {usd:>10.2f}")
+    total = ("total", *blank)
+    widths = [
+        max(map(len, column))
+        for column in zip(
+            args.group_by, total, *(group for group, _ in groups + overhead)
+        )
+    ]
+
+    def line(labels: Iterable[str], usd: str) -> str:
+        cells = (f"{label:<{width}}" for label, width in zip(labels, widths))
+        return "  ".join((*cells, f"{usd:>10}"))
+
+    print(line(args.group_by, "USD"))
+    for group, usd in groups:
+        print(line(group, f"{usd:.2f}"))
     if overhead:
-        print("-" * (width + 12))
-    for name, usd in overhead:
-        print(f"{name:<{width}}  {usd:>10.2f}")
-    print(f"{'total':<{width}}  {sum(usd for _, usd in groups + overhead):>10.2f}")
+        print("-" * len(line(args.group_by, "USD")))
+    for group, usd in overhead:
+        print(line(group, f"{usd:.2f}"))
+    print(line(total, f"{sum(usd for _, usd in groups + overhead):.2f}"))
 
 
 def install_skills(project_dir: Path | None, force: bool) -> None:

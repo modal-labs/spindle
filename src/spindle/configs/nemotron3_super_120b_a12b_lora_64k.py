@@ -3,6 +3,8 @@ from spindle.configs.nemotron3_nano_30b_a3b_lora_64k import Config as Parent
 
 class Config(Parent):
     name = "nemotron3-super-120b-a12b-lora-64k"
+    trainer_image = "miles-v0.1.1-52a7a99"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
     trainer_gpu = "H200"
     trainer_gpus_per_node = 8
@@ -12,6 +14,9 @@ class Config(Parent):
     inference_gpus_per_node = 4
     inference_max_replicas = 2
     inference_memory_mib = 262144
+    # Use the shared defaults without Nano's native backend overrides.
+    miles_cfg = Parent.miles_cfg
+    trainer_env = Parent.trainer_env
     overrides = {
         "miles_cfg.model_type": "nemotron-3-super-120b-a12b",
         "miles_cfg.expert_model_parallel_size": 8,

@@ -17,6 +17,8 @@ with backend_runtime_imports():
 
 def test_config_overrides_reach_megatron(monkeypatch):
     spec = load(config_path("qwen35-4b-fft-64k"))
+    spec.megatron_cfg["tensor_model_parallel_size"] = 2
+    spec.megatron_cfg["logprob_chunk_tokens"] = None
     spec.megatron_cfg["optimizer_overrides"] = {"native_optimizer_setting": False}
     spec.megatron_cfg["distributed_overrides"] = {"native_ddp_setting": 123}
     spec.megatron_cfg["provider_overrides"]["native_provider_setting"] = [1, 2]

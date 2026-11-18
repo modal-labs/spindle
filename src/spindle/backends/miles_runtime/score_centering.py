@@ -6,6 +6,7 @@ Only support logits are gathered across TP; CP gathers detached output values
 and leaves each rank's local gradient unchanged.
 """
 
+from argparse import Namespace
 from functools import partial
 from inspect import signature
 
@@ -17,8 +18,6 @@ from spindle.backends.score_centering import (
     policy_objective,
     replay_logprobs,
 )
-
-from .config import backend_config, replace_config
 
 
 def _full_response(values, positions, length, cp):
@@ -34,7 +33,8 @@ def loss_function(args, batch, logits, sum_of_sample_mean, *, processors):
     parallel = processors.get_parallel_state()
     # Support arithmetic owns temperature scaling. Avoid applying Miles' optional
     # true-on-policy rounding/scaling before that arithmetic.
-    chunk_args = replace_config(args, true_on_policy_mode=False)
+    chunk_args = Namespace(**vars(args))
+    chunk_args.true_on_policy_mode = False
     chunks = processors._iter_response_chunks(
         logits,
         args=chunk_args,
@@ -58,9 +58,7 @@ def loss_function(args, batch, logits, sum_of_sample_mean, *, processors):
             dtype=torch.long,
             device=logits.device,
         )
-        if backend_config(args).vocab_size is None or torch.any(
-            ids >= backend_config(args).vocab_size
-        ):
+        if args.vocab_size is None or torch.any(ids >= args.vocab_size):
             raise ValueError("sampling support exceeds the true model vocabulary")
         rollout_logprobs = torch.as_tensor(
             batch["rollout_log_probs"][i], device=logits.device

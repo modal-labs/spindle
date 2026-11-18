@@ -203,6 +203,61 @@ def test_rejected_native_capture_fails_only_its_request(
     assert not incomplete.exists()
 
 
+@pytest.mark.parametrize("location", ["volume", "outside", "unset"])
+def test_native_export_materializes_committed_node_files(
+    tmp_path, monkeypatch, location
+):
+    volume = tmp_path / "volume"
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(volume))
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "checkpoints")
+    if location == "unset":
+        monkeypatch.delenv("SPINDLE_CHECKPOINT_VOLUME")
+    root = tmp_path if location == "outside" else volume
+    source = root / ".capture.1234"
+    source.mkdir(parents=True)
+    committed = False
+
+    def remote_files():
+        (source / "adapter_config.json").write_text("{}")
+        (source / "adapter_model.safetensors").write_bytes(b"peer weights")
+
+    async def execute(method):
+        nonlocal committed
+        assert method == "commit_checkpoint_volume"
+        committed = True
+
+    def reload_volume(action):
+        assert action == "reload" and committed
+        remote_files()
+
+    async def export(*args):
+        if location != "volume":
+            remote_files()
+        return source
+
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    runtime._v020 = SimpleNamespace()
+    runtime._bridge = SimpleNamespace(export_slot=export)
+    runtime._trainer = SimpleNamespace(_execute_slots=execute)
+    monkeypatch.setattr(miles_runtime, "sync_checkpoint_volume", reload_volume)
+    capture = root / "capture"
+    runtime.export_slot_peft(
+        slot=0,
+        path=str(capture),
+        rank=8,
+        alpha=16.0,
+        base_model="m",
+        target_modules=(),
+        lora_dropout=0.0,
+    )
+    assert (capture / "adapter_model.safetensors").read_bytes() == b"peer weights"
+    assert committed == (location == "volume")
+    assert not source.exists()
+
+
 @pytest.mark.parametrize("failed_rank", [0, 1])
 def test_weights_only_worker_error_invalidates_runtime_before_capture(
     tmp_path, failed_rank
@@ -251,6 +306,35 @@ def test_context_parallel_guard_restores_args_and_installs_once(fails):
         once(args)
     assert seen == [1]
     assert args.context_parallel_size == 8
+
+
+@pytest.mark.parametrize(
+    "context_parallel_size, estimator, rejected",
+    [
+        (4, "ppo", True),
+        (4, "reinforce_plus_plus", True),
+        (1, "ppo", False),
+        (1, "reinforce_plus_plus", False),
+        (4, "reinforce_baseline", False),
+    ],
+)
+def test_context_parallel_guard_rejects_full_length_advantage_estimators(
+    context_parallel_size, estimator, rejected
+):
+    lora_arguments = SimpleNamespace(validate_multi_lora_args=lambda args: None)
+    _allow_context_parallel_multi_lora(lora_arguments)
+    args = SimpleNamespace(
+        context_parallel_size=context_parallel_size, advantage_estimator=estimator
+    )
+    if rejected:
+        with pytest.raises(
+            ValueError, match=f"--advantage-estimator {estimator}"
+        ) as err:
+            lora_arguments.validate_multi_lora_args(args)
+        assert "--context-parallel-size 1" in str(err.value)
+    else:
+        lora_arguments.validate_multi_lora_args(args)
+    assert args.context_parallel_size == context_parallel_size
 
 
 @pytest.mark.parametrize(
@@ -351,3 +435,43 @@ def test_array_bridge_keeps_the_miles_contract(monkeypatch):
     assert [o["logprobs"].tolist() for o in outputs] == [[-1.0] * 3, [-2.0] * 2]
     assert outputs[0]["logprobs"].dtype == np.float32
     assert store.removed == [0]
+
+
+@pytest.mark.parametrize("seed", [None, 0, 42])
+@pytest.mark.parametrize("checkpoint", [None, "/saved"])
+def test_slot_seed_precedes_optimizer_and_never_overwrites_checkpoint(seed, checkpoint):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    weights = {0: "default"}
+    optimizer_weights = {}
+
+    async def load(slot, rank, alpha, *, ckpt_path, load_optimizer, seed=None):
+        if ckpt_path is not None:
+            assert seed is None
+            weights[slot] = "checkpoint"
+        elif seed is not None:
+            weights[slot] = seed
+        optimizer_weights[slot] = weights[slot]
+
+    runtime._bridge = SimpleNamespace(load_slot=load)
+    runtime.load_slot(0, 8, 32, seed=seed, checkpoint=checkpoint)
+    expected = "checkpoint" if checkpoint else "default" if seed is None else seed
+    assert weights[0] == optimizer_weights[0] == expected
+
+
+def test_seed_failure_invalidates_runtime_before_optimizer_creation():
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+
+    async def load(*args, **kwargs):
+        return {"error": "seed initialization failed"}
+
+    runtime._bridge = SimpleNamespace(load_slot=load)
+    with pytest.raises(BackendFailed, match="seed initialization failed"):
+        runtime.load_slot(0, 8, 32, seed=42)
+    with pytest.raises(BackendFailed, match="unavailable"):
+        runtime.load_slot(0, 8, 32)

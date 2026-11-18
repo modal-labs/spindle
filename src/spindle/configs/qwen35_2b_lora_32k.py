@@ -3,10 +3,14 @@ from spindle.configs._qwen35_lora_32k import Qwen35Lora32k as Parent
 
 class Config(Parent):
     name = "qwen35-2b-lora-32k"
+    trainer_image = "miles-v0.2.0-e814245"
+    inference_image = "sglang-v0.5.23-e003cf9"
     model = "Qwen/Qwen3.5-2B"
     # Miles has no 2B preset; keep the shared Qwen3.5 spec and tied embeddings.
     # Linear-attention dimensions are loaded from the checkpoint's text_config.
     overrides = {
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
         "inference_gpu": "H100",
         "sglang_cfg.max_running_requests": 64,
         "sglang_cfg.max_queued_requests": 8,

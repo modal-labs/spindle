@@ -29,6 +29,7 @@ from spindle.providers.modal.checkpoint_storage import ModalCheckpointStorage
 
 
 class FakeMilesRuntime:
+    supports_seed = True
     revision = "a" * 40
     checkpoint_format = "miles_torch_dist"
 
@@ -44,7 +45,9 @@ class FakeMilesRuntime:
         *,
         checkpoint=None,
         restore_optimizer=True,
+        seed=None,
     ):
+        self.last_seed = seed
         self.calls.append(
             ("load_slot", slot, rank, alpha, checkpoint, restore_optimizer)
         )
@@ -114,6 +117,9 @@ class FakeMilesRuntime:
         self.calls.append(("torch_profile_stop", output_dir))
         return [{"trace": f"{output_dir}/rank0.trace.json.gz"}]
 
+    def torch_profile_wait(self):
+        self.calls.append(("torch_profile_wait",))
+
     def close(self):
         self.closed = True
 
@@ -157,9 +163,9 @@ def _datum(tokens, final_token) -> Datum:
     )
 
 
-def _backend(tmp_path, runtime=None) -> MilesCommandBackend:
+def _backend(tmp_path, runtime=None, **overrides) -> MilesCommandBackend:
     return MilesCommandBackend(
-        _config(),
+        _config(**overrides),
         checkpoint_dir=tmp_path / "checkpoints",
         capture_dir=tmp_path / "captures",
         base_model="Qwen/Qwen3-4B",
@@ -221,13 +227,18 @@ def test_config_points_reference_load_at_the_hf_checkpoint() -> None:
     )
 
 
-def test_config_exports_lora_through_the_raw_converter() -> None:
-    config = _config(megatron_to_hf_mode="raw")
+@pytest.mark.parametrize("lora_type", ["lora", "canonical_lora"])
+def test_config_exports_lora_through_the_raw_converter(lora_type) -> None:
+    config, _, _ = parse_backend_config(
+        json.loads(
+            _config(megatron_to_hf_mode="raw", lora_type=lora_type).model_dump_json()
+        )
+    )
 
     arguments = config.miles_arguments()
     assert arguments[arguments.index("--megatron-to-hf-mode") + 1] == "raw"
     assert "--multi-lora-n-adapters" in arguments
-    assert arguments[arguments.index("--lora-type") + 1] == "lora"
+    assert arguments[arguments.index("--lora-type") + 1] == lora_type
     with pytest.raises(ValueError, match="megatron_to_hf_mode"):
         _config(megatron_to_hf_mode="direct")
 
@@ -382,7 +393,7 @@ def test_default_unembed_request_is_frozen_without_an_unembed_target(tmp_path) -
         parameterization="lora",
         lora_config=LoraConfig(rank=8, train_mlp=False),
     )
-    with pytest.raises(ValueError, match="must match the deployment"):
+    with pytest.raises(ValueError, match="create the model with matching settings"):
         backend.accept_model("model-b", no_mlp)
 
 
@@ -530,89 +541,36 @@ def test_checkpoint_capture_persist_and_restore(tmp_path, monkeypatch) -> None:
     assert backend.jobs["model-a"].optimizer_step == 3
 
 
-@pytest.mark.parametrize(
-    "allow_mismatch,target_revision,accepted",
-    [
-        (False, "b" * 40, False),
-        (True, "b" * 40, True),
-        (False, "a" * 40, True),
-    ],
-)
-def test_checkpoint_revision_mismatch_requires_dangerous_opt_in(
-    tmp_path, allow_mismatch, target_revision, accepted
-):
-    source = _backend(tmp_path / "source")
-    source.accept_model("model-a", _spec())
-    source.jobs["model-a"].optimizer_step = 7
-    source.capture_checkpoint(
-        "model-a", "original", destination="step-7", include_optimizer=True
-    )
-    checkpoint = Path(source.persist_checkpoint("original", "step-7"))
-    original_metadata = (checkpoint / "metadata.json").read_bytes()
-    runtime = FakeMilesRuntime()
-    runtime.revision = target_revision
-    target = _backend(tmp_path / "target", runtime)
-    target.config = target.config.model_copy(
-        update={"dangerously_allow_checkpoint_revision_mismatch": allow_mismatch}
-    )
-    target.accept_model("model-b", _spec())
-    if not accepted:
-        with pytest.raises(ValueError, match="Miles revision"):
-            target.load_checkpoint("model-b", str(checkpoint), restore_optimizer=True)
-        return
-    target.load_checkpoint("model-b", str(checkpoint), restore_optimizer=True)
-    assert target.jobs["model-b"].optimizer_step == 7
-    assert (checkpoint / "metadata.json").read_bytes() == original_metadata
-    target.capture_checkpoint(
-        "model-b", "upgraded", destination="upgraded", include_optimizer=True
-    )
-    upgraded = Path(target.persist_checkpoint("upgraded", "upgraded"))
-    metadata = json.loads((upgraded / "metadata.json").read_text())
-    assert metadata["miles_revision"] == target_revision
-    assert metadata["optimizer_step"] == 7
-    assert metadata["has_optimizer"] is True
-    metadata["miles_revision"] = FakeMilesRuntime.revision
-    metadata["checkpoint_format"] = "unsupported"
-    with pytest.raises(ValueError, match="checkpoint format"):
-        target._validate_checkpoint(metadata, target.jobs["model-b"], True)
-
-
-@pytest.mark.parametrize("allow_mismatch", [None, "true", 1, {}])
-def test_checkpoint_revision_override_requires_bool(allow_mismatch):
-    with pytest.raises(
-        ValueError, match="dangerously_allow_checkpoint_revision_mismatch"
-    ):
-        _config(dangerously_allow_checkpoint_revision_mismatch=allow_mismatch)
-
-
-@pytest.mark.parametrize(
-    "field,value,error",
-    [
-        ("schema_version", 2, "schema"),
-        ("backend", "other", "Miles backend"),
-        ("base_model", "other", "base model"),
-        ("lora_config", {"rank": 1}, "LoRA configuration"),
-        ("topology", {}, "topology"),
-        ("has_optimizer", False, "optimizer state"),
-    ],
-)
-def test_revision_override_preserves_other_checkpoint_guards(
-    tmp_path, field, value, error
-):
+@pytest.mark.parametrize("saved_layout", [None, "lora", "canonical_lora"])
+@pytest.mark.parametrize("layout", ["lora", "canonical_lora"])
+def test_checkpoint_layout_is_checked_before_changing_a_live_slot(
+    tmp_path, saved_layout, layout
+) -> None:
     backend = _backend(tmp_path)
-    backend.config = backend.config.model_copy(
-        update={"dangerously_allow_checkpoint_revision_mismatch": True}
-    )
+    backend.config = backend.config.model_copy(update={"lora_type": layout})
     backend.accept_model("model-a", _spec())
     backend.capture_checkpoint(
-        "model-a", "original", destination="original", include_optimizer=True
+        "model-a", "capture-a", destination="step-1", include_optimizer=True
     )
-    checkpoint = Path(backend.persist_checkpoint("original", "original"))
-    metadata = json.loads((checkpoint / "metadata.json").read_text())
-    metadata["miles_revision"] = "b" * 40
-    metadata[field] = value
-    with pytest.raises(ValueError, match=error):
-        backend._validate_checkpoint(metadata, backend.jobs["model-a"], True)
+    uri = Path(backend.persist_checkpoint("capture-a", "step-1"))
+    metadata_path = uri / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata["lora_config"]["lora_type"] == layout
+    if saved_layout is None:
+        del metadata["lora_config"]["lora_type"]
+    else:
+        metadata["lora_config"]["lora_type"] = saved_layout
+    metadata_path.write_text(json.dumps(metadata))
+    backend.jobs["model-a"].optimizer_step = 7
+    calls = list(backend.runtime.calls)
+    if (saved_layout or "lora") == layout:
+        backend.load_checkpoint("model-a", str(uri))
+        assert backend.jobs["model-a"].optimizer_step == 0
+    else:
+        with pytest.raises(ValueError, match="LoRA layout"):
+            backend.load_checkpoint("model-a", str(uri))
+        assert backend.runtime.calls == calls
+        assert backend.jobs["model-a"].optimizer_step == 7
 
 
 def test_checkpoint_restore_refreshes_files_saved_by_another_container(
@@ -669,6 +627,56 @@ def test_checkpoint_restore_rejects_different_lora_targets(
 
     with pytest.raises(ValueError, match="LoRA targets"):
         backend.load_checkpoint("model-a", str(uri))
+
+
+GDN_TARGETS = (
+    "linear_qkv",
+    "linear_proj",
+    "linear_fc1",
+    "linear_fc2",
+    "output_layer",
+    "in_proj_qkv",
+    "in_proj_z",
+    "in_proj_b",
+    "in_proj_a",
+    "out_proj",
+)
+
+
+@pytest.mark.parametrize(
+    "saved_modules, deployment_modules, accepted",
+    [
+        (None, None, True),
+        (None, GDN_TARGETS, False),
+        (list(GDN_TARGETS), None, False),
+        (list(reversed(GDN_TARGETS)), GDN_TARGETS, True),
+    ],
+)
+def test_checkpoint_restore_checks_target_modules(
+    tmp_path, saved_modules, deployment_modules, accepted
+) -> None:
+    source = _backend(tmp_path / "source")
+    source.accept_model("model-a", _spec())
+    source.capture_checkpoint(
+        "model-a", "capture-a", destination="step-1", include_optimizer=False
+    )
+    uri = Path(source.persist_checkpoint("capture-a", "step-1"))
+    metadata = json.loads((uri / "metadata.json").read_text())
+    if saved_modules is None:
+        del metadata["lora_config"]["target_modules"]
+    else:
+        metadata["lora_config"]["target_modules"] = saved_modules
+    overrides = (
+        {} if deployment_modules is None else {"target_modules": deployment_modules}
+    )
+    target = _backend(tmp_path / "target", **overrides)
+    target.accept_model("model-a", _spec())
+
+    if accepted:
+        target._validate_checkpoint(metadata, target.jobs["model-a"], False)
+    else:
+        with pytest.raises(ValueError, match="target_modules do not match"):
+            target._validate_checkpoint(metadata, target.jobs["model-a"], False)
 
 
 def test_checkpoint_topology_defaults_legacy_data_parallel_size(tmp_path) -> None:
@@ -814,15 +822,26 @@ def test_volume_captures_wait_for_checkpoint_persistence(
         export.result(timeout=5)
 
 
-def test_backend_rejects_unsupported_per_model_miles_options(tmp_path) -> None:
-    backend = _backend(tmp_path)
-    with pytest.raises(ValueError, match="per-model seeds"):
+@pytest.mark.parametrize("seed", [None, 0, 7])
+def test_backend_accepts_per_model_seed(tmp_path, seed) -> None:
+    runtime = FakeMilesRuntime()
+    backend = _backend(tmp_path, runtime)
+    spec = ModelSpec(
+        base_model="Qwen/Qwen3-4B",
+        parameterization="lora",
+        lora_config=LoraConfig(rank=8, seed=seed),
+    )
+    backend.accept_model("model-a", spec)
+    backend.accept_model("model-a", spec)
+    assert backend.jobs["model-a"].seed == runtime.last_seed == seed
+    assert len(runtime.calls) == 1
+    with pytest.raises(ValueError, match="different specification"):
         backend.accept_model(
             "model-a",
             ModelSpec(
-                base_model="Qwen/Qwen3-4B",
+                base_model=spec.base_model,
                 parameterization="lora",
-                lora_config=LoraConfig(rank=8, seed=7),
+                lora_config=LoraConfig(rank=8, seed=42),
             ),
         )
 
@@ -1151,3 +1170,22 @@ def test_native_checkpoint_rejects_incompatible_adapter_before_slot_load(
     with pytest.raises(ValueError):
         backend.load_checkpoint("model-a", str(checkpoint), restore_optimizer=True)
     assert runtime.calls == previous
+
+
+def test_seed_on_older_image_is_rejected_without_touching_live_slots(tmp_path):
+    runtime = FakeMilesRuntime()
+    runtime.supports_seed = False
+    backend = _backend(tmp_path, runtime)
+    backend.accept_model("existing", _spec())
+    previous = list(runtime.calls)
+    with pytest.raises(ValueError, match=r"Miles load_slot\(seed="):
+        backend.accept_model(
+            "seeded",
+            ModelSpec(
+                base_model="Qwen/Qwen3-4B",
+                parameterization="lora",
+                lora_config=LoraConfig(rank=8, seed=0),
+            ),
+        )
+    assert runtime.calls == previous
+    assert set(backend.jobs) == {"existing"}

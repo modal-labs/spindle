@@ -20,7 +20,7 @@ Lanes: GPU ops serialize; `capture_*` runs on the GPU lane, `persist_*`/`publish
 
 ## Add a model config
 
-1. `src/spindle/configs/<name>.py`: `Config(BaseConfig)` or subclass a bundled config; export `config = Config()`. Flat attributes + backend dicts (`miles_cfg`/`megatron_cfg`/`sglang_cfg`) + dotted `overrides`. No registry.
+1. `src/spindle/configs/<name>.py`: `Config(BaseConfig)` or subclass a bundled config; export `config = Config()`. Flat attributes + backend dicts (`miles_cfg`/`megatron_cfg`/`sglang_cfg`) + dotted `overrides`. No registry. Set `trainer_image` and `inference_image` in the file itself, even when subclassing; a test rejects inherited pins. Named images are frozen: to change one, add a new name and move configs to it (docs/deployment-configs.md, "Changing an image").
 2. Add its path to `scripts/deploy_models.sh` and run it.
 - Limits: `trainer.max_instances`, `inference.min_replicas`/`max_replicas`. Platform settings must match across the config set.
 - Verify: `uv run --no-sync pytest -q` (preset resolution + JSON round-trip) and `spindle config validate`; live-check on an isolated frontend per docs/deployment-validation.md.
@@ -34,4 +34,4 @@ Lanes: GPU ops serialize; `capture_*` runs on the GPU lane, `persist_*`/`publish
 
 - CI (tests.yml): `uv sync --locked --python 3.12`, `pre-commit --all-files`, CPU torch 2.10.0, `uv run --no-sync pytest -q`, `uv build`; SDK matrix min/pinned/latest. Codegolf workflow: pytest, ruff, `codegolf config`, `render.py`.
 - Entry shape (docs/validation.md, lora_validation.md, scoped-e2e-results.md, deployment-validation.md): environment, PR head, hardware, workload, results, coverage limits, versions, evidence paths; confirm all apps stopped with zero containers.
-- Generators: `e2e_longrlvr_*_{full,miles}.py`, `e2e_terminal_bench_*`, `run_dapo_math_spindle_full.py`, `check_multi_targets_gpu.py`, `examples/codeforces-codegolf`.
+- Generators: `e2e_longrlvr_*_{full,miles}.py`, `e2e_terminal_bench_*`, `run_dapo_math_spindle_full.py`, `examples/codeforces-codegolf`.

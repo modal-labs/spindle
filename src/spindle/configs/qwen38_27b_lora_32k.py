@@ -3,6 +3,8 @@ from spindle.configs.qwen38_27b_lora_16k_b200 import Config as Parent
 
 class Config(Parent):
     name = "qwen38-27b-lora-32k"
+    trainer_image = "miles-v0.2.0-e814245"
+    inference_image = "sglang-v0.5.23-e003cf9"
     max_context_length = 32768
     inference_gpus_per_node = 2
     inference_cpu = 64
@@ -11,6 +13,8 @@ class Config(Parent):
     inference_draft_model_revision = "015e795645c74b1a0eeef3b570031fb62e769bc5"
     overrides = {
         **Parent.overrides,
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
         "miles_cfg.max_tokens_per_gpu": 32768,
         "sglang_cfg.tp_size": 2,
         "sglang_cfg.dtype": "bfloat16",

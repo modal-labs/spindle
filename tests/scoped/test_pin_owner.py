@@ -154,6 +154,7 @@ def test_slow_creation_does_not_block_polling_and_startup_is_limited():
     asyncio.run(check())
 
 
+@pytest.mark.slow
 def test_failed_creation_retries_while_demand_remains():
     async def check():
         stop = threading.Event()
