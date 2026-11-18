@@ -41,6 +41,7 @@ def test_all_packaged_recipes_validate_offline(path):
     "preset,algorithm,draft",
     [
         ("qwen3-8b-lora-32k", "DFLASH", "z-lab/Qwen3-8B-DFlash-b16"),
+        ("qwen35-9b-instruct-lora-16k", "DFLASH", "modal-labs/Qwen3.5-9B-DFlash"),
         ("qwen35-9b-instruct-lora-32k", "DFLASH", "modal-labs/Qwen3.5-9B-DFlash"),
         ("qwen38-27b-lora-32k", "DFLASH", "incoai/Qwen3.8-27B-DFlash2"),
         ("glm53-flash-lora-32k", "DFLASH", "modal-labs/GLM-5.3-Flash-DFlash"),
@@ -146,6 +147,7 @@ def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
         "nemotron3-ultra-550b-a55b-lora-64k",
         "qwen35-397b-a17b-lora-64k",
         "qwen35-397b-a17b-lora-256k",
+        "glm53-flash-lora-256k",
     ],
 )
 def test_legacy_recipes_do_not_inherit_native_backend_settings(preset):

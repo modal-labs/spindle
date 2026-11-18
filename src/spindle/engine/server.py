@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import zstandard
 from tinker.types.forward_backward_input import ForwardBackwardInput
 
 from spindle.encoding import fingerprint
@@ -212,8 +213,14 @@ class Engine:
     def loaded(self) -> tuple[str, ...]:
         return tuple(self._models)
 
-    async def forward_backward(self, body: bytes, content_type: str) -> str:
+    async def forward_backward(
+        self, body: bytes, content_type: str, content_encoding: str = "identity"
+    ) -> str:
         mark("engine.forward_backward.received", bytes=len(body))
+        if content_encoding == "zstd":
+            body = await asyncio.to_thread(
+                zstandard.ZstdDecompressor().decompress, body
+            )
         model_id, seq_id, kind, payload = await asyncio.to_thread(
             decode_forward_backward, body, content_type
         )

@@ -35,6 +35,7 @@ from .actor_shared import (
     ProfiledActor,
     install_replay_patches,
     mark_actor_initialized,
+    pin_fla_kernels_if_loaded,
     use_distributed_timeout_for_gloo,
 )
 from .native_checkpoint import validate_adapter
@@ -66,6 +67,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
                 bridge_model=qwen3_vl_model, miles_qwen3_vl=miles_qwen3_vl
             )
         result = MultiLoRATrainRayActor.init(self, args, role, **kwargs)
+        pin_fla_kernels_if_loaded()
         mark_actor_initialized()
         return result
 
