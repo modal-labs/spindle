@@ -6,9 +6,10 @@ Trainer traces: Miles LoRA trainer only; off by default. Sampler traces: by hand
 
 - `SPINDLE_TORCH_PROFILE_STEP=2 uv run spindle deploy <config> --refresh-trainer <config name>`: traces the third training step (steps count `optim_step` calls from 0; use 1 or 2 so compile work is out). A running trainer keeps its old env until it idles out, so profile a variant with its own name to be sure. Redeploy without the variable (and `--refresh-trainer`) to disable.
 - `SPINDLE_TORCH_PROFILE_RANKS`: default `0` (rank 0); e.g. `0,4` or `all`. ~250 MB per trace.
+- `SPINDLE_TORCH_PROFILE_SHAPES=1` / `SPINDLE_TORCH_PROFILE_MEMORY=1`: record tensor shapes / memory (off by default; larger trace).
 - `SPINDLE_TORCH_PROFILE_DIR`: default `/checkpoints/torch-profile/<config name>`.
 
-Captures one whole training step per trainer process on the GPU ranks: all its `forward_backward` calls, `optim_step` and LoRA export (first `forward_backward` of the step until its sampler weights are published or the next step starts; on a shared trainer, the first client to reach it). Rank phases: `spindle/forward_backward`, `spindle/optim_step`, `spindle/forward_only`, `spindle/export_slot_peft`. Sampler-weight save and publish are not traced; read `timing/save_sampler_weights_s` and `timing/publish_weights_s`. `rank<N>.key_averages.txt` is a no-UI top-ops table. Writing the trace delays the next update; exclude both steps from timings.
+Captures one whole training step per trainer process on the GPU ranks: all its `forward_backward` calls, `optim_step` and LoRA export (first `forward_backward` of the step until its sampler weights are published or the next step starts; on a shared trainer, the first client to reach it). Rank phases: `spindle/forward_backward`, `spindle/optim_step`, `spindle/forward_only`, `spindle/export_slot_peft`. Sampler-weight save and publish are not traced; read `timing/save_sampler_weights_s` and `timing/publish_weights_s`. `rank<N>.key_averages.txt` is a no-UI top-ops table. A child process writes the files after the step while the trainer keeps serving; each rank logs `"state": "written"` when done. Exclude the profiled step and the next one from timings.
 
 Always-on timing without a trace: `optim_step` result metrics `timing/*_s` and `timing/*_calls`, and `spindle_step_timing` / `spindle_memory` lines in the trainer log.
 
