@@ -201,7 +201,7 @@ def test_deepseek_v41_lora_recipe():
     assert serving["disable_shared_experts_fusion"] is True
     assert row.recipe.inference_env["SGLANG_DSV4_FP4_DEQUANT"] == "1"
     assert serving["weight_loader_disable_mmap"] is False
-    assert row.recipe.trainer_image == "miles-v0.1.2-f2f8447"
+    assert row.recipe.trainer_image == "miles-v0.1.2-99e1ebe"
     assert row.model == "deepseek-ai/DeepSeek-V4.1-Flash"
     assert row.asset_path == "/assets/deepseek-ai/DeepSeek-V4.1-Flash"
     assert json.loads(serving["json_model_override_args"])["vision_n_layers"] == 0
@@ -630,6 +630,41 @@ async def test_every_recipe_routes_by_name_and_plain_models_pick_the_longest():
             assert response.status_code == 200, response.text
             row = await kv.get(model_key(response.json()["model_id"]))
             assert row["engine_definition_id"] == expected
+
+
+@pytest.mark.anyio
+async def test_create_model_rejects_untrainable_lora_before_a_trainer_starts():
+    kv = InMemoryKeyValueStore()
+    routes, _ = routes_for(resolved())
+    async with client_for(routes, kv) as client:
+        session_id = (await client.post("/api/v1/create_session", json={})).json()[
+            "session_id"
+        ]
+        for seq, lora_config in enumerate(
+            ({"rank": 8, "train_mlp": False}, {"rank": 8, "train_unembed": False})
+        ):
+            response = await client.post(
+                "/api/v1/create_model",
+                json={
+                    "session_id": session_id,
+                    "model_seq_id": seq,
+                    "base_model": "Qwen/Qwen3.5-9B-Base",
+                    "lora_config": lora_config,
+                },
+            )
+            assert response.status_code == 400, response.text
+            assert "train_mlp=True" in response.json()["message"]
+        assert not await kv.list_items("trainer_demand:")
+        response = await client.post(
+            "/api/v1/create_model",
+            json={
+                "session_id": session_id,
+                "model_seq_id": 2,
+                "base_model": "Qwen/Qwen3.5-9B-Base",
+                "lora_config": {"rank": 8, "seed": 7},
+            },
+        )
+        assert response.status_code == 200, response.text
 
 
 @pytest.mark.anyio

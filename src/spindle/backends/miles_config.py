@@ -92,6 +92,28 @@ def lora_target_flags(target_modules: tuple[str, ...]) -> tuple[bool, bool, bool
     )
 
 
+def check_lora_request(
+    target_modules: tuple[str, ...],
+    max_lora_rank: int,
+    *,
+    rank: int,
+    train_attn: bool,
+    train_mlp: bool,
+    train_unembed: bool,
+) -> None:
+    """Reject a LoRA the deployment cannot train. A requested unembedding the
+    deployment does not target is allowed; the trainer keeps it frozen."""
+    if not 0 < rank <= max_lora_rank:
+        raise ValueError(f"LoRA rank must be between 1 and {max_lora_rank}")
+    attn, mlp, unembed = lora_target_flags(target_modules)
+    if (train_attn, train_mlp) != (attn, mlp) or (unembed and not train_unembed):
+        raise ValueError(
+            f"this deployment trains LoRA with train_attn={attn}, "
+            f"train_mlp={mlp}, train_unembed={unembed}; "
+            "create the model with matching settings"
+        )
+
+
 PositiveInteger = Annotated[int, Field(strict=True, gt=0)]
 NonEmptyString = Annotated[str, Field(min_length=1)]
 

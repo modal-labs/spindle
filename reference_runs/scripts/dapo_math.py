@@ -39,12 +39,6 @@ class Config:
     learning_rate: float = 4e-5
 
 
-HARDWARE = {
-    "trainer": {"gpu": "H100!", "gpus": 4},
-    "sampler": {"gpu": "H100!", "gpus_per_replica": 1, "replicas": 2},
-}
-RECIPE = "dapo-math-qwen35-4b-h100"
-
 SMOKE = Config(updates=2, groups=4, eval_problems=8, evaluation_interval=1)
 
 Problem = tuple[list[int], str]
@@ -115,15 +109,21 @@ def datum(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument(
+        "--base-model", required=True, help="model ID or deployment name for Qwen3.5-4B"
+    )
+    parser.add_argument(
+        "--output", type=Path, required=True, help="new JSONL output file"
+    )
     parser.add_argument("--smoke", action="store_true", help=f"use {SMOKE}")
     args = parser.parse_args()
     config = SMOKE if args.smoke else Config()
-    args.output.mkdir(parents=True)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.touch(exist_ok=False)
 
     def record(event: str, **fields: object) -> None:
-        with (args.output / "metrics.jsonl").open("a") as stream:
+        with args.output.open("a") as stream:
             line = {"time": time.time(), "event": event, **fields}
             stream.write(json.dumps(line, allow_nan=False) + "\n")
 
@@ -152,15 +152,14 @@ def main() -> None:
     ]
     held_out = problems[: config.eval_problems]
     service = tinker.ServiceClient()
-    training = service.create_lora_training_client(RECIPE, config.lora_rank)
+    training = service.create_lora_training_client(args.base_model, config.lora_rank)
     adam = types.AdamParams(learning_rate=config.learning_rate)
     record(
         "run",
         config=dataclasses.asdict(config),
         adam=adam.model_dump(),
         tinker_sdk=importlib.metadata.version("tinker"),
-        recipe=RECIPE,
-        hardware=HARDWARE,
+        recipe=args.base_model,
     )
     clock, previous = time.monotonic, None
     for step in range(config.updates + 1):
