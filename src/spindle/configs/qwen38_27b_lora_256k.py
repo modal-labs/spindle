@@ -9,6 +9,8 @@ class Config(Parent):
     overrides = {
         "miles_cfg.megatron_to_hf_mode": "bridge",
         "miles_cfg.lora_type": "lora",
+        "trainer_env.TRITON_CACHE_DIR": "/tmp/spindle-kernel-cache/triton",
+        "trainer_env.TORCHINDUCTOR_CACHE_DIR": "/tmp/spindle-kernel-cache/inductor",
         "trainer_nodes": 2,
         "trainer_gpu": "H200",
         "miles_cfg.tensor_model_parallel_size": 2,

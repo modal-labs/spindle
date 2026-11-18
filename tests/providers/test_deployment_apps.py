@@ -546,6 +546,8 @@ UNUSED_IMAGE_WHITELIST = {
     "miles-v0.1.1-fdd808c",
     "miles-v0.1.2-f2f8447",
     "miles-v0.1.2-464efc9-glm53",
+    # DeepSeek-V4.1-Flash sampler image in Spindle 0.1.8 and earlier.
+    "sglang-v0.5.21-a3e0e17",
 }
 
 

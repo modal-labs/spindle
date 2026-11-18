@@ -640,10 +640,14 @@ class MilesCommandBackend(Backend):
             raise ValueError("unsupported Miles checkpoint schema")
         if metadata.get("backend") != "miles":
             raise ValueError("checkpoint was not created by the Miles backend")
-        if metadata.get("miles_revision") != self.runtime.revision:
-            raise ValueError("checkpoint Miles revision does not match the deployment")
-        if metadata.get("checkpoint_format") != self.runtime.checkpoint_format:
-            raise ValueError("unsupported Miles checkpoint format")
+        saved_format = metadata.get("checkpoint_format")
+        if saved_format != self.runtime.checkpoint_format:
+            raise ValueError(
+                f"checkpoint format {saved_format} does not match this trainer's "
+                f"{self.runtime.checkpoint_format}. Miles v0.1.x and v0.2.0 images "
+                "save different formats; restore it on a trainer_image from the "
+                "release that saved it (see docs/deployment-configs.md#images)"
+            )
         if metadata.get("base_model") != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")
         lora = metadata.get("lora_config") or {}
@@ -694,6 +698,20 @@ class MilesCommandBackend(Backend):
             raise ValueError("checkpoint topology does not match deployment")
         if restore_optimizer and not metadata.get("has_optimizer"):
             raise ValueError("checkpoint does not include optimizer state")
+        if metadata.get("miles_revision") != self.runtime.revision:
+            print(
+                json.dumps(
+                    {
+                        "event": "spindle_checkpoint_revision_mismatch",
+                        "message": "checkpoint was saved with a different Miles "
+                        "commit than this trainer runs; restoring it because its "
+                        "format and layout match",
+                        "saved": metadata.get("miles_revision"),
+                        "running": self.runtime.revision,
+                    }
+                ),
+                flush=True,
+            )
 
 
 def _adam_parameters(adam: AdamParams) -> dict[str, float]:

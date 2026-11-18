@@ -909,7 +909,7 @@ def test_weights_only_capture_excludes_optimizer(tmp_path):
         backend.load_checkpoint("model-a", str(uri), restore_optimizer=True)
 
 
-def test_checkpoint_rejects_different_resolved_main_commit(tmp_path):
+def test_checkpoint_restores_across_miles_revisions_with_a_warning(tmp_path, capsys):
     runtime = FakeMilesRuntime()
     backend = _backend(tmp_path, runtime)
     backend.accept_model("model-a", _spec())
@@ -918,10 +918,9 @@ def test_checkpoint_rejects_different_resolved_main_commit(tmp_path):
     )
     uri = backend.persist_checkpoint("capture-a", "step-1")
     runtime.revision = "b" * 40
-    calls = list(runtime.calls)
-    with pytest.raises(ValueError, match="Miles revision does not match"):
-        backend.load_checkpoint("model-a", uri, restore_optimizer=True)
-    assert runtime.calls == calls
+    backend.load_checkpoint("model-a", uri, restore_optimizer=True)
+    assert runtime.calls[-1][0] == "load_slot" and runtime.calls[-1][4]
+    assert "spindle_checkpoint_revision_mismatch" in capsys.readouterr().out
 
 
 def test_miles_checkpoint_storage_lifecycle_uses_control_plane_layout(tmp_path):

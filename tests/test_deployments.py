@@ -236,7 +236,12 @@ def test_deepseek_v41_lora_32k_recipes_keep_tensor_parallelism(name, tp):
 
 
 @pytest.mark.parametrize(
-    "name", ["deepseek-v41-flash-lora-64k", "deepseek-v41-flash-lora-128k"]
+    "name",
+    [
+        "deepseek-v41-flash-lora-64k",
+        "deepseek-v41-flash-1017-lora-64k",
+        "deepseek-v41-flash-lora-128k",
+    ],
 )
 def test_deepseek_v41_long_context_recipes_train_one_row_per_micro_batch(name):
     miles = MilesBackendConfig(**resolved(recipe(name)).trainer_settings["miles"])
@@ -245,7 +250,7 @@ def test_deepseek_v41_long_context_recipes_train_one_row_per_micro_batch(name):
     assert miles.cli_options["qkv_format"] == "bshd"
 
 
-@pytest.mark.parametrize("context, tp", [("8k", 1), ("32k", 4)])
+@pytest.mark.parametrize("context, tp", [("8k", 1), ("32k", 4), ("64k", 8)])
 def test_deepseek_v41_1017_recipes_load_the_1017_release(context, tp):
     row = resolved(recipe(f"deepseek-v41-flash-1017-lora-{context}"))
     miles = MilesBackendConfig(**row.trainer_settings["miles"])

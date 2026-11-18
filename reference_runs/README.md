@@ -48,10 +48,22 @@ Script arguments cannot override these values. Direct callers of
 tokenizer in its definition. It inherits the committed `qwen38-27b-lora-256k`
 topology: two eight-H200 trainer nodes, TP2/CP8, and two
 four-H200 sampler replicas. The definition selects exact H200 hardware and one
-training client/adapter slot.
+training client/adapter slot. Trainer compiler caches stay on local disk because
+shared-cache validation read a generated Python module containing null bytes.
 The workload generates at most 2,048 response tokens; it does not validate 256K
 sequences. Compare new
 measurements against the same validation, rather than the 4B learning curve.
+
+After the measured updates, one nonzero-gradient update creates a probe
+checkpoint with active Adam momentum. The script applies a zero-gradient Adam
+step, restores the probe checkpoint, and replays that momentum-only step.
+This checks optimizer restoration without requiring deterministic backward
+kernels. It compares token scores, restores the final measured checkpoint,
+then publishes and samples its adapter. The `restore_validation` record reports
+the comparison separately from update timings. A failed check fails the run
+and leaves its metrics uncatalogued. The three probe steps do not enter the
+learning curve. The `restore-probe`, `restore-expected` and `restore-replayed`
+checkpoints retain their states.
 
 Once published, a validation TOML file is immutable. Create a new definition
 when changing its script selection, arguments or deployment overrides. Spindle

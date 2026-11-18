@@ -1,55 +1,34 @@
-from spindle.configuration import BaseConfig
+from spindle.configs._qwen35_9b_instruct_lora import Qwen35InstructLora as Parent
 
 
-class Config(BaseConfig):
+class Config(Parent):
     name = "qwen35-9b-instruct-lora-16k"
     trainer_image = "miles-v0.2.0-e814245"
     inference_image = "sglang-v0.5.23-e003cf9"
-    model = "Qwen/Qwen3.5-9B"
-    max_context_length = 16384
-    trainer_gpu = "H100"
-    trainer_gpus_per_node = 8
-    miles_cfg = {
-        "model_type": "qwen3.5-9B",
-        "tensor_model_parallel_size": 8,
-        "target_modules": [
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
-        "max_tokens_per_gpu": 16384,
-        "max_lora_slots": 6,
-        "max_lora_rank": 32,
-        "default_lora_alpha": 32,
-        "cli_options": {
-            "recompute_granularity": "full",
-            "recompute_method": "uniform",
-            "recompute_num_layers": 1,
-        },
-    }
-    trainer_env = {
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCHINDUCTOR_COMPILE_THREADS": "1",
-    }
-    trainer_max_clients_per_instance = 6
-    inference_gpu = ["B200", "H200"]
-    sglang_cfg = {
-        "tp_size": 1,
-        "ep_size": 1,
-        "mem_fraction_static": 0.8,
-        "max_running_requests": 128,
-        "max_queued_requests": 128,
-        "max_loaded_loras": 256,
-        "max_loras_per_batch": 8,
-        "schedule_policy": "lpm",
-    }
+    trainer_gpu = "B200"
+    trainer_gpus_per_node = 1
+    inference_gpu = "B200"
+    inference_draft_model = "modal-labs/Qwen3.5-9B-DFlash"
+    inference_draft_model_revision = "28407c638832073e50f1aacd89e1d15a288b7b1c"
     overrides = {
         "miles_cfg.megatron_to_hf_mode": "raw",
         "miles_cfg.lora_type": "canonical_lora",
+        "miles_cfg.tensor_model_parallel_size": 1,
+        "miles_cfg.cli_options": {},
+        "sglang_cfg.max_running_requests": 64,
+        "sglang_cfg.max_mamba_cache_size": 384,
+        "sglang_cfg.cuda_graph_max_bs_decode": 64,
+        "sglang_cfg.attention_backend": "trtllm_mha",
+        "sglang_cfg.linear_attn_prefill_backend": "triton",
+        "sglang_cfg.linear_attn_decode_backend": "triton",
+        "sglang_cfg.linear_attn_verify_backend": "triton",
+        "sglang_cfg.mamba_ssm_dtype": "float32",
+        "sglang_cfg.mamba_radix_cache_strategy": "extra_buffer",
+        "sglang_cfg.speculative_algorithm": "DFLASH",
+        "sglang_cfg.speculative_dflash_block_size": 8,
+        "sglang_cfg.speculative_draft_attention_backend": "fa4",
+        "sglang_cfg.speculative_draft_model_quantization": "unquant",
+        "sglang_cfg.speculative_draft_kv_cache_dtype": "bfloat16",
     }
 
 
