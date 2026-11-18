@@ -85,7 +85,7 @@ TRAINER_IMAGES = {
     "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
     # https://github.com/modal-projects/miles/pull/49 Native canonical and routed-expert adapters, including Nemotron Nano
     "miles-v0.2.0-e814245": miles_v020_image.image_03_e814245,
-    "miles-v0.2.0-fd8f5c1": miles_v020_image.image_04_fd8f5c1,
+    "miles-v0.2.0-e1b172f": miles_v020_image.image_04_e1b172f,
     # Upstream NVIDIA/Megatron-LM commit; no Spindle fork
     "megatron-2d1fa8d": megatron_image,
 }
