@@ -48,4 +48,4 @@ image_02_8c5de26 = image_at("8c5de2650a6876c2ca17ff221c7e0ba8a2d7b84a")
 image_03_e814245 = image_at("e8142459617f8220825ddbacf054b8b17cabdd82")
 
 # GLM output-head adapters, Nemotron Omni layouts, and native expert routing validation.
-image_04_ac54685 = image_at("ac54685579c09c67d5a79777c1a325a1a2eced98")
+image_04_7524da0 = image_at("7524da0a0dc7116e1ce8cfa491f3702f495f9b1a")
