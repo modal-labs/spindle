@@ -38,7 +38,6 @@ Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen a
 
 ### Removed
 
-- Removed unused trainer images `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53` and `miles-v0.2.0-15afe21`, plus unused sampler image `sglang-v0.5.23-803bccb`. Custom configs that select these names must use a supported image or define their own image with a `module:attribute` path. Checkpoints saved on the removed Miles revisions need an image with the same revision to restore.
 - `SPINDLE_EXCLUDE_RESERVED_CAPACITY` is no longer read. Set `platform.modal.exclude_reserved_capacity` in each config instead.
 
 ### Fixed
@@ -58,7 +57,7 @@ Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen a
 - Speculative samplers use a corrected SGLang runtime that honors the earliest matching string, regex or EOS stop within an accepted token block.
 - Draft checkpoint revisions use separate cache directories, and downloads sharing target weights run one at a time.
 - Trainer backends use a local Unix socket so another process cannot take their port while model weights load and make startup fail.
-- Miles LoRA images support seeded adapter initialization under `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26`. The default Miles image and every bundled Miles config use these. A checkpoint restores only on the Miles revision that saved it.
+- Miles LoRA images support seeded adapter initialization under `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26`. The default Miles image and every bundled Miles config use these. A checkpoint restores only on the Miles revision that saved it. To restore a training state saved with 0.1.7 or earlier, set `trainer_image` to `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` for DeepSeek-V4.1, or `miles-v0.1.2-464efc9-glm53` for GLM-5.3 Flash.
 
 ## 0.1.7 - 2026-11-15
 
