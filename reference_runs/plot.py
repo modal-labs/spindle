@@ -5,6 +5,7 @@ uv run python reference_runs/plot.py RUN_ID_OR_JSONL [RUN_ID_OR_JSONL ...]
 
 import argparse
 import json
+from math import nan
 import tomllib
 from pathlib import Path
 
@@ -40,9 +41,7 @@ def main() -> None:
         records = [json.loads(line) for line in lines if line.endswith("\n")]
         for axis, (event, field, title) in zip(axes.flat, PANELS):
             points = [
-                (r["step"], r[field])
-                for r in records
-                if r["event"] == event and field in r
+                (r["step"], r.get(field, nan)) for r in records if r["event"] == event
             ]
             axis.plot(
                 *zip(*points),

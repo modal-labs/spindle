@@ -805,7 +805,6 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
             },
             "requires megatron_to_hf_mode raw",
         ),
-        ({"trainer_nodes": 2}, "single-node"),
     ],
 )
 @pytest.mark.parametrize("image", ["miles-v0.2.0-8c5de26", "miles-v0.2.0-e814245"])
