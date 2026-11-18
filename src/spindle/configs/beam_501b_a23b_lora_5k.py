@@ -15,6 +15,11 @@ class Config(BaseConfig):
     trainer_max_clients_per_instance = 2
     trainer_max_clients_per_batch = 1
     trainer_timeout_s = 86400
+    # Shared compiler caches have handed fresh multi-node workers zero-filled modules.
+    trainer_env = {
+        "TRITON_CACHE_DIR": "/tmp/spindle-kernel-cache/triton",
+        "TORCHINDUCTOR_CACHE_DIR": "/tmp/spindle-kernel-cache/inductor",
+    }
     miles_cfg = {
         "model_type": "beam",
         "tensor_model_parallel_size": 8,
