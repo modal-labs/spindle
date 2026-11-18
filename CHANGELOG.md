@@ -4,73 +4,66 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+## 0.1.8 - 2026-11-18
+
+Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen and Nemotron-3 Nano LoRA recipes move to Miles native adapters, so checkpoints they saved before 0.1.8 load only on their original trainer image. A new recipe trains Nemotron 3.5 Super VL 120B-A12B on text, sampled logprobs match the trainer at any temperature, multi-target scoring handles mixed candidate counts in one pass, and a rewritten guide shows how to profile and tune a deployment config.
+
 ### Added
 
-- Reference runs automatically index successful executions under `reference_runs/outputs/`, recording server-reported Spindle commit and version. Process locks protect run IDs, output paths and index updates; scratch outputs remain uncatalogued.
-- `spindle usage --group-by` takes several label keys separated by commas, such as `team_id,run_id`, and prints one column per key.
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
-- Sampling supports the Tinker SDK's `prompt_logprobs_last_n`. It returns prompt logprobs for only the last N prompt tokens, so the rest of the prompt can come from the prefix cache.
 - `nemotron35-super-vl-120b-a12b-lora-64k` trains LoRA adapters on NVIDIA Nemotron 3.5 Super VL 120B-A12B. Training and sampling take text only: image inputs are not accepted, and adapters apply to the language model.
+- Sampling supports the Tinker SDK's `prompt_logprobs_last_n`. It returns prompt logprobs for only the last N prompt tokens, so the rest of the prompt can come from the prefix cache.
+- Pretrained DFlash inference recipes for Qwen3-8B, Qwen3.5-9B, Qwen3.8-27B and GLM-5.3 Flash, plus Qwen3.5-4B native MTP using its cached target checkpoint.
+- An opt-in `miles-v0.2.0` trainer image with native adapter checkpoints, for single-node trainers in bridge mode. It trains the same shared-`lora_A` adapter layout as the existing images, which remain the default. Checkpoints don't restore across Miles versions. See [Images](docs/deployment-configs.md#images).
+- `spindle usage --group-by` takes several label keys separated by commas, such as `team_id,run_id`, and prints one column per key.
+- `megatron_cfg.logprob_chunk_tokens` makes full fine-tuning trainers score log-probs that many tokens at a time, so memory no longer grows with row length. It needs tensor and pipeline parallel size 1.
+- Reference runs automatically index successful executions under `reference_runs/outputs/`, recording server-reported Spindle commit and version. Process locks protect run IDs, output paths and index updates; scratch outputs remain uncatalogued.
+
+### Changed
+
+- The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers, which make up three of every four layers. Checkpoints these recipes saved before this change can't be loaded into them. To keep using one, load it into a variant with the old targets, as described in [Older Qwen3.5 LoRA checkpoints](docs/deployment-configs.md#older-qwen35-lora-checkpoints).
+- Single-node dense Qwen2.5, Qwen3, Qwen3.5, Qwen3.8 and Nemotron-3 Nano LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Nano uses FP32 expert reductions and deterministic kernels so repeated scores and optimizer replay agree. Older checkpoints require their original trainer image and adapter layout.
+- Miles multi-target scoring shares one vocabulary softmax across mixed candidate counts in supported scoring modes, preserving each datum's output shape and batch order.
+- [Profiling](docs/profiling.md) now walks from measuring a step to choosing which config fields to change, for trainers and samplers.
+- Reference runs use flat TOML definitions, a typed execution index, and flat JSONL outputs. A shared launcher selects the exact deployment for the existing DAPO-Math workload.
+- The reference launcher accepts workload arguments only through the TOML definition's `script_args`; extra command-line arguments are rejected.
+- Reference deployment overrides use explicit typed fields and reject undeclared settings.
+- Indexed reference runs require a TOML definition in `reference_runs/configs/`. Temporary definitions can use scratch output paths.
+- DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
+- The standard 32K LoRA recipes for Qwen3-8B, Qwen3.5-9B Instruct, Qwen3.8-27B and GLM-5.3 Flash use DFlash; Qwen3.5-4B uses native MTP. These replace the separate `with-spec` and `mtp` variants. Qwen3-8B samples on one B300 instead of two H100 GPUs, and Qwen3.5-4B uses B200 for training and sampling.
+- `nemotron35-lightning-30b-a3b-lora-64k` trains on two B300s with one model copy per GPU, and samples on B200s with 128 requests per sampler. The previous H200 layout is now `nemotron35-lightning-30b-a3b-lora-64k-h200`; use it when B300s or B200s are not available. The 256K recipe and the shared-server recipe keep H200 trainers and samplers.
+- `nemotron35-lightning-30b-a3b-lora-64k` samples on a B200 with the model's multi-token prediction layer, which speeds up decoding. `nemotron35-lightning-30b-a3b-lora-64k-h200` keeps an H200 sampler, which now runs 89 requests at once instead of 128.
+- The 64K full fine-tuning recipes split each model across fewer GPUs. Qwen3.5-4B and Qwen3.5-9B train on four B300s or B200s, Qwen3.6-27B on eight B300s, and the 35B-A3B recipes on eight B300s or B200s. Training states saved on the old layouts can't be resumed with `load_state_with_optimizer`, but `load_state` still loads their weights.
+- Full fine-tuning trainers compile their linear-attention and attention kernels once instead of on most steps, and split rows evenly across data-parallel GPUs, so steps are faster and steadier.
+- MoE LoRA training on the default Miles images gives the expert token permute a scatter-add backward, which is faster than the BF16 index_add it replaces.
+- Miles LoRA training builds the logits gradient once per micro-batch instead of once per row. Steps with many short rows run faster and hold less memory; results are unchanged.
+- Every bundled config sets its own `trainer_image` and `inference_image`, so SGLang and Miles can be upgraded one config at a time. The images each config runs are unchanged. Configs that leave these fields empty still use the defaults. See [Images](docs/deployment-configs.md#images).
+- Image names now include the fork commit, and a named image is never changed in place. The names `miles-v0.1.2` and `miles-v0.2.0` are rejected, so update `trainer_image` in your configs to `miles-v0.1.2-99e1ebe` or `miles-v0.2.0-8c5de26`. The defaults now have names too: `miles-v0.1.1-52a7a99` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.23-c4182b2` for samplers. The DeepSeek-V4.1 and GLM-5.3 Flash images are now `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2-glm53` and `miles-v0.1.2-99e1ebe-glm53`.
+- Synthetic guess-number regressions select existing cookbook renderers for Qwen2.5-3B/7B-Instruct, Qwen3-4B and Qwen3.5-2B instead of skipping them when cookbook model metadata is missing.
 
 ### Removed
 
-- Removed unused trainer images `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53` and `miles-v0.2.0-15afe21`, plus unused sampler image `sglang-v0.5.23-803bccb`. Custom configs that select these names must use a supported image or define their own image with a `module:attribute` path. Checkpoints saved on the removed Miles revisions need an image with the same revision to restore.
+- `SPINDLE_EXCLUDE_RESERVED_CAPACITY` is no longer read. Set `platform.modal.exclude_reserved_capacity` in each config instead.
 
 ### Fixed
 
 - Qwen3.5 and Qwen3.6 LoRA trainers no longer pause for several seconds when a step brings new row lengths. On a fresh `qwen35-4b-lora-32k` trainer, such steps took 7.5–26 s instead of about 2.5 s.
-- Built-in Miles v0.2.0 images reject the unvalidated Bridge/canonical adapter combination before starting a trainer.
-
-- Malformed `spindle add` fields such as `--=1` reach recipe validation instead of being parsed as abbreviated top-level options.
-
-- Miles LoRA images support seeded adapter initialization under `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26`. The default Miles image and every bundled Miles config use these. A checkpoint restores only on the Miles revision that saved it.
+- Sampled-token logprobs are now the model's temperature-1 logprobs at any sampling temperature, matching what the trainer computes. RL scripts that sample at a temperature other than 1 get correct importance ratios for importance sampling, PPO, CISPO and DRO.
+- LoRA trainers for the Nemotron recipes restart the Mamba state at each row packed into a micro-batch. Before, every row after the first started from the previous row's state, so its log-probs and gradients were wrong. The `miles-v0.2.0` image already did this.
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
-- `miles-v0.2.0` trainers with two GPUs no longer hang at start-up. Ray now starts with enough CPUs for the extra workers this image runs.
-- Sampling requests with an option Spindle does not support, such as `prompt_alt_tokens_k` or `topk_sample_logprobs`, now fail right away with a 400 that names the option. Before, the server retried them three times before the client saw an error.
 - When a `forward_backward` or `forward` call runs out of GPU memory on a Miles LoRA trainer, the request fails with an out-of-memory error and the trainer keeps serving, with earlier gradients kept. This covers one-GPU trainers and dense models that use only data parallelism. Other layouts still restart the trainer.
 - On those trainers, when `forward_backward` requests from several clients run together and one runs out of GPU memory, only that request fails. The others run again one at a time and return their normal results. Before, every request that ran with it failed with the same error and lost its gradients.
 - Miles LoRA trainers deployed with `SPINDLE_TORCH_PROFILE_STEP` keep serving requests while the profiled step's trace is written. Before, every client on the trainer waited for the write, which took from half a minute to several minutes. Traces no longer record tensor shapes or memory unless you set `SPINDLE_TORCH_PROFILE_SHAPES=1` or `SPINDLE_TORCH_PROFILE_MEMORY=1`.
 - Miles LoRA trainers deployed with `SPINDLE_TORCH_PROFILE_STEP` no longer crash after the profiled step when the client sends the next `forward_backward` while sampler weights are still publishing. The trainer no longer writes `controller.trace.json.gz` or `controller.key_averages.txt`; the per-GPU `rank<N>` traces are unchanged.
 - `create_lora_training_client` now fails right away with a 400 when the deployment can't train the requested LoRA: a rank above its maximum, a different `train_attn` or `train_mlp`, or `train_unembed=False` on a deployment that trains the unembedding. The error names the settings to use. Before, it came only after a trainer had started and loaded the model.
-
-### Changed
-
-- The reference launcher accepts workload arguments only through the TOML definition's `script_args`; extra command-line arguments are rejected.
-- Reference deployment overrides use explicit typed fields and reject undeclared settings.
-- Indexed reference runs require a TOML definition in `reference_runs/configs/`. Temporary definitions can use scratch output paths.
-- DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
-- Synthetic guess-number regressions select existing cookbook renderers for Qwen2.5-3B/7B-Instruct, Qwen3-4B and Qwen3.5-2B instead of skipping them when cookbook model metadata is missing.
-
-- Single-node dense Qwen2.5, Qwen3, Qwen3.5, Qwen3.8 and Nemotron-3 Nano LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Nano uses FP32 expert reductions and deterministic kernels so repeated scores and optimizer replay agree. Older checkpoints require their original trainer image and adapter layout.
-
-- Reference runs use flat TOML definitions, a typed execution index, and flat JSONL outputs. A shared launcher selects the exact deployment for the existing DAPO-Math workload.
-- Miles multi-target scoring shares one vocabulary softmax across mixed candidate counts in supported scoring modes, preserving each datum's output shape and batch order.
-- `nemotron35-lightning-30b-a3b-lora-64k` trains on two B300s with one model copy per GPU, and samples on B200s with 128 requests per sampler. The previous H200 layout is now `nemotron35-lightning-30b-a3b-lora-64k-h200`; use it when B300s or B200s are not available. The 256K recipe and the shared-server recipe keep H200 trainers and samplers.
-- MoE LoRA training on the default Miles images gives the expert token permute a scatter-add backward, which is faster than the BF16 index_add it replaces.
-- Miles LoRA training builds the logits gradient once per micro-batch instead of once per row. Steps with many short rows run faster and hold less memory; results are unchanged.
-- Every bundled config sets its own `trainer_image` and `inference_image`, so SGLang and Miles can be upgraded one config at a time. The images each config runs are unchanged. Configs that leave these fields empty still use the defaults. See [Images](docs/deployment-configs.md#images).
-- Image names now include the fork commit, and a named image is never changed in place. `miles-v0.1.2` is now `miles-v0.1.2-f2f8447`, and `miles-v0.2.0` is now `miles-v0.2.0-15afe21`. Update `trainer_image` in your configs, because the old names are rejected. The defaults now have names too: `miles-v0.1.1-fdd808c` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.23-c4182b2` for samplers. The DeepSeek-V4.1 and GLM-5.3 Flash images are now `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2-glm53` and `miles-v0.1.2-464efc9-glm53`.
-- The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers, which make up three of every four layers, and sample on `sglang-v0.5.23-803bccb`. Checkpoints these recipes saved before this change can't be loaded into them. To keep using one, load it into a variant with the old targets, as described in [Older Qwen3.5 LoRA checkpoints](docs/deployment-configs.md#older-qwen35-lora-checkpoints).
-
-### Fixed
-
-- Sampled-token logprobs are now the model's temperature-1 logprobs at any sampling temperature, matching what the trainer computes. RL scripts that sample at a temperature other than 1 get correct importance ratios for importance sampling, PPO, CISPO and DRO.
-
-## 0.1.8
-
-### Added
-
-- Pretrained DFlash inference recipes for Qwen3-8B, Qwen3.5-9B, Qwen3.8-27B and GLM-5.3 Flash, plus Qwen3.5-4B native MTP using its cached target checkpoint.
-
-### Changed
-
-- The standard 32K LoRA recipes for Qwen3-8B, Qwen3.5-9B Instruct, Qwen3.8-27B and GLM-5.3 Flash use DFlash; Qwen3.5-4B uses native MTP. These replace the separate `with-spec` and `mtp` variants. Qwen3-8B samples on one B300 instead of two H100 GPUs, and Qwen3.5-4B uses B200 for training and sampling.
-
-### Fixed
-
+- Sampling requests with an option Spindle does not support, such as `prompt_alt_tokens_k` or `topk_sample_logprobs`, now fail right away with a 400 that names the option. Before, the server retried them three times before the client saw an error.
+- Built-in Miles v0.2.0 images reject the unvalidated Bridge/canonical adapter combination before starting a trainer.
+- Malformed `spindle add` fields such as `--=1` reach recipe validation instead of being parsed as abbreviated top-level options.
+- A sample that fails because its sampler can't read the recipe registry is reported as lost, so the Tinker SDK resubmits it instead of ending the run.
 - Speculative samplers use a corrected SGLang runtime that honors the earliest matching string, regex or EOS stop within an accepted token block.
 - Draft checkpoint revisions use separate cache directories, and downloads sharing target weights run one at a time.
 - Trainer backends use a local Unix socket so another process cannot take their port while model weights load and make startup fail.
+- Miles LoRA images support seeded adapter initialization under `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26`. The default Miles image and every bundled Miles config use these. A checkpoint restores only on the Miles revision that saved it. To restore a training state saved with 0.1.7 or earlier, set `trainer_image` to `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` for DeepSeek-V4.1, or `miles-v0.1.2-464efc9-glm53` for GLM-5.3 Flash.
 
 ## 0.1.7 - 2026-11-15
 
@@ -78,7 +71,6 @@ See what each run or team costs on a shared deployment: Spindle records the toke
 
 ### Added
 
-- An opt-in `miles-v0.2.0` trainer image with native adapter checkpoints, for single-node trainers in bridge mode. It trains the same shared-`lora_A` adapter layout as the existing images, which remain the default. Checkpoints don't restore across Miles versions. See [Images](docs/deployment-configs.md#images).
 - Token usage per session on shared trainers and samplers, stored on a `<frontend>-usage` Modal Volume and readable with Tinker's `get_billing_usage`. Label runs with `user_metadata`; `SPINDLE_USAGE_LABEL_KEYS` in the frontend's API secret lists the keys kept (default `run_id,team_id`). See [Cost attribution](docs/cost-attribution.md).
 - `spindle usage` splits Modal app cost across runs or labels by tokens processed, reading costs from Modal's billing report. Idle and cold-start time of trainers and sampler pools isn't charged to a run but still costs you, so it's shown as separate lines; `--hide-overhead` hides them. If Modal's billing report doesn't cover the whole window yet, only the hours it covers are split.
 - `reference_runs/`: a DAPO-Math GRPO workload on the stock Tinker SDK that records learning and timing metrics, with recorded results and a chart script for comparing deployments. Its deployment recipe fixes four H100 trainer GPUs and two single-H100 sampler replicas, and the client records that hardware contract.
