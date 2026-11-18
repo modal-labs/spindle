@@ -40,7 +40,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - Reference deployment overrides use explicit typed fields and reject undeclared settings.
 - Indexed reference runs require a TOML definition in `reference_runs/configs/`. Temporary definitions can use scratch output paths.
 - DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
-- `qwen38-27b-lora-256k` uses `miles-v0.2.0-8c5de26` and trainer-local compiler caches. Checkpoints saved with its previous Miles image cannot restore with the new default; set `trainer_image` to the original image to restore them.
+- `qwen38-27b-lora-256k` uses `miles-v0.2.0-8c5de26`. Checkpoints saved with the previous `miles-v0.1.1-52a7a99` default cannot restore with the new image. Set `trainer_image` back to `miles-v0.1.1-52a7a99` to restore those checkpoints.
 - Synthetic guess-number regressions select existing cookbook renderers for Qwen2.5-3B/7B-Instruct, Qwen3-4B and Qwen3.5-2B instead of skipping them when cookbook model metadata is missing.
 
 - Single-node dense Qwen2.5, Qwen3, Qwen3.5, Qwen3.8 and Nemotron-3 Nano LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Nano uses FP32 expert reductions and deterministic kernels so repeated scores and optimizer replay agree. Older checkpoints require their original trainer image and adapter layout.
