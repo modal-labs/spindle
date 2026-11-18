@@ -10,7 +10,6 @@ import importlib.metadata
 import json
 import math
 import os
-import re
 import statistics
 import time
 from pathlib import Path
@@ -52,7 +51,7 @@ def main(steps: int, group_size: int, output: Path) -> None:
         [
             {
                 "role": "user",
-                "content": "Pick any single digit from 0 to 9. Reply with only that digit.",
+                "content": "Write a friendly one-sentence greeting for a new teammate.",
             }
         ],
         effort=0.0,
@@ -70,7 +69,7 @@ def main(steps: int, group_size: int, output: Path) -> None:
         "learning_rate": 1e-5,
         "loss": "ppo",
         "loss_fn_config": PPO,
-        "reward": "digit / 9 for a single-digit response; -1 otherwise",
+        "reward": "-UTF8 response bytes / 128; -4 for empty or malformed responses",
         "group_size": group_size,
         "prompt_tokens": len(prompt_tokens),
         "steps": [],
@@ -98,7 +97,7 @@ def main(steps: int, group_size: int, output: Path) -> None:
                     train_mlp=False,
                     train_attn=True,
                     train_unembed=True,
-                ),
+                ).result(),
             )
             for seed in (41, 42)
         ]
@@ -110,7 +109,7 @@ def main(steps: int, group_size: int, output: Path) -> None:
             )
             assert publication.path not in paths
             paths.add(publication.path)
-            return service.create_sampling_client(model_path=publication.path)
+            return service.create_sampling_client(model_path=publication.path).result()
 
         sampler = publish(training, "rl-policy-0")
         frozen = publish(control, "rl-control")
@@ -136,15 +135,19 @@ def main(steps: int, group_size: int, output: Path) -> None:
                 assert len(result.sequences) == group_size
                 rewards = []
                 responses = []
+                terminations = []
                 for sequence in result.sequences:
                     assert sequence.tokens and sequence.logprobs
                     assert len(sequence.tokens) == len(sequence.logprobs)
                     assert all(math.isfinite(x) for x in sequence.logprobs)
-                    message, _termination = renderer.parse_response(sequence.tokens)
+                    message, termination = renderer.parse_response(sequence.tokens)
                     text = get_text_content(message).strip()
                     responses.append(text)
+                    terminations.append(str(termination))
                     rewards.append(
-                        int(text) / 9 if re.fullmatch(r"[0-9]", text) else -1.0
+                        -len(text.encode("utf-8")) / 128
+                        if text and str(termination) == "stop_sequence"
+                        else -4.0
                     )
                 if max(rewards) > min(rewards):
                     break
@@ -252,6 +255,7 @@ def main(steps: int, group_size: int, output: Path) -> None:
                 "sampled_policy_version": step,
                 "published_policy_version": step + 1,
                 "responses": responses,
+                "terminations": terminations,
                 "rewards": rewards,
                 "advantages": advantages,
                 "sampled_tokens": total_tokens,
