@@ -111,30 +111,6 @@ def test_dense_forward_matches_upstream(token_splits, alphas):
         assert torch.equal(grad, expected_grad)
 
 
-def test_single_slot_honors_replaced_projection_kernel():
-    layers = _layers()
-    forward = host_syncs._dense_forward(layers)
-    calls = []
-
-    def replacement(x, weights, *, token_splits, offsets):
-        calls.append((x.shape[-1], offsets.tolist()))
-        return _upstream_dense_mm(
-            x, weights, token_splits=token_splits, offsets=offsets
-        )
-
-    layers._dense_multi_lora_mm = replacement
-    layer = _dense((0, 7, 0, 0), (RANK, RANK, RANK, RANK))
-    x = torch.randn(7, HIDDEN)
-    actual, _ = forward(layer, x)
-    expected = _upstream_dense(layer, x)
-    assert torch.equal(actual, expected)
-    assert calls == [(HIDDEN, [0, 7, 7, 7]), (RANK, [0, 7, 7, 7])]
-    actual_grads = torch.autograd.grad(actual.square().sum(), _weights(layer))
-    expected_grads = torch.autograd.grad(expected.square().sum(), _weights(layer))
-    for actual_grad, expected_grad in zip(actual_grads, expected_grads, strict=True):
-        assert torch.equal(actual_grad, expected_grad)
-
-
 def _dispatch(token_splits, topk=2, seed=3):
     """Expert-major rows for ``sum(token_splits)`` tokens routed to ``topk`` experts."""
     tokens = sum(token_splits)

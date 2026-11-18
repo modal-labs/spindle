@@ -387,7 +387,7 @@ def build_rollout_app(
         maximum = maximum if pool.max_containers is None else pool.max_containers
         window = window if pool.scaledown_window is None else pool.scaledown_window
 
-    def capacity_cluster(cls):
+    def capacity_cluster(cls: type) -> type:
         if platform["modal"].get("exclude_reserved_capacity", False):
             return modal.clustered(size=1, rdma=True)(cls)
         return cls

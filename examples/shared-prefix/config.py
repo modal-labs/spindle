@@ -5,7 +5,7 @@ from spindle.configs.glm53_flash_lora_64k import Config as Parent
 
 class Config(Parent):
     name = "glm53-flash-lora-shared-prefix-b300"
-    trainer_image = "spindle.providers.modal.shared_prefix_image:glm53_trainer_image"
+    trainer_image = "spindle.providers.modal.shared_prefix_image:image"
     inference_image = "sglang-v0.5.23-c4182b2-glm53"
     trainer_gpu = "B300"
     trainer_gpus_per_node = 8
@@ -22,16 +22,51 @@ class Config(Parent):
     inference_gpu = "B300"
     inference_memory_mib = 786432
     max_context_length = 32768
+    miles_cfg = {
+        "shared_prefix_training": True,
+        "model_type": "glm5.3-flash",
+        "megatron_to_hf_mode": "raw",
+        "lora_type": "canonical_lora",
+        "tensor_model_parallel_size": 2,
+        "expert_model_parallel_size": 8,
+        "expert_tensor_parallel_size": 1,
+        "max_lora_slots": 1,
+        "max_lora_rank": 32,
+        "max_tokens_per_gpu": 49152,
+        "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "b_proj",
+            "f_a_proj",
+            "f_b_proj",
+            "g_a_proj",
+            "g_b_proj",
+            "o_proj",
+            "q_a_proj",
+            "q_b_proj",
+            "kv_a_proj_with_mqa",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        "cli_options": {
+            "lora_kernel_policy": "rowwise",
+            "deterministic_mode": True,
+            "use_rollout_routing_replay": False,
+            "enable_mtp_training": False,
+            "moe_permute_fusion": False,
+            "moe_router_fusion": False,
+            "moe_aux_loss_coeff": 0.0,
+            "cross_entropy_loss_fusion": False,
+            "tp_comm_overlap": False,
+            "recompute_granularity": "full",
+            "recompute_method": "uniform",
+            "recompute_num_layers": 1,
+        },
+    }
     overrides = {
         "platform.modal.exclude_reserved_capacity": True,
-        "miles_cfg.shared_prefix_training": True,
-        "miles_cfg.tensor_model_parallel_size": 2,
-        "miles_cfg.expert_model_parallel_size": 8,
-        "miles_cfg.max_lora_slots": 1,
-        "miles_cfg.max_tokens_per_gpu": 49152,
-        "miles_cfg.cli_options.deterministic_mode": True,
-        "miles_cfg.cli_options.use_rollout_routing_replay": False,
-        "miles_cfg.cli_options.enable_mtp_training": False,
         "sglang_cfg.enable_return_routed_experts": False,
     }
 

@@ -104,3 +104,31 @@ def test_rejected_native_load_keeps_slot_configuration(api: ModuleType) -> None:
     result = asyncio.run(bridge.load_slot(0, 8, 16, ckpt_path="/invalid"))
     assert result["error"] == "incompatible checkpoint"
     assert bridge.slots == {0: (4, 8)}
+
+
+def test_native_actor_gate_keeps_other_workers_and_can_be_disabled(
+    api: ModuleType,
+) -> None:
+    class Spec:
+        def __init__(self, worker_class: str) -> None:
+            self.worker_class = worker_class
+
+        def model_copy(self, *, update: dict) -> Spec:
+            return Spec(update["worker_class"])
+
+        @classmethod
+        def create(cls, config: str) -> Spec:
+            return cls(config)
+
+    api.TrainerSpec = Spec
+    worker = "miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor"
+    api.configure_actor(shared_prefix=True)
+    once = Spec.create.__func__
+    api.configure_actor(shared_prefix=True)
+    assert Spec.create.__func__ is once
+    assert Spec.create(worker).worker_class.endswith(
+        "prefix_actor.SharedPrefixTrainRayActor"
+    )
+    assert Spec.create("full-trainer").worker_class == "full-trainer"
+    api.configure_actor(shared_prefix=False)
+    assert Spec.create(worker).worker_class == api.ACTOR_CLASS

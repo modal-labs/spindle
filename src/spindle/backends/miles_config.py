@@ -218,6 +218,10 @@ class MilesBackendConfig(BaseModel):
         return self
 
     def _validate_shared_prefix(self) -> None:
+        if self.megatron_to_hf_mode != "raw" or self.lora_type != "canonical_lora":
+            raise ValueError(
+                "shared_prefix_training requires native raw canonical LoRA"
+            )
         required = {
             "pipeline_model_parallel_size": 1,
             "context_parallel_size": 1,
@@ -230,6 +234,9 @@ class MilesBackendConfig(BaseModel):
             "hidden_dropout": 0.0,
             "moe_aux_loss_coeff": 0.0,
             "moe_router_bias_update_rate": 0.0,
+            "moe_permute_fusion": False,
+            "lora_kernel_policy": "rowwise",
+            "prefix_tree_attention": True,
         }
         if self.context_parallel_size != 1 or self.expert_tensor_parallel_size != 1:
             raise ValueError("shared_prefix_training requires CP=ETP=1")
@@ -316,7 +323,14 @@ class MilesBackendConfig(BaseModel):
         if self.tensor_model_parallel_size > 1:
             arguments.append("--sequence-parallel")
         if self.shared_prefix_training:
-            arguments.append("--deterministic-mode")
+            arguments.extend(
+                [
+                    "--prefix-tree-attention",
+                    "--deterministic-mode",
+                    "--lora-kernel-policy",
+                    "rowwise",
+                ]
+            )
         return [*arguments, *self.extra_args]
 
     def _batching_arguments(self) -> list[str]:

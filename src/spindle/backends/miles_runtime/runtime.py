@@ -302,19 +302,17 @@ class MilesRuntime:
         if self.config.shared_prefix_training:
             from .prefix_checks import configure_prefix_environment
 
-            if self._v020 is not None:
+            if self._v020 is None:
                 raise ValueError(
-                    "shared_prefix_training requires the validated Miles v0.1.2 API"
+                    "shared_prefix_training requires Miles v0.2.0 native LoRA"
                 )
             configure_prefix_environment()
         install_bridge_replay(tinker_runtime)
         nemotron_h_omni.install(self.config.hf_checkpoint)
         if self._v020 is not None:
-            self._v020.configure_actor()
+            self._v020.configure_actor(shared_prefix=self.config.shared_prefix_training)
         else:
-            _configure_actor_spec(
-                train_specs, shared_prefix=self.config.shared_prefix_training
-            )
+            _configure_actor_spec(train_specs)
         if create_trainer_handles is None:
             _allow_context_parallel_multi_lora(lora_arguments)
         if self._v020 is None:
@@ -574,12 +572,10 @@ def _main_process_identity():
     return process_identity.SimpleProcessIdentity(component="main")
 
 
-def _configure_actor_spec(train_specs, *, shared_prefix: bool = False) -> None:
+def _configure_actor_spec(train_specs) -> None:
     original = train_specs._compute_spec_trainer
     if getattr(original, "_spindle_actor_spec", False):
-        if original._spindle_shared_prefix == shared_prefix:
-            return
-        original = original.__wrapped__
+        return
 
     @wraps(original)
     def compute(*args, **kwargs):
@@ -590,17 +586,12 @@ def _configure_actor_spec(train_specs, *, shared_prefix: bool = False) -> None:
         ):
             return spec.model_copy(
                 update={
-                    "worker_class": (
-                        "spindle.backends.miles_runtime.prefix_actor.SharedPrefixTrainRayActor"
-                        if shared_prefix
-                        else "spindle.backends.miles_runtime.actor.SpindleMilesTrainRayActor"
-                    )
+                    "worker_class": "spindle.backends.miles_runtime.actor.SpindleMilesTrainRayActor"
                 }
             )
         return spec
 
     compute._spindle_actor_spec = True
-    compute._spindle_shared_prefix = shared_prefix
     train_specs._compute_spec_trainer = compute
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from miles.utils.args.runtime import AllConfig
+    from miles.utils.args.runtime import AllConfig, TrainerConfig
     from miles.tinker.runtime import MilesBackend
 
 
@@ -27,21 +27,31 @@ CHECKPOINT_FORMAT = "miles_adapter_state"
 ACTOR_CLASS = "spindle.backends.miles_runtime.actor_v020.SpindleMilesTrainRayActor"
 
 
-def configure_actor() -> None:
+def configure_actor(*, shared_prefix: bool = False) -> None:
     original = TrainerSpec.create.__func__
     if getattr(original, "_spindle_actor_spec", False):
-        return
+        if original._shared_prefix == shared_prefix:
+            return
+        original = original._native_create
 
-    def create(cls: type, config: object) -> object:
+    def create(cls: type[TrainerSpec], config: TrainerConfig) -> TrainerSpec:
         spec = original(cls, config)
         if (
             spec.worker_class
             == "miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor"
         ):
-            return spec.model_copy(update={"worker_class": ACTOR_CLASS})
+            return spec.model_copy(
+                update={
+                    "worker_class": "spindle.backends.miles_runtime.prefix_actor.SharedPrefixTrainRayActor"
+                    if shared_prefix
+                    else ACTOR_CLASS
+                }
+            )
         return spec
 
     create._spindle_actor_spec = True
+    create._shared_prefix = shared_prefix
+    create._native_create = original
     TrainerSpec.create = classmethod(create)
 
 

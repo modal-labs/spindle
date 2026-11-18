@@ -144,7 +144,6 @@ def _to_device(values, dtype, device) -> torch.Tensor:
 def _dense_forward(layers):
     """``MultiLoRALinear.forward`` using host-side sizes; mirrors the pinned upstream."""
     parallel_state = layers.parallel_state
-    native_dense_mm = layers._dense_multi_lora_mm
 
     def forward(self, x, *args, **kwargs):
         linear_output, bias, layernorm_output = self.base_linear_forward(
@@ -177,11 +176,7 @@ def _dense_forward(layers):
             tokens_per_adapter = tokens_per_adapter.new_tensor(token_splits)
 
         active = _active_slots(token_splits)
-        single = (
-            active[0]
-            if len(active) == 1 and layers._dense_multi_lora_mm is native_dense_mm
-            else None
-        )
+        single = active[0] if len(active) == 1 else None
         offsets = (
             None
             if single is not None
