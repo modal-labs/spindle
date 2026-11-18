@@ -7,6 +7,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 ### Added
 
 - `glm53-flash-lora-256k`: GLM-5.3 Flash LoRA with 256K-token context on one 8×B300 node, with expert-routing replay. It trains on a new image, `miles-v0.1.2-99e1ebe-kpool-glm53`, which changes GLM's sparse-attention indexer so 256K sequences fit in GPU memory.
+- `deepseek-v41-flash-1017-lora-64k`: DeepSeek-V4.1-Flash-1017 LoRA with 64K context. Like `deepseek-v41-flash-lora-64k`, it trains on B300 or B200.
 
 ### Changed
 
