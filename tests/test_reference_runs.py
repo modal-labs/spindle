@@ -192,7 +192,12 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
 
     output = tmp_path / "run.jsonl"
     monkeypatch.setattr(tinker, "reference_test", "sdk-patch-preserved", raising=False)
-    monkeypatch.setattr(sys, "argv", ["run", str(definition), "--output", str(output)])
+    index = tmp_path / "index.toml"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run", str(definition), "--output", str(output), "--index", str(index)],
+    )
     before_path, before_argv = sys.path[:], sys.argv
     launcher.main()
     args, value, sdk_patch = json.loads(output.read_text())
@@ -210,37 +215,17 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     assert (value, sdk_patch) == (23, "sdk-patch-preserved")
     assert sys.path == before_path and sys.argv is before_argv
 
-    index = tmp_path / "index.toml"
-    provenance = tmp_path / "execution.toml"
-    provenance.write_text(
-        toml.dumps(
-            {
-                "id": "recorded",
-                "validation": "run",
-                "output": "recorded.jsonl",
-                "spindle_commit": "a" * 40,
-                "trainer_image": "observed-image",
-                "miles_commit": "b" * 40,
-                "tinker_sdk": "0.26.0",
-                "hardware": "observed GPUs",
-            }
-        )
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["run", str(definition), "--record", str(provenance), "--index", str(index)],
-    )
-    launcher.main()
     entry = (
         plotter["ReferenceRunIndex"]
         .model_validate(tomllib.loads(index.read_text()))
         .runs[0]
     )
-    assert (entry.id, entry.trainer_image) == ("recorded", "observed-image")
-    assert json.loads((tmp_path / entry.output).read_text())[0][3] == str(
-        tmp_path / entry.output
-    )
+    assert (entry.id, entry.validation, entry.output) == ("run", "run", "run.jsonl")
+    assert entry.trainer_image == prepared.trainer_image
+    assert entry.miles_commit in prepared.trainer_image
+    assert "not attested" in entry.notes
+    with pytest.raises(ValueError, match="already indexed"):
+        launcher.main()
 
 
 @pytest.mark.parametrize(
@@ -497,7 +482,18 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     data["script"] = str((validation.parent / definition.script).resolve())
     data["script_args"] = [*definition.script_args, "--smoke"]
     smoke.write_text(toml.dumps(data))
-    monkeypatch.setattr(sys, "argv", ["run", str(smoke), "--output", str(output)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run",
+            str(smoke),
+            "--output",
+            str(output),
+            "--index",
+            str(tmp_path / "index.toml"),
+        ],
+    )
     launcher.main()
     records = [json.loads(line) for line in output.read_text().splitlines()]
     assert records[0]["config"]["model"] == expected_model

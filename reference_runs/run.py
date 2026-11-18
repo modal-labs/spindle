@@ -1,8 +1,10 @@
 """Prepare a reference deployment or launch its Tinker workload."""
 
 import argparse
-import contextlib
+import importlib.metadata
+import os
 import pprint
+import re
 import runpy
 import sys
 import tomllib
@@ -14,6 +16,7 @@ from catalog import ReferenceRun, record_run
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import config_path, load
+from spindle.version import source_commit
 
 
 class TokenizerConfig(BaseModel):
@@ -59,9 +62,6 @@ def main() -> None:
         "--write-config", type=Path, help="write a new deployment Python file and exit"
     )
     destination.add_argument("--output", type=Path, help="new JSONL output file")
-    destination.add_argument(
-        "--record", type=Path, help="execution provenance TOML; index after success"
-    )
     parser.add_argument(
         "--index", type=Path, default=Path(__file__).with_name("index.toml")
     )
@@ -91,19 +91,33 @@ def main() -> None:
         parser.error(
             "--base-model, --output and --tokenizer are supplied by the launcher"
         )
-    entry = (
-        ReferenceRun.model_validate(tomllib.loads(args.record.read_text()))
-        if args.record
+    commit = (
+        re.search(r"-([0-9a-f]{7,40})(?:-|$)", recipe.trainer_image)
+        if recipe.trainer_image.startswith("miles-")
         else None
     )
-    if entry is not None and entry.validation != args.validation.stem:
-        parser.error("record validation must match the selected definition")
-    registration = (
-        record_run(args.index, entry)
-        if entry is not None
-        else contextlib.nullcontext(args.output)
+    entry = ReferenceRun(
+        id=args.output.stem,
+        validation=args.validation.stem,
+        output=os.path.relpath(args.output.resolve(), args.index.resolve().parent),
+        spindle_commit=source_commit() or "unknown",
+        trainer_image=recipe.trainer_image,
+        miles_commit=commit.group(1) if commit else "unknown",
+        tinker_sdk=importlib.metadata.version("tinker"),
+        hardware=(
+            f"Configured trainers: {recipe.trainer_nodes} x "
+            f"{recipe.trainer_gpus_per_node} {recipe.trainer_gpu}; samplers: "
+            f"{recipe.inference_min_replicas}-{recipe.inference_max_replicas} x "
+            f"{recipe.inference_gpus_per_node} {recipe.inference_gpu}."
+        ),
+        region=recipe.platform["modal"].get("region"),
+        notes=(
+            "Automatically recorded launcher commit and resolved recipe; "
+            "remote runtime and hardware are not attested. "
+            f"Configured sampler image: {recipe.inference_image}."
+        ),
     )
-    with registration as output:
+    with record_run(args.index, entry) as output:
         launch(definition, recipe, parent, output)
 
 

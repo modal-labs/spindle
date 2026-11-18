@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- Reference runs can register successful executions with `--record`, with process locks for run IDs, output paths and index updates.
+- Reference runs automatically index successful executions, with process locks for run IDs, output paths and index updates.
 - A two-node Qwen3.8-27B DAPO-Math reference definition uses the shared Tinker workload.
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
 - Sampling supports the Tinker SDK's `prompt_logprobs_last_n`. It returns prompt logprobs for only the last N prompt tokens, so the rest of the prompt can come from the prefix cache.

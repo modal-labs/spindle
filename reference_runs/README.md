@@ -109,26 +109,20 @@ The script rejects an explicitly unsuccessful optimizer result.
 
 `index.toml` maps stable run IDs to validation definitions and JSONL files.
 `ReferenceRunIndex` and `ReferenceRun` in `catalog.py` validate its fields and unique IDs.
-To register a run automatically, put one entry's fields in a provenance TOML file
-(without the `[[runs]]` header), then run:
+Every successful `run.py --output ...` execution registers automatically. The output
+filename without its extension becomes the run ID; the launcher records the
+validation name, relative output path, launcher commit, SDK version, and image and
+hardware settings from the resolved recipe. `--index` selects another catalog.
+These settings describe the launcher's configuration; they do not attest the
+remote server's actual image or GPU identity. Observed runtime details can be
+added to the entry after verification.
 
-```bash
-uv run python reference_runs/run.py reference_runs/configs/dapo_qwen35_4b.toml \
-  --record /tmp/my-run.toml
-```
-
-The entry supplies the run ID, validation name, output path relative to the index,
-tested Spindle commit, image identities, hardware and notes. `--index` selects
-another catalog. The launcher validates the entry before starting and adds it only
-after the workload returns successfully. Failed runs keep their partial metrics.
-Concurrent recorded runs reserve their IDs and output paths with process locks;
-index updates use a short lock and atomic replacement. Keep the persistent hidden
-lock files in place. These locks coordinate processes using the same filesystem;
-independent checkouts must merge their catalogs through Git.
-
-`--output` writes metrics without registration. Provenance is supplied explicitly;
-the launcher does not attest a remote deployment from the local recipe. Verify
-the tested commit, image and hardware before recording them. Do not invent digests or hardware observations
+Concurrent runs reserve their IDs and output paths with process locks before
+starting. Completion updates use a short index lock and atomic replacement.
+Failed runs keep their partial metrics and are not indexed. Keep the persistent
+hidden lock files in place. These locks coordinate processes using the same
+filesystem; independent checkouts must merge their catalogs through Git.
+Do not invent digests or hardware observations
 for historical runs where they were not recorded. Existing historical JSONL
 files are kept byte-for-byte, including their original hardware metadata.
 
