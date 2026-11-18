@@ -79,9 +79,16 @@ class RoutingBody(TypedDict):
     work: WorkView | None
 
 
+class CompareLoad(TypedDict):
+    running_requests: int
+    waiting_requests: int
+    kv_used_tokens: int
+    kv_capacity_tokens: int
+
+
 class CompareView(TypedDict):
     prefix_count: int
-    load: dict[str, int | None] | None
+    load: CompareLoad | None
     age_seconds: float | None
 
 
@@ -147,13 +154,13 @@ class RoutingState:
             snapshot: LoadSnapshot | None = None
             if len(loads) == 1:
                 row = loads[0]
-                snapshot = {
-                    "timestamp": row["timestamp"],
-                    "num_running_reqs": row["num_running_reqs"],
-                    "num_waiting_reqs": row["num_waiting_reqs"],
-                    "num_used_tokens": row["num_used_tokens"],
-                    "max_total_num_tokens": row["max_total_num_tokens"],
-                }
+                snapshot = LoadSnapshot(
+                    timestamp=row["timestamp"],
+                    num_running_reqs=row["num_running_reqs"],
+                    num_waiting_reqs=row["num_waiting_reqs"],
+                    num_used_tokens=row["num_used_tokens"],
+                    max_total_num_tokens=row["max_total_num_tokens"],
+                )
             self.loads = snapshot
             self.loads_at = time.monotonic()
         except (httpx.HTTPError, ValueError, LookupError, TypeError):
@@ -190,7 +197,7 @@ class RoutingState:
         rows.update(
             (rid, row) for rid, row in self.request_work.items() if rid not in rows
         )
-        return dict(
+        return WorkView(
             age_seconds=time.time() - snapshot["timestamp"],
             prefixes=snapshot["prefixes"],
             cpu_adapters=snapshot["cpu_adapters"],
@@ -214,7 +221,7 @@ class RoutingState:
         if load is None or subscriber is None:
             return None
         snapshot = subscriber.snapshot
-        return dict(
+        return WorkView(
             age_seconds=max(0.0, time.time() - load["timestamp"]),
             prefixes=(
                 list(snapshot.prefixes)
@@ -234,16 +241,16 @@ class RoutingState:
         )
 
     def routing_body(self, work: WorkView | None) -> RoutingBody:
-        return {
-            "replica": os.environ.get("MODAL_TASK_ID", "local"),
-            "active": len(self.routing_requests),
-            "adapters": dict(Counter(self.routing_requests.values())),
-            "request_ids": list(self.routing_requests),
-            "pending_adapters": sorted(set(self.routing_requests.values())),
-            "cpu_adapters": work["cpu_adapters"] if work else [],
-            "age_seconds": work["age_seconds"] if work else None,
-            "work": work,
-        }
+        return RoutingBody(
+            replica=os.environ.get("MODAL_TASK_ID", "local"),
+            active=len(self.routing_requests),
+            adapters=dict(Counter(self.routing_requests.values())),
+            request_ids=list(self.routing_requests),
+            pending_adapters=sorted(set(self.routing_requests.values())),
+            cpu_adapters=work["cpu_adapters"] if work else [],
+            age_seconds=work["age_seconds"] if work else None,
+            work=work,
+        )
 
     async def body(self) -> RoutingBody:
         work = self.kv_view() if self.source == "kv_events" else await self.hook_view()
@@ -252,35 +259,32 @@ class RoutingState:
     @staticmethod
     def _compare_view(view: WorkView | None) -> CompareView:
         if view is None:
-            return {"prefix_count": 0, "load": None, "age_seconds": None}
-        fields = (
-            "running_requests",
-            "waiting_requests",
-            "kv_used_tokens",
-            "kv_capacity_tokens",
+            return CompareView(prefix_count=0, load=None, age_seconds=None)
+        return CompareView(
+            prefix_count=len(view["prefixes"]),
+            load=CompareLoad(
+                running_requests=view["running_requests"],
+                waiting_requests=view["waiting_requests"],
+                kv_used_tokens=view["kv_used_tokens"],
+                kv_capacity_tokens=view["kv_capacity_tokens"],
+            ),
+            age_seconds=view["age_seconds"],
         )
-        return {
-            "prefix_count": len(view["prefixes"]),
-            "load": {key: view.get(key) for key in fields},
-            "age_seconds": view.get("age_seconds"),
-        }
 
     async def compare_body(self) -> CompareBody:
         hook = await self.hook_view()
         kv = self.kv_view()
         hook_prefixes = set(hook["prefixes"] if hook else [])
         kv_prefixes = set(kv["prefixes"] if kv else [])
-        return {
-            "hook": self._compare_view(hook),
-            "kv_events": self._compare_view(kv),
-            "intersection": len(hook_prefixes & kv_prefixes),
-            "hook_only": len(hook_prefixes - kv_prefixes),
-            "kv_events_only": len(kv_prefixes - hook_prefixes),
-            "samples": {
-                "hook_only": sorted(hook_prefixes - kv_prefixes)[:5],
-                "kv_events_only": sorted(kv_prefixes - hook_prefixes)[:5],
-            },
-            "subscriber_ready": bool(
-                self.subscriber and self.subscriber.snapshot.ready
+        return CompareBody(
+            hook=self._compare_view(hook),
+            kv_events=self._compare_view(kv),
+            intersection=len(hook_prefixes & kv_prefixes),
+            hook_only=len(hook_prefixes - kv_prefixes),
+            kv_events_only=len(kv_prefixes - hook_prefixes),
+            samples=CompareSamples(
+                hook_only=sorted(hook_prefixes - kv_prefixes)[:5],
+                kv_events_only=sorted(kv_prefixes - hook_prefixes)[:5],
             ),
-        }
+            subscriber_ready=bool(self.subscriber and self.subscriber.snapshot.ready),
+        )
