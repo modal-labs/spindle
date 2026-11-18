@@ -79,13 +79,13 @@ TRAINER_IMAGES = {
     "miles-v0.1.2-464efc9-glm53": miles_v012_image.glm53_image_01_464efc9,
     # https://github.com/modal-projects/miles/pull/43 Support per-adapter seeds in the v0.1.2 LoRA slot API
     "miles-v0.1.2-99e1ebe-glm53": miles_v012_image.glm53_image_02_99e1ebe,
-    # https://github.com/modal-labs/spindle/pull/307 miles#43 image with the GLM indexer scored in query blocks
-    "miles-v0.1.2-99e1ebe-kpool-glm53": miles_v012_image.glm53_kpool_image_01_99e1ebe,
     # https://github.com/modal-projects/miles/pull/44 Support per-adapter seeds in the v0.2.0 LoRA slot API (on top of #37, Beam LoRA)
     "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
     # https://github.com/modal-projects/miles/pull/49 Native canonical and routed-expert adapters, including Nemotron Nano
     "miles-v0.2.0-e814245": miles_v020_image.image_03_e814245,
     "miles-v0.2.0-c82136c": miles_v020_image.image_04_c82136c,
+    # https://github.com/modal-projects/miles/pull/51 Score the GLM-5.3 Flash kpool indexer in query blocks
+    "miles-v0.2.0-260607f": miles_v020_image.image_05_260607f,
     # Upstream NVIDIA/Megatron-LM commit; no Spindle fork
     "megatron-2d1fa8d": megatron_image,
 }

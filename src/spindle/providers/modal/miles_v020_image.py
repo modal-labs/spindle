@@ -49,3 +49,6 @@ image_03_e814245 = image_at("e8142459617f8220825ddbacf054b8b17cabdd82")
 
 # GLM output-head adapters, Nemotron Omni layouts, and native expert routing validation.
 image_04_c82136c = image_at("c82136ce3ff646e6aae2d3a6213897f9239b1437")
+
+# GLM-5.3 Flash sparse-attention indexer scored in query blocks, for 256K sequences.
+image_05_260607f = image_at("260607fedc67c4cc8012a3bfd4b91d0a8d24f820")
