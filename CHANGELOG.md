@@ -17,6 +17,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
+- Qwen3.5 and Qwen3.6 LoRA trainers no longer pause for several seconds when a step brings new row lengths. On a fresh `qwen35-4b-lora-32k` trainer, such steps took 7.5–26 s instead of about 2.5 s.
 - Built-in Miles v0.2.0 images reject the unvalidated Bridge/canonical adapter combination before starting a trainer.
 
 - Malformed `spindle add` fields such as `--=1` reach recipe validation instead of being parsed as abbreviated top-level options.

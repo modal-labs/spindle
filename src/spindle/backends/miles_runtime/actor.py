@@ -54,6 +54,7 @@ from .actor_shared import (
     ProfiledActor,
     install_replay_patches,
     mark_actor_initialized as _mark_actor_initialized,
+    pin_fla_kernels_if_loaded,
     use_distributed_timeout_for_gloo as _use_distributed_timeout_for_gloo,
 )
 from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
@@ -115,6 +116,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
         # even for a client datum whose weights are all zero.
         if args.enable_mtp_training:
             result = super().init(args, role, **kwargs)
+            pin_fla_kernels_if_loaded()
             _mark_actor_initialized()
             return result
         original = AutoBridge.to_megatron_provider
@@ -131,6 +133,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             result = super().init(args, role, **kwargs)
         finally:
             AutoBridge.to_megatron_provider = original
+        pin_fla_kernels_if_loaded()
         _mark_actor_initialized()
         return result
 

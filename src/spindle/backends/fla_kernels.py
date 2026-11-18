@@ -12,6 +12,10 @@ FLA_KERNELS = {
         "causal_conv1d_bwd_kernel",
     ),
     "fla.modules.l2norm": ("l2norm_fwd_kernel", "l2norm_bwd_kernel"),
+    "fla.modules.fused_norm_gate": (
+        "layer_norm_gated_fwd_kernel",
+        "layer_norm_gated_bwd_kernel",
+    ),
 }
 
 
