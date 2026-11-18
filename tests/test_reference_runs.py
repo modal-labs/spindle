@@ -12,6 +12,7 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import numpy as np
 import pytest
 import tinker
@@ -20,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig, load
+from spindle.patching import same_signature
 
 ROOT = Path(__file__).parents[1] / "reference_runs"
 sys.path.insert(0, str(ROOT))
@@ -153,8 +155,10 @@ def test_committed_toml_matches_schema(path: Path, schema: type[BaseModel]) -> N
     schema.model_validate(tomllib.loads(path.read_text()))
 
 
+@pytest.mark.parametrize("location", ["catalog", "scratch", "escape"])
+@pytest.mark.parametrize("custom_index", [True, False])
 def test_prepare_and_launch_share_overrides_from_another_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    location: str, custom_index: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     folder = tmp_path / "definition"
     folder.mkdir()
@@ -190,14 +194,30 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     with pytest.raises(FileExistsError):
         launcher.main()
 
-    output = tmp_path / "run.jsonl"
-    monkeypatch.setattr(tinker, "reference_test", "sdk-patch-preserved", raising=False)
-    index = tmp_path / "index.toml"
+    catalog_root = tmp_path / "catalog"
+    monkeypatch.setattr(launcher, "__file__", str(catalog_root / "run.py"))
+    indexed = location == "catalog"
+    output = (catalog_root / "outputs" if indexed else tmp_path) / "run.jsonl"
+    if location == "escape":
+        (catalog_root / "outputs").mkdir(parents=True)
+        (catalog_root / "outputs" / "scratch").symlink_to(
+            tmp_path, target_is_directory=True
+        )
+        output = catalog_root / "outputs" / "scratch" / "run.jsonl"
     monkeypatch.setattr(
-        sys,
-        "argv",
-        ["run", str(definition), "--output", str(output), "--index", str(index)],
+        launcher,
+        "server_metadata",
+        lambda: {"spindle_commit": "c" * 40, "spindle_version": "0.1.8"},
     )
+    monkeypatch.setattr(tinker, "reference_test", "sdk-patch-preserved", raising=False)
+    index = tmp_path / "index.toml" if custom_index else catalog_root / "index.toml"
+    if not indexed:
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text("scratch runs must not read or modify this catalog")
+    arguments = ["run", str(definition), "--output", str(output)]
+    if custom_index:
+        arguments.extend(["--index", str(index)])
+    monkeypatch.setattr(sys, "argv", arguments)
     before_path, before_argv = sys.path[:], sys.argv
     launcher.main()
     args, value, sdk_patch = json.loads(output.read_text())
@@ -205,7 +225,7 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         "--base-model",
         prepared.name,
         "--output",
-        str(output),
+        str(output.resolve()),
         "--tokenizer",
         "test/tokenizer",
         revision,
@@ -215,12 +235,24 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     assert (value, sdk_patch) == (23, "sdk-patch-preserved")
     assert sys.path == before_path and sys.argv is before_argv
 
+    if not indexed:
+        assert index.read_text() == "scratch runs must not read or modify this catalog"
+        with pytest.raises(FileExistsError):
+            launcher.main()
+        return
+
     entry = (
         plotter["ReferenceRunIndex"]
         .model_validate(tomllib.loads(index.read_text()))
         .runs[0]
     )
-    assert (entry.id, entry.validation, entry.output) == ("run", "run", "run.jsonl")
+    assert (entry.id, entry.validation, entry.output) == (
+        "run",
+        "run",
+        "catalog/outputs/run.jsonl" if custom_index else "outputs/run.jsonl",
+    )
+    assert entry.spindle_commit == "c" * 40
+    assert entry.spindle_version == "0.1.8"
     assert entry.trainer_image == prepared.trainer_image
     assert entry.miles_commit in prepared.trainer_image
     assert "not attested" in entry.notes
@@ -454,8 +486,6 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     assert (
         deployment.trainer_settings["miles"]["actor_num_nodes"] == recipe.trainer_nodes
     )
-    if recipe.trainer_nodes > 1:
-        assert deployment.trainer_settings["capture_dir"].startswith("/checkpoints/")
     expected_model = recipe.model
 
     def load_tokenizer(model: str, *, revision: str) -> SimpleNamespace:
@@ -502,3 +532,40 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     assert records[0]["recipe"] == definition.config_overrides.name
     assert [r["step"] for r in records if r["event"] == "update"] == [1, 2]
     assert training.step == 2
+
+
+@pytest.mark.parametrize(
+    "reported",
+    [
+        {"spindle_commit": "d" * 40, "spindle_version": "0.1.8"},
+        {"spindle_version": "0.1.8"},
+        {},
+        {"spindle_commit": None, "spindle_version": ""},
+        {"spindle_commit": 123, "spindle_version": ["invalid"]},
+    ],
+)
+def test_server_metadata_survives_stock_sdk_parsing(
+    reported: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    @same_signature(httpx.AsyncHTTPTransport.handle_async_request)
+    async def handle(
+        self: httpx.AsyncHTTPTransport, request: httpx.Request
+    ) -> httpx.Response:
+        if request.url.path == "/api/v1/client/config":
+            return httpx.Response(
+                200, json={"use_pyqwest_transport": False, "pjwt_auth_enabled": False}
+            )
+        if request.url.path == "/api/v1/client/dynamic_config":
+            return httpx.Response(200, json={})
+        assert request.url.path == "/api/v1/get_server_capabilities"
+        assert request.headers["X-API-Key"] == "tml-test-key"
+        return httpx.Response(200, json={"supported_models": [], **reported})
+
+    monkeypatch.setenv("TINKER_API_KEY", "tml-test-key")
+    monkeypatch.setenv("TINKER_BASE_URL", "https://reference.invalid")
+    monkeypatch.setenv("TINKER_TELEMETRY", "0")
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle)
+    assert launcher.server_metadata() == {
+        key: value if isinstance(value := reported.get(key), str) and value else None
+        for key in ("spindle_commit", "spindle_version")
+    }

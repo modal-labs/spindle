@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- Reference runs automatically index successful executions, with process locks for run IDs, output paths and index updates.
+- Reference runs automatically index successful executions under `reference_runs/outputs/`, recording server-reported Spindle commit and version. Process locks protect run IDs, output paths and index updates; scratch outputs remain uncatalogued.
 - A two-node Qwen3.8-27B DAPO-Math reference definition uses the shared Tinker workload.
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
 - Sampling supports the Tinker SDK's `prompt_logprobs_last_n`. It returns prompt logprobs for only the last N prompt tokens, so the rest of the prompt can come from the prefix cache.
@@ -19,7 +19,6 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - Malformed `spindle add` fields such as `--=1` reach recipe validation instead of being parsed as abbreviated top-level options.
 
 - The Miles image names `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53` and `miles-v0.2.0-15afe21` install the fork commit in their name again. Seeded LoRA initialization had moved them to newer commits. Seed support now has its own names: `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26`. The default Miles image and every bundled Miles config use these. A checkpoint restores only on the Miles revision that saved it. To restore a checkpoint saved with v0.1.7 or earlier, set `trainer_image` to `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` for DeepSeek-V4.1, or `miles-v0.1.2-464efc9-glm53` for GLM-5.3 Flash.
-- Miles v0.2.0 trainers can gather checkpoint and sampler captures across nodes without racing checkpoint persistence.
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
 - `miles-v0.2.0` trainers with two GPUs no longer hang at start-up. Ray now starts with enough CPUs for the extra workers this image runs.
 - Sampling requests with an option Spindle does not support, such as `prompt_alt_tokens_k` or `topk_sample_logprobs`, now fail right away with a 400 that names the option. Before, the server retried them three times before the client saw an error.
@@ -31,7 +30,6 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
-- `qwen38-27b-lora-256k` uses the seed-capable `miles-v0.2.0-8c5de26` trainer image. Restore existing checkpoints with the image that saved them.
 - The reference launcher accepts workload arguments only through the TOML definition's `script_args`; extra command-line arguments are rejected.
 - Reference deployment overrides use explicit typed fields and reject undeclared settings.
 - DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.

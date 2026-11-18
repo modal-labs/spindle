@@ -20,7 +20,8 @@ class ReferenceRun(BaseModel):
     id: str
     validation: str
     output: str
-    spindle_commit: str
+    spindle_commit: str | None = None
+    spindle_version: str | None = None
     trainer_image: str
     miles_commit: str
     tinker_sdk: str
@@ -70,22 +71,31 @@ def _check_available(index: Path, entry: ReferenceRun) -> str:
 
 
 @contextlib.contextmanager
-def record_run(index: Path, entry: ReferenceRun) -> Generator[Path]:
+def record_run(
+    index: Path, entry: ReferenceRun, *, indexed: bool = True
+) -> Generator[Path]:
     index = index.resolve()
     output = (index.parent / entry.output).resolve()
     run_key = hashlib.sha256(entry.id.encode()).hexdigest()
     index_lock = index.with_name(f".{index.name}.lock")
     with (
-        _lock(index.with_name(f".{index.name}.{run_key}.lock"), blocking=False),
+        (
+            _lock(index.with_name(f".{index.name}.{run_key}.lock"), blocking=False)
+            if indexed
+            else contextlib.nullcontext()
+        ),
         _lock(output.with_name(f".{output.name}.lock"), blocking=False),
     ):
-        with _lock(index_lock):
-            _check_available(index, entry)
+        if indexed:
+            with _lock(index_lock):
+                _check_available(index, entry)
         if output.exists():
             raise FileExistsError(output)
         yield output
         if not output.is_file() or not output.stat().st_size:
             raise ValueError(f"Workload produced no metrics: {output}")
+        if not indexed:
+            return
         with _lock(index_lock):
             content = _check_available(index, entry)
             content += "\n[[runs]]\n" + "".join(

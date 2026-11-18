@@ -109,13 +109,23 @@ The script rejects an explicitly unsuccessful optimizer result.
 
 `index.toml` maps stable run IDs to validation definitions and JSONL files.
 `ReferenceRunIndex` and `ReferenceRun` in `catalog.py` validate its fields and unique IDs.
-Every successful `run.py --output ...` execution registers automatically. The output
-filename without its extension becomes the run ID; the launcher records the
-validation name, relative output path, launcher commit, SDK version, and image and
-hardware settings from the resolved recipe. `--index` selects another catalog.
-These settings describe the launcher's configuration; they do not attest the
-remote server's actual image or GPU identity. Observed runtime details can be
-added to the entry after verification.
+Successful `run.py --output ...` executions under this checkout's
+`reference_runs/outputs/` directory register automatically. Scratch outputs, such
+as `/tmp/run.jsonl`, stay uncatalogued, including with `--index`. Symlinks are
+resolved before deciding whether an output belongs to the catalog. The output
+filename without its extension becomes the run ID. `--index` selects another
+catalog for these outputs.
+
+The launcher records the validation name, relative output path, SDK version, and
+server-reported `spindle_commit` and `spindle_version` from the stock Tinker SDK
+`get_server_capabilities` request before starting the workload. The response
+identifies the frontend answering that request. Missing metadata is omitted; the
+launcher never substitutes its local source revision. On Tinker 0.26, an HTTP
+response hook retains these fields before the SDK discards unknown fields.
+Image, hardware and region settings describe the resolved recipe; they do not
+attest the remote trainer's actual source, image or GPU identity. Observed runtime
+details can be added to the entry after verification. Historical entries may
+omit the server version.
 
 Concurrent runs reserve their IDs and output paths with process locks before
 starting. Completion updates use a short index lock and atomic replacement.
@@ -126,7 +136,8 @@ Do not invent digests or hardware observations
 for historical runs where they were not recorded. Existing historical JSONL
 files are kept byte-for-byte, including their original hardware metadata.
 
-Only compact metrics and index entries belong in Git. Raw generations, token
+Only completed runs' compact metrics and index entries belong in Git. Keep
+partial or in-progress metrics uncommitted. Raw generations, token
 arrays, checkpoints, logs and generated pictures stay outside the catalog.
 
 ## Compare

@@ -10,13 +10,14 @@ import sys
 import tomllib
 from pathlib import Path
 
+import httpx
+import tinker
 from pydantic import BaseModel, ConfigDict, Field
 
 from catalog import ReferenceRun, record_run
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import config_path, load
-from spindle.version import source_commit
 
 
 class TokenizerConfig(BaseModel):
@@ -100,7 +101,6 @@ def main() -> None:
         id=args.output.stem,
         validation=args.validation.stem,
         output=os.path.relpath(args.output.resolve(), args.index.resolve().parent),
-        spindle_commit=source_commit() or "unknown",
         trainer_image=recipe.trainer_image,
         miles_commit=commit.group(1) if commit else "unknown",
         tinker_sdk=importlib.metadata.version("tinker"),
@@ -112,13 +112,42 @@ def main() -> None:
         ),
         region=recipe.platform["modal"].get("region"),
         notes=(
-            "Automatically recorded launcher commit and resolved recipe; "
+            "Server metadata from get_server_capabilities; resolved recipe settings; "
             "remote runtime and hardware are not attested. "
             f"Configured sampler image: {recipe.inference_image}."
         ),
     )
-    with record_run(args.index, entry) as output:
+    indexed = args.output.resolve().is_relative_to(
+        Path(__file__).resolve().parent / "outputs"
+    )
+    with record_run(args.index, entry, indexed=indexed) as output:
+        if indexed:
+            metadata = server_metadata()
+            entry.spindle_commit = metadata["spindle_commit"]
+            entry.spindle_version = metadata["spindle_version"]
         launch(definition, recipe, parent, output)
+
+
+def server_metadata() -> dict[str, str | None]:
+    observed: dict[str, object] = {}
+
+    async def capture(response: httpx.Response) -> None:
+        if response.is_success and response.request.url.path.endswith(
+            "/get_server_capabilities"
+        ):
+            await response.aread()
+            observed.update(response.json())
+
+    # Tinker 0.26 discards unknown response fields, so retain them before parsing.
+    client = tinker.ServiceClient(
+        http_client=httpx.AsyncClient(event_hooks={"response": [capture]})
+    )
+    capabilities = client.get_server_capabilities()
+    values = capabilities.model_dump() | (capabilities.model_extra or {}) | observed
+    return {
+        key: value if isinstance(value := values.get(key), str) and value else None
+        for key in ("spindle_commit", "spindle_version")
+    }
 
 
 def launch(
