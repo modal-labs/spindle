@@ -4,7 +4,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
-## 0.1.8 - 2026-11-17
+## 0.1.8 - 2026-11-18
 
 Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen and Nemotron-3 Nano LoRA recipes move to Miles native adapters, so checkpoints they saved before 0.1.8 load only on their original trainer image. A new recipe trains Nemotron 3.5 Super VL 120B-A12B on text, sampled logprobs match the trainer at any temperature, multi-target scoring handles mixed candidate counts in one pass, and a rewritten guide shows how to profile and tune a deployment config.
 
@@ -17,6 +17,7 @@ Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen a
 - An opt-in `miles-v0.2.0` trainer image with native adapter checkpoints, for single-node trainers in bridge mode. It trains the same shared-`lora_A` adapter layout as the existing images, which remain the default. Checkpoints don't restore across Miles versions. See [Images](docs/deployment-configs.md#images).
 - `spindle usage --group-by` takes several label keys separated by commas, such as `team_id,run_id`, and prints one column per key.
 - `megatron_cfg.logprob_chunk_tokens` makes full fine-tuning trainers score log-probs that many tokens at a time, so memory no longer grows with row length. It needs tensor and pipeline parallel size 1.
+- Reference runs automatically index successful executions under `reference_runs/outputs/`, recording server-reported Spindle commit and version. Process locks protect run IDs, output paths and index updates; scratch outputs remain uncatalogued.
 
 ### Changed
 
@@ -25,6 +26,10 @@ Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen a
 - Miles multi-target scoring shares one vocabulary softmax across mixed candidate counts in supported scoring modes, preserving each datum's output shape and batch order.
 - [Profiling](docs/profiling.md) now walks from measuring a step to choosing which config fields to change, for trainers and samplers.
 - Reference runs use flat TOML definitions, a typed execution index, and flat JSONL outputs. A shared launcher selects the exact deployment for the existing DAPO-Math workload.
+- The reference launcher accepts workload arguments only through the TOML definition's `script_args`; extra command-line arguments are rejected.
+- Reference deployment overrides use explicit typed fields and reject undeclared settings.
+- Indexed reference runs require a TOML definition in `reference_runs/configs/`. Temporary definitions can use scratch output paths.
+- DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
 - The standard 32K LoRA recipes for Qwen3-8B, Qwen3.5-9B Instruct, Qwen3.8-27B and GLM-5.3 Flash use DFlash; Qwen3.5-4B uses native MTP. These replace the separate `with-spec` and `mtp` variants. Qwen3-8B samples on one B300 instead of two H100 GPUs, and Qwen3.5-4B uses B200 for training and sampling.
 - `nemotron35-lightning-30b-a3b-lora-64k` trains on two B300s with one model copy per GPU, and samples on B200s with 128 requests per sampler. The previous H200 layout is now `nemotron35-lightning-30b-a3b-lora-64k-h200`; use it when B300s or B200s are not available. The 256K recipe and the shared-server recipe keep H200 trainers and samplers.
 - `nemotron35-lightning-30b-a3b-lora-64k` samples on a B200 with the model's multi-token prediction layer, which speeds up decoding. `nemotron35-lightning-30b-a3b-lora-64k-h200` keeps an H200 sampler, which now runs 89 requests at once instead of 128.
@@ -42,6 +47,7 @@ Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen a
 
 ### Fixed
 
+- Qwen3.5 and Qwen3.6 LoRA trainers no longer pause for several seconds when a step brings new row lengths. On a fresh `qwen35-4b-lora-32k` trainer, such steps took 7.5–26 s instead of about 2.5 s.
 - Sampled-token logprobs are now the model's temperature-1 logprobs at any sampling temperature, matching what the trainer computes. RL scripts that sample at a temperature other than 1 get correct importance ratios for importance sampling, PPO, CISPO and DRO.
 - LoRA trainers for the Nemotron recipes restart the Mamba state at each row packed into a micro-batch. Before, every row after the first started from the previous row's state, so its log-probs and gradients were wrong. The `miles-v0.2.0` image already did this.
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
