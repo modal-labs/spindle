@@ -1,5 +1,7 @@
 import gzip
 import json
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -38,6 +40,7 @@ def test_torch_profile_config_reads_step_and_dir() -> None:
     assert config.output_dir == "/traces"
     assert config.profiles_rank(0)
     assert not config.profiles_rank(3)
+    assert not config.record_shapes and not config.profile_memory
 
 
 def test_torch_profile_config_rank_selection() -> None:
@@ -113,18 +116,50 @@ def test_timer_accumulates_idle_between_ops() -> None:
     assert metrics["timing/idle_wait_s"] >= 0.01
 
 
-def test_rank_profiler_writes_trace(tmp_path) -> None:
+def test_rank_profiler_stop_returns_before_the_files_are_written(
+    tmp_path, monkeypatch
+) -> None:
+    gate = tmp_path / "gate"
+    export = torch.profiler.profile.export_chrome_trace
+
+    def export_after_gate(self, path):
+        deadline = time.monotonic() + 10
+        while not gate.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        export(self, path)
+
+    monkeypatch.setattr(
+        torch.profiler.profile, "export_chrome_trace", export_after_gate
+    )
     profiler = RankProfiler()
     profiler.start()
     torch.randn(64, 64) @ torch.randn(64, 64)
-    result = profiler.stop(str(tmp_path), "rank0")
+    result = profiler.stop(str(tmp_path / "traces"), "rank0")
 
-    trace = Path(result["trace"])
-    table = Path(result["table"])
-    assert trace.name == "rank0.trace.json.gz"
+    assert not Path(result["trace"]).exists()
+    gate.touch()
+    RankProfiler._writer.join(timeout=60)
+    assert json.loads(gzip.decompress(Path(result["trace"]).read_bytes()))
+    assert Path(result["table"]).read_text()
+
+
+def test_trace_is_written_when_the_trainer_exits_right_after_stop(tmp_path) -> None:
+    script = f"""
+import torch
+from spindle.backends.miles_runtime.profiling import RankProfiler
+
+profiler = RankProfiler()
+profiler.start()
+torch.randn(64, 64) @ torch.randn(64, 64)
+profiler.stop({str(tmp_path)!r}, "rank0")
+"""
+    assert subprocess.run([sys.executable, "-c", script], timeout=60).returncode == 0
+
+    trace = tmp_path / "rank0.trace.json.gz"
+    deadline = time.monotonic() + 60
+    while not trace.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
     assert json.loads(gzip.decompress(trace.read_bytes()))
-    assert table.name == "rank0.key_averages.txt"
-    assert table.read_text()
 
 
 def test_backend_timing_metrics_without_profiling(tmp_path, monkeypatch) -> None:

@@ -3,8 +3,8 @@ from spindle.configs._qwen3_lora import Qwen3Lora32k
 
 class Config(Qwen3Lora32k):
     name = "qwen3-8b-lora-32k"
-    trainer_image = "miles-v0.1.1-52a7a99"
-    inference_image = "sglang-v0.5.23-c4182b2"
+    trainer_image = "miles-v0.2.0-e814245"
+    inference_image = "sglang-v0.5.23-e003cf9"
     model = "Qwen/Qwen3-8B"
     inference_gpu = "B300"
     inference_gpus_per_node = 1
@@ -12,6 +12,8 @@ class Config(Qwen3Lora32k):
     inference_draft_model = "z-lab/Qwen3-8B-DFlash-b16"
     inference_draft_model_revision = "9b41424b7109f9c5413454f481b09a82b85333f4"
     overrides = {
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
         "sglang_cfg.tp_size": 1,
         "sglang_cfg.dtype": "bfloat16",
         "sglang_cfg.mem_fraction_static": 0.85,

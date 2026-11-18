@@ -217,6 +217,9 @@ class MilesRuntime:
             self._trainer._execute_slots("torch_profile_stop", output_dir=output_dir)
         )
 
+    def torch_profile_wait(self) -> None:
+        self._run_best_effort(self._trainer._execute_slots("torch_profile_wait"))
+
     def close(self) -> None:
         if self._closed:
             return

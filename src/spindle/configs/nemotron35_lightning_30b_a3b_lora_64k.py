@@ -11,8 +11,12 @@ class Config(Parent):
     trainer_cpu = 32
     trainer_memory_mib = 262144
     trainer_max_clients_per_instance = 4
+    inference_gpu = "B200"
     inference_max_replicas = 2
-    inference_target_concurrency = 89
+    inference_target_concurrency = 128
+    # Use the shared defaults without Nano's native backend overrides.
+    miles_cfg = Parent.miles_cfg
+    trainer_env = Parent.trainer_env
     overrides = {
         "miles_cfg.tensor_model_parallel_size": 1,
         "miles_cfg.expert_model_parallel_size": 1,
@@ -24,7 +28,7 @@ class Config(Parent):
         "trainer_env.EXPERT_GROUPED_GEMM": "1",
         "sglang_cfg.max_loras_per_batch": 4,
         "sglang_cfg.max_loaded_loras": 32,
-        "sglang_cfg.max_mamba_cache_size": 448,
+        "sglang_cfg.max_mamba_cache_size": 640,
         "sglang_cfg.mem_fraction_static": 0.9,
         "sglang_cfg.prefill_decode_interval": 16,
         "sglang_cfg.prefill_decode_interval_min_bs": 32,

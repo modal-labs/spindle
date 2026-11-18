@@ -13,6 +13,7 @@ MILES_MANAGED = {
     "expert_tensor_parallel_size",
     "lora_alpha",
     "lora_dropout",
+    "lora_type",
     "lora_rank",
     "max_tokens_per_gpu",
     "multi_lora_n_adapters",
@@ -130,10 +131,22 @@ def backend_config(spec, asset_path="/assets/pending"):
     if spec.trainer_max_clients_per_instance > config.max_lora_slots:
         raise ValueError("max_clients_per_instance exceeds max_lora_slots")
     if spec.trainer_image.startswith("miles-v0.2.0-"):
-        if config.megatron_to_hf_mode != "bridge":
-            raise ValueError("miles-v0.2.0 supports only megatron_to_hf_mode bridge")
+        if config.megatron_to_hf_mode == "raw" and config.lora_type != "canonical_lora":
+            raise ValueError("Miles native LoRA requires lora_type canonical_lora")
+        if (
+            config.megatron_to_hf_mode == "bridge"
+            and config.lora_type == "canonical_lora"
+        ):
+            raise ValueError(
+                "canonical_lora requires megatron_to_hf_mode raw in Spindle"
+            )
         if spec.trainer_nodes != 1:
             raise ValueError("miles-v0.2.0 supports only single-node trainers")
+    elif config.lora_type == "canonical_lora" and (
+        not spec.trainer_image
+        or spec.trainer_image.startswith(("miles-v0.1.1-", "miles-v0.1.2-"))
+    ):
+        raise ValueError("canonical_lora requires trainer_image miles-v0.2.0")
     settings = {"miles": config.model_dump(), "checkpoint_dir": "/checkpoints"}
     if spec.trainer_nodes > 1:
         # Captures on the shared volume let every node's shards be assembled.
