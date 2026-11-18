@@ -30,8 +30,9 @@ Lanes: GPU ops serialize; `capture_*` runs on the GPU lane, `persist_*`/`publish
 - Add a backend: [add-backend.md](references/add-backend.md)
 - Improve a bundled config and upstream the fix: [upstream-config.md](references/upstream-config.md)
 
-## Validation entries
+## PR validation
 
+- Put validation results and evidence in PR descriptions or comments. Keep generated data, logs, assets, and reports from validation runs out of the branch. Commit reusable source and necessary tests.
 - CI (tests.yml): `uv sync --locked --python 3.12`, `pre-commit --all-files`, CPU torch 2.10.0, `uv run --no-sync pytest -q`, `uv build`; SDK matrix min/pinned/latest. Codegolf workflow: pytest, ruff, `codegolf config`, `render.py`.
-- Entry shape (docs/validation.md, lora_validation.md, scoped-e2e-results.md, deployment-validation.md): environment, PR head, hardware, workload, results, coverage limits, versions, evidence paths; confirm all apps stopped with zero containers.
+- Report the exact tested commit, hardware, workload, results, limits, versions, and evidence links; confirm all apps stopped with zero containers.
 - Generators: `e2e_longrlvr_*_{full,miles}.py`, `e2e_terminal_bench_*`, `run_dapo_math_spindle_full.py`, `examples/codeforces-codegolf`.
