@@ -3,7 +3,7 @@ from spindle.configs._qwen3_lora import Qwen3Lora32k
 
 class Config(Qwen3Lora32k):
     name = "qwen3-8b-lora-32k"
-    trainer_image = "miles-v0.2.0-e2fabd9"
+    trainer_image = "miles-v0.2.0-1dc972b"
     inference_image = "sglang-v0.5.23-e003cf9"
     model = "Qwen/Qwen3-8B"
     inference_gpu = "B300"

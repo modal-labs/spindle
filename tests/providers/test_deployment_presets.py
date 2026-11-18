@@ -147,7 +147,6 @@ def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
         "nemotron3-ultra-550b-a55b-lora-64k",
         "qwen35-397b-a17b-lora-64k",
         "qwen35-397b-a17b-lora-256k",
-        "glm53-flash-lora-256k",
     ],
 )
 def test_legacy_recipes_do_not_inherit_native_backend_settings(preset):
@@ -166,7 +165,11 @@ def test_legacy_recipes_do_not_inherit_native_backend_settings(preset):
 
 @pytest.mark.parametrize(
     "preset,unembed",
-    [("glm53-flash-lora-48k-b300", False), ("glm53-flash-lora-64k-b300", True)],
+    [
+        ("glm53-flash-lora-48k-b300", False),
+        ("glm53-flash-lora-64k-b300", True),
+        ("glm53-flash-lora-256k", True),
+    ],
 )
 def test_glm_native_selectors_adapt_text_without_selecting_vision(preset, unembed):
     spec = load(config_path(preset))
