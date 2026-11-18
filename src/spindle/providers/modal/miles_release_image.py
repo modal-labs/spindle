@@ -27,6 +27,7 @@ def _check_release(miles_commit: str) -> None:
     assert head == miles_commit, f"Miles is at {head}, not {miles_commit}"
 
 
+# Editing this rebuilds every image in miles_v012_image.py; add a new base instead.
 release_image = (
     miles_base_image(
         BASE_IMAGE,

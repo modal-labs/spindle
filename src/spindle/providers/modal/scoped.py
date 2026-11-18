@@ -38,7 +38,7 @@ from .image_dependencies import CORE_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE
 from .kernel_cache import KERNEL_CACHE_ENV, KERNEL_CACHE_ROOT, kernel_cache_volume
 from .kv import ModalSessionKeyValueStores, shared_kv
 from .megatron_image import image as default_trainer_image
-from .rollout_image import image as default_sampler_image
+from .rollout_image import image_01_c4182b2 as default_sampler_image
 from .sampling import ModalSamplingTaskPlatform
 from .scoped_assignment import claim_model
 from .scoped_control import ScopedControlPlane

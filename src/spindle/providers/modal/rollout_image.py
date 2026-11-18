@@ -10,7 +10,6 @@ from .image_dependencies import (
 SGLANG_IMAGE = "lmsysorg/sglang:v0.5.23"
 SGLANG_REPOSITORY = "https://github.com/modal-projects/sglang.git"
 SGLANG_BRANCH = "spindle-sglang-v0.5.23"
-SGLANG_REVISION = "c4182b22139a5730c9f18907cc0b178a305bb0f1"
 # v0.5.23 bundles OpenTelemetry 1.45.2, which its Google API Core needs.
 CORE_SAMPLER_PACKAGES = (
     *(p for p in CORE_PACKAGES if not p.startswith("opentelemetry-")),
@@ -19,6 +18,7 @@ CORE_SAMPLER_PACKAGES = (
 )
 
 
+# Editing this rebuilds every image below; add a new builder instead.
 def runtime_image_for(*, image: str, branch: str, revision: str, core_packages):
     """Build a matched SGLang image/source pair, including the fork's Rust binding."""
     return (
@@ -63,16 +63,19 @@ def runtime_image_for(*, image: str, branch: str, revision: str, core_packages):
     )
 
 
-runtime_image = runtime_image_for(
+# Fork commits in ancestry order, each a descendant of the one before. Append new commits; never edit an entry.
+runtime_image_01_c4182b2 = runtime_image_for(
     image=SGLANG_IMAGE,
     branch=SGLANG_BRANCH,
-    revision=SGLANG_REVISION,
+    revision="c4182b22139a5730c9f18907cc0b178a305bb0f1",
     core_packages=CORE_SAMPLER_PACKAGES,
 )
-image = runtime_image.add_local_python_source("spindle", ignore=ignore_config_source)
+image_01_c4182b2 = runtime_image_01_c4182b2.add_local_python_source(
+    "spindle", ignore=ignore_config_source
+)
 
 # Serves LoRA on all Qwen3.5 linear-attention projections, including in_proj_b and in_proj_a.
-gdn_lora_image = runtime_image_for(
+image_02_803bccb = runtime_image_for(
     image=SGLANG_IMAGE,
     branch=SGLANG_BRANCH,
     revision="803bccbcb947d3041f5b57e11c986f8523a0cb56",
@@ -81,7 +84,7 @@ gdn_lora_image = runtime_image_for(
 
 
 # Canonical GDN adapters use the merged target aliases.
-native_lora_image = runtime_image_for(
+image_03_e003cf9 = runtime_image_for(
     image=SGLANG_IMAGE,
     branch=SGLANG_BRANCH,
     revision="e003cf90c44c78249ce4ed3db3cf2f768af724a8",

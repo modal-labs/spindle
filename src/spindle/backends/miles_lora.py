@@ -593,8 +593,9 @@ class MilesCommandBackend(Backend):
         )
         if state.seed is not None and not self.runtime.supports_seed:
             raise ValueError(
-                "per-model seeds require Miles load_slot(seed=...); "
-                "update Miles and redeploy the trainer"
+                "per-model seeds require Miles load_slot(seed=...); set trainer_image "
+                "to a seed-enabled image such as miles-v0.1.1-52a7a99 and redeploy "
+                "the trainer (see docs/deployment-configs.md#images)"
             )
 
     def _require_jobs(self, model_ids: tuple[str, ...]) -> None:
