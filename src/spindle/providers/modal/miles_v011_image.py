@@ -158,5 +158,6 @@ def image_at(miles_commit: str) -> modal.Image:
 
 
 # Fork commits in ancestry order, each a descendant of the one before. Append new commits; never edit an entry.
+image_01_fdd808c = image_at("fdd808c008175d4895fd8c57c95ef4fa5bb6a2a0")
 # Merged modal-projects/miles#42: per-adapter seeds through load_slot.
 image_02_52a7a99 = image_at("52a7a99d9f9e6188ece91a0583ef417093601025")

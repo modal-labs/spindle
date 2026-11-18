@@ -543,6 +543,10 @@ def test_bundled_configs_pin_their_own_images(path, monkeypatch):
 
 UNUSED_IMAGE_WHITELIST = {
     "miles-v0.2.0-8c5de26",  # Beam LoRA support is awaiting a bundled config.
+    # Restore Miles LoRA checkpoints saved by Spindle 0.1.7 and earlier.
+    "miles-v0.1.1-fdd808c",
+    "miles-v0.1.2-f2f8447",
+    "miles-v0.1.2-464efc9-glm53",
 }
 
 
