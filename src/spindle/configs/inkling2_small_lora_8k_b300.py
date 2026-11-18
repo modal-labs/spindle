@@ -55,6 +55,9 @@ class Config(BaseConfig):
         },
     }
     trainer_env = {
+        "OMP_NUM_THREADS": "4",
+        "MKL_NUM_THREADS": "4",
+        "OPENBLAS_NUM_THREADS": "4",
         "CUDA_MODULE_LOADING": "EAGER",
         "TORCH_NCCL_BLOCKING_WAIT": "1",
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",

@@ -176,13 +176,23 @@ def main(rank: int, context_length: int) -> None:
         result = timed(
             "full_context_sample",
             lambda: sampler.sample(
-                prompt=types.ModelInput.from_ints(long_tokens[: context_length - 6]),
+                # SGLang requires input length strictly below context_length - 6.
+                prompt=types.ModelInput.from_ints(long_tokens[: context_length - 7]),
                 num_samples=1,
-                sampling_params=types.SamplingParams(max_tokens=6, temperature=0),
+                sampling_params=types.SamplingParams(max_tokens=7, temperature=0),
             ).result(),
         )
         assert result.sequences[0].tokens and result.sequences[0].logprobs
         assert all(math.isfinite(x) for x in result.sequences[0].logprobs)
+        print(
+            json.dumps(
+                {
+                    "context_prompt_tokens": context_length - 7,
+                    "context_completion_tokens": len(result.sequences[0].tokens),
+                }
+            ),
+            flush=True,
+        )
     print(json.dumps({"status": "passed", "checkpoint": checkpoint.path}), flush=True)
 
 
