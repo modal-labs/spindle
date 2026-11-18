@@ -316,6 +316,7 @@ class MilesCommandBackend(Backend):
             "engine_definition_id": os.environ.get("SPINDLE_DEFINITION_ID"),
             "parameterization": {"type": "lora"},
             "lora_config": {
+                "lora_type": self.config.lora_type,
                 "rank": state.rank,
                 "alpha": state.alpha,
                 "seed": state.seed,
@@ -626,6 +627,8 @@ class MilesCommandBackend(Backend):
         if metadata.get("base_model") != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")
         lora = metadata.get("lora_config") or {}
+        if lora.get("lora_type", "lora") != self.config.lora_type:
+            raise ValueError("checkpoint LoRA layout does not match the deployment")
         if (
             int(lora.get("rank", 0)) != state.rank
             or float(lora.get("alpha", 0)) != state.alpha

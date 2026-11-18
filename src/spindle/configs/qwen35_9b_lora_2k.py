@@ -3,10 +3,12 @@ from spindle.configs.qwen35_9b_lora_16k import Config as Parent
 
 class Config(Parent):
     name = "qwen35-9b-lora-2k"
-    trainer_image = "miles-v0.1.1-52a7a99"
-    inference_image = "sglang-v0.5.23-803bccb"
+    trainer_image = "miles-v0.2.0-e814245"
+    inference_image = "sglang-v0.5.23-e003cf9"
     max_context_length = 2048
     overrides = {
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
         "trainer_gpu": "H200",
         "trainer_cpu": 8,
         "trainer_memory_mib": 32768,

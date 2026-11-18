@@ -3,8 +3,8 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "qwen35-9b-lora-16k"
-    trainer_image = "miles-v0.1.1-52a7a99"
-    inference_image = "sglang-v0.5.23-803bccb"
+    trainer_image = "miles-v0.2.0-e814245"
+    inference_image = "sglang-v0.5.23-e003cf9"
     model = "Qwen/Qwen3.5-9B-Base"
     max_context_length = 16384
     trainer_gpu = "H100"
@@ -53,6 +53,10 @@ class Config(BaseConfig):
         "max_queued_requests": 128,
         "max_loaded_loras": 64,
         "max_loras_per_batch": 8,
+    }
+    overrides = {
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
     }
 
 

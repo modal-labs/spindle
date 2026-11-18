@@ -479,7 +479,7 @@ class PrintVersion(argparse.Action):
 
 
 def parser():
-    result = argparse.ArgumentParser(prog="spindle")
+    result = argparse.ArgumentParser(prog="spindle", allow_abbrev=False)
     result.add_argument("--version", action=PrintVersion)
     commands = result.add_subparsers(dest="command", required=True)
     config = commands.add_parser("config").add_subparsers(dest="action", required=True)
