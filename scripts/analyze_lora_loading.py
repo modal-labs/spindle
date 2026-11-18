@@ -57,40 +57,64 @@ def main() -> None:
             "churn",
             "resident_after_churn",
             "eviction_traffic",
+            "periodic_sync",
         ):
             if case in trial:
                 value = trial[case]
-                row[case] = {
-                    key: value[key]
-                    for key in (
-                        "duration_s",
-                        "output_tps",
-                        "median_ttft_s",
-                        "p99_stream_gap_s",
-                        "max_stream_gap_s",
+                if case == "periodic_sync":
+                    row[case] = {
+                        key: val for key, val in value.items() if key != "steps"
+                    }
+                    requests = [
+                        request
+                        for step in value["steps"]
+                        for request in step["samples"]["requests"]
+                    ]
+                    row[case]["registration_gaps"] = load_window_gaps(
+                        {"requests": requests},
+                        [step["load"] for step in value["steps"]],
                     )
-                }
+                else:
+                    row[case] = {
+                        key: value[key]
+                        for key in (
+                            "duration_s",
+                            "output_tps",
+                            "median_ttft_s",
+                            "p99_stream_gap_s",
+                            "max_stream_gap_s",
+                        )
+                    }
                 if anchor is not None:
                     submissions: dict[int, list[float]] = defaultdict(list)
+                    prepares: dict[int, int] = defaultdict(int)
+                    end = value["start"] + value["duration_s"]
                     for event in events:
                         if (
-                            event["phase"] == "activate"
-                            and value["start"] + anchor["offset_s"]
+                            value["start"] + anchor["offset_s"]
                             <= event["at"]
-                            <= value["end"] + anchor["offset_s"]
+                            <= end + anchor["offset_s"]
                         ):
-                            submissions[event["pid"]].append(event["submit_s"])
+                            if event["phase"] == "activate":
+                                submissions[event["pid"]].append(event["submit_s"])
+                            elif event["phase"] == "prepare":
+                                prepares[event["pid"]] += 1
                     row[case]["uploads_per_rank"] = [
                         len(values) for values in submissions.values()
                     ]
                     row[case]["max_rank_host_submit_s"] = max(
                         (sum(values) for values in submissions.values()), default=0
                     )
+                    row[case]["cpu_prepares_per_rank"] = list(prepares.values())
         registered = {
             item["name"]
             for key in ("registrations", "background_loads", "evicting_loads")
             for item in trial.get(key, [])
         }
+        if "periodic_sync" in trial:
+            registered = {
+                step["load"]["name"] for step in trial["periodic_sync"]["steps"]
+            }
         preparations = [
             event
             for event in events

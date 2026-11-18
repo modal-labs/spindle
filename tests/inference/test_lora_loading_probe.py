@@ -5,7 +5,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import nullcontext
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import httpx
 import pytest
@@ -14,9 +14,10 @@ import torch
 from spindle.inference import lora_packing
 
 
-def test_stream_framing_preserves_unicode_line_separators(
+@pytest.fixture
+def loading_benchmark(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+) -> ModuleType:
     monkeypatch.setenv("SPINDLE_LORA_BENCH_ASSET_VOLUME", "test-assets")
     monkeypatch.setenv("SPINDLE_LORA_BENCH_ADAPTER_VOLUME", "test-adapters")
     path = Path(__file__).parents[2] / "scripts/benchmark_lora_loading.py"
@@ -25,6 +26,12 @@ def test_stream_framing_preserves_unicode_line_separators(
     benchmark = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, benchmark)
     spec.loader.exec_module(benchmark)
+    return benchmark
+
+
+def test_stream_framing_preserves_unicode_line_separators(
+    loading_benchmark: ModuleType,
+) -> None:
     payload = {"text": "a\u2028b\u2029c\u0085d", "meta_info": {"completion_tokens": 1}}
     message = "data: " + json.dumps(payload, ensure_ascii=False)
 
@@ -36,13 +43,78 @@ def test_stream_framing_preserves_unicode_line_separators(
     async def read() -> list[str]:
         response = httpx.Response(200, stream=FragmentedStream())
         try:
-            return [line async for line in benchmark.sse_lines(response)]
+            return [line async for line in loading_benchmark.sse_lines(response)]
         finally:
             await response.aclose()
 
     lines = asyncio.run(read())
     assert lines == [message, "", "data: [DONE]", ""]
     assert json.loads(lines[0][6:]) == payload
+
+
+@pytest.mark.parametrize("fail_load", [False, True])
+def test_periodic_syncs_use_fresh_versions_and_join_all_requests(
+    loading_benchmark: ModuleType, fail_load: bool
+) -> None:
+    async def run() -> None:
+        loaded = []
+        completed: dict[str, int] = {}
+        active = set()
+        stream_started = asyncio.Event()
+        blocked = asyncio.Event()
+
+        async def register(name: str) -> dict:
+            if fail_load and name == "test-client1-version0":
+                await stream_started.wait()
+                raise RuntimeError("registration failed")
+            client, version = name.removeprefix("test-client").split("-version")
+            if int(version):
+                assert completed[f"test-client{client}-version{int(version) - 1}"] == 2
+            loaded.append(name)
+            await asyncio.sleep(0)
+            return {"name": name, "start": 0.0, "end": 0.1}
+
+        class Samples(httpx.AsyncByteStream):
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            async def __aiter__(self) -> AsyncIterator[bytes]:
+                active.add(self)
+                stream_started.set()
+                try:
+                    if fail_load:
+                        await blocked.wait()
+                    yield b'data: {"meta_info": {"completion_tokens": 128}}\n\n'
+                    completed[self.name] = completed.get(self.name, 0) + 1
+                finally:
+                    active.remove(self)
+
+        def generate(request: httpx.Request) -> httpx.Response:
+            name = json.loads(request.content)["lora_path"]
+            assert name in loaded
+            return httpx.Response(200, stream=Samples(name))
+
+        steps = []
+        async with httpx.AsyncClient(
+            base_url="http://test", transport=httpx.MockTransport(generate)
+        ) as client:
+            pending = loading_benchmark.periodic_sync_traffic(
+                client, "test", register, steps.append, clients=2, rounds=3
+            )
+            if fail_load:
+                with pytest.raises(ExceptionGroup, match="TaskGroup") as failure:
+                    await pending
+                assert "registration failed" in str(failure.value.exceptions[0])
+                assert not steps
+            else:
+                result = await pending
+                assert result["loads"] == len(set(loaded)) == len(steps) == 6
+                assert result["output_tokens"] == 2 * 3 * 2 * 128
+                assert set(completed.values()) == {2}
+                assert result["output_tps_including_loads"] > 0
+        assert not active
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("installed", [False, True])

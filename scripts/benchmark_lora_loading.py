@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +175,66 @@ async def traffic(
     }
 
 
+async def periodic_sync_traffic(
+    client: httpx.AsyncClient,
+    prefix: str,
+    register: Callable[[str], Awaitable[dict]],
+    record_step: Callable[[dict], None],
+    *,
+    clients: int,
+    rounds: int,
+) -> dict:
+    steps = []
+    started = time.perf_counter()
+
+    async def sample_client(index: int) -> None:
+        for step in range(rounds):
+            name = f"{prefix}-client{index}-version{step}"
+            load = await register(name)
+            samples = await traffic(
+                client, [name], requests=2, concurrency=2, output_tokens=128
+            )
+            row = {
+                "client": index,
+                "step": step,
+                "load": load,
+                "samples": samples,
+                "duration_s": samples["end"] - load["start"],
+                "load_to_first_token_s": min(
+                    request["start"] + request["ttft_s"]
+                    for request in samples["requests"]
+                )
+                - load["start"],
+            }
+            steps.append(row)
+            record_step(row)
+
+    async with asyncio.TaskGroup() as tasks:
+        for index in range(clients):
+            tasks.create_task(sample_client(index))
+    duration = time.perf_counter() - started
+    tokens = sum(row["samples"]["output_tokens"] for row in steps)
+    return {
+        "start": started,
+        "duration_s": duration,
+        "clients": clients,
+        "rounds": rounds,
+        "loads": len(steps),
+        "loads_per_minute": len(steps) * 60 / duration,
+        "output_tokens": tokens,
+        "output_tps_including_loads": tokens / duration,
+        "median_step_s": statistics.median(row["duration_s"] for row in steps),
+        "p95_step_s": quantile([row["duration_s"] for row in steps], 0.95),
+        "median_load_s": statistics.median(
+            row["load"]["end"] - row["load"]["start"] for row in steps
+        ),
+        "median_load_to_first_token_s": statistics.median(
+            row["load_to_first_token_s"] for row in steps
+        ),
+        "steps": steps,
+    }
+
+
 @app.function(
     image=image,
     gpu="B300:8",
@@ -207,6 +267,7 @@ def benchmark(
     gpu_slots: int,
     eviction: bool,
     compare_slots: int,
+    periodic_rounds: int,
 ) -> dict:
     if not compare_slots:
         return run_benchmark(
@@ -219,6 +280,7 @@ def benchmark(
             concurrency,
             gpu_slots,
             eviction,
+            periodic_rounds,
         )
     results = {}
     for slots in (gpu_slots, compare_slots):
@@ -232,6 +294,7 @@ def benchmark(
             concurrency,
             slots,
             eviction,
+            periodic_rounds,
         )
     assert len({result["hardware"] for result in results.values()}) == 1
     return {"capacities": results}
@@ -247,6 +310,7 @@ def run_benchmark(
     concurrency: int,
     gpu_slots: int,
     eviction: bool,
+    periodic_rounds: int,
 ) -> dict:
     folder = Path("/out") / run_id
     folder.mkdir(parents=True)
@@ -274,7 +338,8 @@ def run_benchmark(
     )
     report = {
         "run_id": run_id,
-        "workload_version": 8,
+        "workload_version": 9,
+        "periodic_rounds": periodic_rounds,
         "source": "c4182b22139a5730c9f18907cc0b178a305bb0f1",
         "task_id": os.environ.get("MODAL_TASK_ID"),
         "settings": settings,
@@ -332,6 +397,7 @@ def run_benchmark(
                 timeout=1800,
                 limits=httpx.Limits(max_connections=None),
             ) as client:
+                loaded_names = []
 
                 async def register(name: str) -> dict:
                     started = time.perf_counter()
@@ -345,6 +411,7 @@ def run_benchmark(
                     )
                     response.raise_for_status()
                     assert response.json().get("success"), response.text
+                    loaded_names.append(name)
                     result = {
                         "name": name,
                         "start": started,
@@ -374,6 +441,20 @@ def run_benchmark(
                         "result": response.json(),
                     }
 
+                async def clear_adapters() -> None:
+                    catalog = await client.get("/v1/models")
+                    catalog.raise_for_status()
+                    registered = {item["id"] for item in catalog.json()["data"]}
+                    for name in loaded_names:
+                        if name not in registered:
+                            continue
+                        response = await client.post(
+                            "/unload_lora_adapter", json={"lora_name": name}
+                        )
+                        response.raise_for_status()
+                        assert response.json().get("success"), response.text
+                    loaded_names.clear()
+
                 for mode in modes:
                     trial: dict[str, Any] = {
                         "mode": mode,
@@ -401,6 +482,51 @@ def run_benchmark(
                         concurrency=concurrency,
                         output_tokens=8,
                     )
+                    if periodic_rounds:
+                        trial["periodic_warmup"] = await traffic(
+                            client,
+                            names[:4],
+                            requests=concurrency,
+                            concurrency=concurrency,
+                            output_tokens=128,
+                        )
+                        save()
+
+                        def record_step(row: dict, trial_mode: str = mode) -> None:
+                            with (folder / "periodic-steps.jsonl").open("a") as log:
+                                log.write(
+                                    json.dumps({"mode": trial_mode, **row}) + "\n"
+                                )
+                            print(
+                                "SYNC_STEP",
+                                trial_mode,
+                                row["client"],
+                                row["step"],
+                                round(row["duration_s"], 3),
+                                flush=True,
+                            )
+
+                        trial["periodic_sync"] = await periodic_sync_traffic(
+                            client,
+                            f"{mode}-{uuid.uuid4().hex[:8]}",
+                            register,
+                            record_step,
+                            clients=concurrency // 2,
+                            rounds=periodic_rounds,
+                        )
+                        save()
+                        await clear_adapters()
+                        print(
+                            "PERIODIC_TRIAL",
+                            mode,
+                            {
+                                key: value
+                                for key, value in trial["periodic_sync"].items()
+                                if key != "steps"
+                            },
+                            flush=True,
+                        )
+                        continue
                     save()
                     trial["resident"] = await traffic(
                         client,
@@ -486,17 +612,7 @@ def run_benchmark(
                             load_under_traffic(first_token, tuple(names[8:])),
                         )
                     save()
-                    catalog = await client.get("/v1/models")
-                    catalog.raise_for_status()
-                    registered_names = {item["id"] for item in catalog.json()["data"]}
-                    for name in names:
-                        if name not in registered_names:
-                            continue
-                        response = await client.post(
-                            "/unload_lora_adapter", json={"lora_name": name}
-                        )
-                        response.raise_for_status()
-                        assert response.json().get("success"), response.text
+                    await clear_adapters()
                     print(
                         "TRIAL",
                         mode,
@@ -540,6 +656,7 @@ def main(
     gpu_slots: int = 4,
     eviction: bool = False,
     compare_slots: int = 0,
+    periodic_rounds: int = 0,
     result_path: str = "/tmp/lora-loading-report.json",
 ) -> None:
     selected = modes.split(",")
@@ -551,6 +668,10 @@ def main(
         raise ValueError(
             "The capacity control requires a different size of at least four"
         )
+    if periodic_rounds < 0 or (
+        periodic_rounds and (concurrency < 2 or concurrency % 2)
+    ):
+        raise ValueError("Periodic syncs require a positive even concurrency")
     run_id = "loading-" + uuid.uuid4().hex[:12]
     print("RUN_ID", run_id, flush=True)
     result = benchmark.remote(
@@ -564,5 +685,6 @@ def main(
         gpu_slots,
         eviction,
         compare_slots,
+        periodic_rounds,
     )
     Path(result_path).write_text(json.dumps(result, indent=2))
