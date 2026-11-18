@@ -135,3 +135,25 @@ def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
     )
     monkeypatch.setenv(FRONTEND_SETTINGS_ENV, json.dumps(settings.__dict__))
     assert frontend_settings_from_env() == settings
+
+
+@pytest.mark.parametrize(
+    "preset",
+    [
+        "nemotron3-super-120b-a12b-lora-64k",
+        "nemotron35-lightning-30b-a3b-lora-64k",
+        "nemotron3-ultra-550b-a55b-lora-64k",
+    ],
+)
+def test_legacy_nemotron_does_not_inherit_native_nano_settings(preset):
+    spec = load(config_path(preset))
+    trainer = backend_config(spec)["miles"]
+    assert trainer["megatron_to_hf_mode"] == "bridge"
+    assert trainer["lora_type"] == "lora"
+    assert "deterministic_mode" not in trainer["cli_options"]
+    assert not {
+        "MAMBA_DETERMINISTIC",
+        "NCCL_ALGO",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
+        "CUBLAS_WORKSPACE_CONFIG",
+    }.intersection(spec.trainer_env)

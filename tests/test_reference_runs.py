@@ -3,9 +3,11 @@
 import importlib.util
 import json
 import multiprocessing
+import os
 from multiprocessing.synchronize import Event
 import runpy
 import sys
+import subprocess
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,6 +29,31 @@ launcher = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = launcher
 spec.loader.exec_module(launcher)
 plotter = runpy.run_path(str(ROOT / "plot.py"))
+
+
+def test_proxy_wrapper_supports_scripts_with_sibling_imports(tmp_path: Path) -> None:
+    folder = tmp_path / "scripts"
+    folder.mkdir()
+    (folder / "helper.py").write_text("VALUE = 23\n")
+    script = folder / "workload.py"
+    script.write_text("from helper import VALUE\nprint(VALUE)\n")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT.parent / "examples/shared-server/with_proxy_auth.py"),
+            str(script),
+        ],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "MODAL_PROXY_TOKEN_ID": "test",
+            "MODAL_PROXY_TOKEN_SECRET": "test",
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == "23"
 
 
 def _record_worker(index: str, entry: dict, ready: Event, release: Event) -> None:

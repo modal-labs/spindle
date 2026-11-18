@@ -18,7 +18,6 @@ from spindle.startup_timing import timeline
 
 from . import out_of_memory
 from .profiling import RankProfiler, TorchProfileConfig
-from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
 from .replay import install_replay_hooks
 from .replay_data import install_distribution_sharding
 from .score_centering import install_losses
@@ -34,8 +33,6 @@ def install_replay_patches(
     fill_replay_data: object,
     routing_replay_manager: object,
     train_data_conversion: ModuleType,
-    qwen3_vl_model: ModuleType,
-    miles_qwen3_vl: ModuleType,
 ) -> None:
     """Install the Miles patches every image needs, given that image's modules."""
     install_replay_hooks(
@@ -49,9 +46,6 @@ def install_replay_patches(
     )
     install_losses(tinker_losses, logit_processors)
     install_distribution_sharding(train_data_conversion)
-    install_qwen3_vl_cp_position_ids(
-        bridge_model=qwen3_vl_model, miles_qwen3_vl=miles_qwen3_vl
-    )
     out_of_memory.install(megatron_model=megatron_model, lora_model=lora_model)
 
 
@@ -94,18 +88,24 @@ class ProfiledActor:
     _out_of_memory_configured = False
 
     def torch_profile_start(self) -> None:
-        if not TorchProfileConfig.from_env().profiles_rank(dist.get_rank()):
+        config = TorchProfileConfig.from_env()
+        if not config.profiles_rank(dist.get_rank()):
             self._spindle_profiler = None
             return
-        self._spindle_profiler = RankProfiler()
+        self._spindle_profiler = RankProfiler(
+            record_shapes=config.record_shapes, profile_memory=config.profile_memory
+        )
         self._spindle_profiler.start()
 
-    def torch_profile_stop(self, output_dir: str) -> dict | None:
+    def torch_profile_stop(self, output_dir: str, fork: bool = True) -> dict | None:
         profiler = self._spindle_profiler
         if profiler is None:
             return None
         self._spindle_profiler = None
-        return profiler.stop(output_dir, f"rank{dist.get_rank()}")
+        return profiler.stop(output_dir, f"rank{dist.get_rank()}", fork=fork)
+
+    def torch_profile_wait(self) -> None:
+        RankProfiler.wait_for_writer()
 
     def forward_backward(self, *args: object, **kwargs: object) -> object:
         return self._fail_request_on_out_of_memory("forward_backward", args, kwargs)

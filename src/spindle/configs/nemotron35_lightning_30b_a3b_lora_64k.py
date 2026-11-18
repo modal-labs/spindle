@@ -13,6 +13,9 @@ class Config(Parent):
     trainer_max_clients_per_instance = 4
     inference_max_replicas = 2
     inference_target_concurrency = 89
+    # Use the shared defaults without Nano's native backend overrides.
+    miles_cfg = Parent.miles_cfg
+    trainer_env = Parent.trainer_env
     overrides = {
         "miles_cfg.tensor_model_parallel_size": 1,
         "miles_cfg.expert_model_parallel_size": 1,

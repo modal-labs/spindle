@@ -3,14 +3,16 @@ from spindle.configs._qwen35_lora_32k import Qwen35Lora32k as Parent
 
 class Config(Parent):
     name = "qwen35-4b-lora-32k"
-    trainer_image = "miles-v0.1.1-52a7a99"
-    inference_image = "sglang-v0.5.23-803bccb"
+    trainer_image = "miles-v0.2.0-e814245"
+    inference_image = "sglang-v0.5.23-e003cf9"
     model = "Qwen/Qwen3.5-4B"
     trainer_gpu = "B200"
     inference_gpu = "B200"
     inference_target_concurrency = 64
     overrides = {
         **Parent.overrides,
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
         "sglang_cfg.tp_size": 1,
         "sglang_cfg.attention_backend": "trtllm_mha",
         "sglang_cfg.max_running_requests": 64,

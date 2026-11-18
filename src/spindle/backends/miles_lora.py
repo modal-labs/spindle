@@ -311,6 +311,7 @@ class MilesCommandBackend(Backend):
             "engine_definition_id": os.environ.get("SPINDLE_DEFINITION_ID"),
             "parameterization": {"type": "lora"},
             "lora_config": {
+                "lora_type": self.config.lora_type,
                 "rank": state.rank,
                 "alpha": state.alpha,
                 "seed": state.seed,
@@ -517,6 +518,9 @@ class MilesCommandBackend(Backend):
         self._closed = True
         if self._profiling_active:
             self._stop_profiling()
+        if self._profile_step_done:
+            with contextlib.suppress(Exception):
+                self.runtime.torch_profile_wait()
         self.runtime.close()
 
     def _first(self, name: str, **fields: Any) -> None:
@@ -556,11 +560,12 @@ class MilesCommandBackend(Backend):
             self._profile_step_done = True
         files: list[str] = []
         try:
-            results = self.runtime.torch_profile_stop(self._profile.output_dir)
+            results = self.runtime.torch_profile_stop(
+                self._profile.output_dir, fork=self.config.actor_num_nodes == 1
+            )
             for result in results or []:
                 if result:
                     files.extend(result.values())
-            _commit_volume(os.environ.get("SPINDLE_CHECKPOINT_VOLUME"))
         except Exception as exc:  # noqa: BLE001 - profiling must not kill training
             print(
                 json.dumps(
@@ -644,6 +649,8 @@ class MilesCommandBackend(Backend):
         if metadata.get("base_model") != self.base_model:
             raise ValueError("checkpoint base model does not match the deployment")
         lora = metadata.get("lora_config") or {}
+        if lora.get("lora_type", "lora") != self.config.lora_type:
+            raise ValueError("checkpoint LoRA layout does not match the deployment")
         if (
             int(lora.get("rank", 0)) != state.rank
             or float(lora.get("alpha", 0)) != state.alpha

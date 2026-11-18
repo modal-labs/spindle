@@ -7,6 +7,8 @@ class Config(Parent):
     inference_image = "sglang-v0.5.23-c4182b2"
     max_context_length = 262144
     overrides = {
+        "miles_cfg.megatron_to_hf_mode": "bridge",
+        "miles_cfg.lora_type": "lora",
         "trainer_nodes": 2,
         "trainer_gpu": "H200",
         "miles_cfg.tensor_model_parallel_size": 2,
