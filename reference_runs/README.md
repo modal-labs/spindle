@@ -53,6 +53,17 @@ The workload generates at most 2,048 response tokens; it does not validate 256K
 sequences. Compare new
 measurements against the same validation, rather than the 4B learning curve.
 
+After the measured updates, one nonzero-gradient update creates a probe
+checkpoint with active Adam momentum. The script applies a zero-gradient Adam
+step, restores the probe checkpoint, and replays that momentum-only step.
+This checks optimizer restoration without requiring deterministic backward
+kernels. It compares token scores, restores the final measured checkpoint,
+then publishes and samples its adapter. The `restore_validation` record reports
+the comparison separately from update timings. A failed check fails the run
+and leaves its metrics uncatalogued. The three probe steps do not enter the
+learning curve. The `restore-probe`, `restore-expected` and `restore-replayed`
+checkpoints retain their states.
+
 Once published, a validation TOML file is immutable. Create a new definition
 when changing its script selection, arguments or deployment overrides. Spindle
 commits and observed runtime image versions identify executions and belong in
