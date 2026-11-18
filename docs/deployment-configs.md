@@ -67,7 +67,15 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers. A checkpoint saved by these recipes before that change has no adapters for those layers, so loading it fails with `checkpoint LoRA target_modules do not match the deployment`.
 
-To keep training or sampling from such a checkpoint, deploy a variant with the old target list and the old sampler image:
+To keep training or sampling from such a checkpoint, deploy a variant with the old target list and the old images. The trainer needs Miles commit `fdd808c`, which Spindle 0.1.7 and earlier used, because a checkpoint restores only on the Miles revision that saved it. Spindle no longer ships that image, so define it in a file next to your config, such as `old_images.py`:
+
+```python
+from spindle.providers.modal.miles_v011_image import image_at
+
+miles_fdd808c = image_at("fdd808c008175d4895fd8c57c95ef4fa5bb6a2a0")
+```
+
+Then set `trainer_image` to that image as `module:attribute`:
 
 ```python
 from spindle.configs.qwen35_4b_lora_32k import Config as Parent
@@ -75,7 +83,7 @@ from spindle.configs.qwen35_4b_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "qwen35-4b-lora-32k-attn-only"
-    trainer_image = "miles-v0.1.1-fdd808c"
+    trainer_image = "old_images:miles_fdd808c"
     inference_image = "sglang-v0.5.23-c4182b2"
     overrides = {
         **Parent.overrides,
@@ -97,7 +105,15 @@ class Config(Parent):
 config = Config()
 ```
 
-Use the same pattern for the other recipes by changing the parent and `name`. On a running server, add it with `spindle add`.
+Deploy it from the folder that holds both files, and put that folder on `PYTHONPATH` so Spindle can import `old_images`:
+
+```bash
+PYTHONPATH=. uv run spindle deploy qwen35_4b_lora_32k_attn_only.py
+```
+
+This also adds the variant to a running server with the same platform settings, and the server's other configs keep serving. Don't use `spindle add` for it. The server builds the apps for `spindle add` and has no copy of `old_images.py`.
+
+Use the same pattern for the other recipes by changing the parent and `name`.
 
 A checkpoint always restores on the config that saved it, so `create_training_client_from_state` still sends an old checkpoint to the updated recipe. Load it into the variant instead:
 
@@ -204,7 +220,7 @@ To change an image:
 2. Move configs to the new name one at a time. Record a reference run for each config you move.
 3. Once no bundled config, default or reference run uses the old name, remove it and the module that builds it.
 
-`miles-v0.2.0-15afe21` supports single-node dense native adapters; `miles-v0.2.0-e814245` also supports routed expert adapters and Nemotron-3 Nano. On the built-in v0.2.0 images, use `raw` with `canonical_lora` or `bridge` with `lora`. Spindle rejects Bridge with `canonical_lora`, which has not been validated here. The older Miles images support the fused `lora` layout.
+`miles-v0.2.0-8c5de26` supports single-node dense native adapters; `miles-v0.2.0-e814245` also supports routed expert adapters and Nemotron-3 Nano. On the built-in v0.2.0 images, use `raw` with `canonical_lora` or `bridge` with `lora`. Spindle rejects Bridge with `canonical_lora`, which has not been validated here. The older Miles images support the fused `lora` layout.
 
 A checkpoint restores only on a trainer with the same Miles revision and adapter layout as the one that saved it. Checkpoints without a recorded layout are treated as `lora`. Keep the original image and layout to restore older checkpoints after switching a recipe to native canonical adapters.
 
