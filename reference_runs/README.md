@@ -7,7 +7,9 @@ references train through the stock Tinker SDK.
 reference_runs/
   configs/dapo_qwen35_4b.toml   # Immutable validation definition
   configs/dapo_qwen38_27b_multinode.toml
+  configs/beam_blog_repro.toml
   scripts/dapo_math.py         # Dataset, grading and training settings
+  scripts/beam_blog_repro.py    # Beam LoRA training with AIME25 evaluation
   run.py                      # Prepare config or launch the script
   index.toml                  # Execution provenance and output paths
   outputs/*.jsonl             # Flat, incremental metric files
@@ -65,6 +67,21 @@ and leaves its metrics uncatalogued. The three probe steps do not enter the
 learning curve. The `restore-probe`, `restore-expected` and `restore-replayed`
 checkpoints retain their states.
 
+`beam_blog_repro.toml` trains `reflection/Beam-1.0-501B-A23B` with BF16
+LoRA on the bundled `beam-501b-a23b-lora-5k` recipe: two eight-H200 trainer
+nodes and one eight-B300 sampler. Its script uses routing replay, CISPO with
+one update of rollout prefetch and a 400-update cosine learning-rate schedule,
+and evaluates on AIME25. It writes local evaluations, run identity, the replay
+cache and plots to a work directory next to the output (`outputs/NAME/`), which
+Git ignores. The launcher indexes the run when the script finishes all
+planned updates. A run that fails or exceeds its update time budget exits with
+an error after saving a checkpoint and is not indexed. Run the script directly
+with `--resume` or `--stop-after` to continue after a restart, and add that run
+to the index yourself; `--plot-only` compares a run with the published Beam
+LoRA curve, indexed as `beam-blog-digitized`. Index entries for executions
+outside Spindle record `source` instead of Spindle provenance. The indexed
+execution predates the recipe's Miles v0.2.0 image and stopped at 42 of 100 planned updates.
+
 Once published, a validation TOML file is immutable. Create a new definition
 when changing its script selection, arguments or deployment overrides. Spindle
 commits and observed runtime image versions identify executions and belong in
@@ -104,20 +121,33 @@ the historical deployment revisions in the index, not today's parent config.
 
 ## Metrics and index
 
-Each JSONL record has `time` (Unix seconds) and `event`. Records are appended as
-the workload progresses so a partial run remains useful.
+Every reference script writes the same JSONL format, so `plot.py` can compare any
+two executions. `read_output` in `catalog.py` validates each complete line with the
+`Record`, `Evaluation` and `Update` models; tests check every indexed output and
+each script's output against them. Records are appended as the workload
+progresses, so a partial run remains useful; a final partial line is ignored.
 
-| Event | Contents |
+Every record has `event` and `time` (Unix seconds). `evaluation` and `update`
+records also require:
+
+| Field | Meaning |
 | --- | --- |
-| `run` | Effective workload settings, Adam parameters, SDK version, selected deployment name |
-| `publication` | Accepted update number and elapsed seconds |
-| `evaluation` | Update number, accuracy, response count, mean tokens, truncation fraction, seconds |
-| `checkpoint` | Update number and save duration; no checkpoint URI |
-| `update` | Accepted step, batch accuracy/tokens/truncation, client sampling/backward/optimizer times, server metrics |
+| `step` | Accepted optimizer updates before the evaluation, or the update number |
+| `responses` | Sampled responses scored |
+| `reward` | Mean reward; for exact-answer grading, the fraction answered correctly |
+| `response_tokens_mean` | Mean sampled response length in tokens |
+| `truncated_fraction` | Fraction of responses that hit the token limit |
 
-Update intervals include publication, evaluation and checkpoint overhead. The
-first update has no preceding interval. Missing server metrics stay absent.
-The script rejects an explicitly unsuccessful optimizer result.
+`update` records add `seconds_since_previous_update` from the second accepted
+update on. The interval includes publication, evaluation and checkpoint
+overhead. Scripts may add any other fields and events, for example
+`run`, `publication` and `checkpoint` in `dapo_math.py`, or per-problem accuracy
+and replay diagnostics in `beam_blog_repro.py`. Add new fields under their own
+names rather than reusing a standard name with a different meaning.
+
+An execution outside Spindle, indexed with `source`, holds only `evaluation`
+records with `step` and optional `reward` and `response_tokens_mean`, read from
+its published chart.
 
 `index.toml` maps stable run IDs to validation definitions and JSONL files.
 `ReferenceRunIndex` and `ReferenceRun` in `catalog.py` validate its fields and unique IDs.
@@ -147,8 +177,9 @@ Failed runs keep their partial metrics and are not indexed. Keep the persistent
 hidden lock files in place. These locks coordinate processes using the same
 filesystem; independent checkouts must merge their catalogs through Git.
 Do not invent digests or hardware observations
-for historical runs where they were not recorded. Existing historical JSONL
-files are kept byte-for-byte, including their original hardware metadata.
+for historical runs where they were not recorded. The Qwen3.5-4B JSONL files are
+kept byte-for-byte, including their original hardware metadata. The Beam file's
+field names were converted to this format; its index notes list the changes.
 
 Only completed runs' compact metrics and index entries belong in Git. Keep
 partial or in-progress metrics uncommitted. Raw generations, token

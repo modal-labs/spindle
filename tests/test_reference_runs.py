@@ -385,7 +385,7 @@ def test_catalog_outputs_plot_as_ids_and_partial_files(
     for run in catalog:
         definition = ROOT / "configs" / f"{run.validation}.toml"
         assert definition.is_file()
-        assert (ROOT / run.output).is_file()
+        assert plotter["read_output"](ROOT / run.output, published=bool(run.source))
     partial = tmp_path / "partial.jsonl"
     records = [
         {
@@ -416,10 +416,43 @@ def test_catalog_outputs_plot_as_ids_and_partial_files(
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [("reward", None), ("responses", 0), ("truncated_fraction", 2.0), ("time", "x")],
+)
+def test_outputs_reject_records_outside_the_schema(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    record = {
+        "event": "evaluation",
+        "time": 1.0,
+        "step": 0,
+        "responses": 8,
+        "reward": 0.5,
+        "response_tokens_mean": 10.0,
+        "truncated_fraction": 0.0,
+        "script_specific": [1, 2],
+        field: value,
+    }
+    output = tmp_path / "run.jsonl"
+    output.write_text(json.dumps(record) + "\n")
+    with pytest.raises(ValidationError, match=field):
+        plotter["read_output"](output)
+
+
+def test_index_accepts_spindle_run_without_reported_commit() -> None:
+    entry = tomllib.loads((ROOT / "index.toml").read_text())["runs"][0]
+    del entry["spindle_commit"]
+    assert plotter["ReferenceRunIndex"].model_validate({"runs": [entry]})
+
+
+@pytest.mark.parametrize(
     ("problem", "message"),
     [
         ("missing_output", "output"),
         ("invalid_commit", "spindle_commit"),
+        ("missing_provenance", "missing miles_commit"),
+        ("external_with_provenance", "external execution records source"),
+        ("external_with_version", "external execution records source"),
         ("unknown_entry_field", "extra_forbidden"),
         ("unknown_index_field", "extra_forbidden"),
         ("duplicate_id", "duplicate run IDs in index"),
@@ -431,6 +464,13 @@ def test_index_rejects_invalid_provenance(problem: str, message: str) -> None:
         del data["runs"][0]["output"]
     elif problem == "invalid_commit":
         data["runs"][0]["spindle_commit"] = 123
+    elif problem == "missing_provenance":
+        del data["runs"][0]["miles_commit"]
+    elif problem == "external_with_provenance":
+        data["runs"][0]["source"] = "https://example.com/run"
+    elif problem == "external_with_version":
+        external = next(run for run in data["runs"] if "source" in run)
+        external["spindle_version"] = "0.1.8"
     elif problem == "unknown_entry_field":
         data["runs"][0]["trainer_iamge"] = "typo"
     elif problem == "unknown_index_field":
@@ -441,7 +481,14 @@ def test_index_rejects_invalid_provenance(problem: str, message: str) -> None:
         plotter["ReferenceRunIndex"].model_validate(data)
 
 
-@pytest.mark.parametrize("validation", sorted((ROOT / "configs").glob("*.toml")))
+@pytest.mark.parametrize(
+    "validation",
+    [
+        path
+        for path in sorted((ROOT / "configs").glob("*.toml"))
+        if tomllib.loads(path.read_text())["script"].endswith("/dapo_math.py")
+    ],
+)
 @pytest.mark.parametrize("restore_case", [None, "optimizer", "scores", "zero_rewards"])
 def test_reference_smoke_records_selected_tokenizer_and_updates(
     validation: Path,
@@ -600,7 +647,7 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
         )
         return
     launcher.main()
-    records = [json.loads(line) for line in output.read_text().splitlines()]
+    records = plotter["read_output"](output)
     assert records[0]["config"]["model"] == expected_model
     assert records[0]["config"]["tokenizer_revision"] == definition.tokenizer.revision
     assert records[0]["config"]["updates"] == 2
@@ -729,3 +776,26 @@ def test_workload_exit_status_controls_registration(
         assert (entry["id"], entry["validation"]) == ("run", "run")
         assert "spindle_commit" not in entry and "spindle_version" not in entry
     assert output.read_text() == "complete metrics\n"
+
+
+def test_indexed_beam_execution_plots_without_remote_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "beam.jsonl"
+    output.write_bytes(
+        (ROOT / "outputs" / "beam-blog-repro-miles-v012.jsonl").read_bytes()
+    )
+
+    def unexpected(**kwargs: object) -> None:
+        pytest.fail("plotting created a Tinker client")
+
+    monkeypatch.setattr(tinker, "ServiceClient", unexpected)
+    script = ROOT / "scripts" / "beam_blog_repro.py"
+    monkeypatch.setattr(
+        sys, "argv", [str(script), "--output", str(output), "--plot-only"]
+    )
+    runpy.run_path(str(script), run_name="__main__")
+    summary = json.loads((tmp_path / "beam" / "summary.json").read_text())
+    assert summary["accepted_updates"] == 42
+    assert summary["evaluations"][-1]["step"] == 40
+    assert (tmp_path / "beam" / "learning.png").read_bytes().startswith(b"\x89PNG")
