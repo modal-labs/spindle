@@ -17,13 +17,16 @@ model the server serves, and compare with that model's last successful run:
 
 from __future__ import annotations
 
+import collections
 import json
 import os
+import re
 import statistics
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from dataclasses import asdict
@@ -206,7 +209,7 @@ def run_guess_number(
     return timings, metrics
 
 
-def run_script(name: str, base_url: str) -> dict[str, float]:
+def run_script(name: str, base_url: str) -> tuple[dict[str, float], str | None]:
     spec = SCRIPTS[name]
     output = Path(tempfile.mkdtemp(prefix=f"synmon-{name}-"))
     if name == "dapo-math":
@@ -239,25 +242,23 @@ def run_script(name: str, base_url: str) -> dict[str, float]:
             base_url,
         ]
     else:
-        command = [
-            sys.executable,
-            SWE_GYM,
-            "--clients",
-            str(spec["clients"]),
-            "--steps",
-            str(spec["steps"]),
-            "--groups-per-batch",
-            str(spec["groups"]),
-            "--hours",
-            str(spec["timeout_s"] / 3600),
-            "--output",
-            str(output),
-        ]
-    print("running", " ".join(command))
+        command = swe_gym_command(spec, output, spec["timeout_s"])
     started = time.time()
-    subprocess.run(
-        command, check=True, env=client_env(base_url), timeout=spec["timeout_s"]
-    )
+    recovered_from = None
+    try:
+        run_client(command, client_env(base_url), spec["timeout_s"])
+    except ClientFailed as exc:
+        if name != "swe-gym" or "model_lost" not in str(exc):
+            raise
+        # A preempted trainer loses its in-memory models (HTTP 410 model_lost).
+        # Resume each client from its last per-step checkpoint, once.
+        recovered_from = str(exc)
+        remaining = spec["timeout_s"] - (time.time() - started)
+        command = [*swe_gym_command(spec, output, remaining), "--resume"]
+        try:
+            run_client(command, client_env(base_url), remaining)
+        except Exception as resume_exc:
+            raise RuntimeError(f"resume after {exc} failed: {resume_exc}") from exc
     clients: dict[int | str, list[dict]] = {}
     for path in output.rglob("events.jsonl"):
         for line in path.read_text().splitlines():
@@ -278,11 +279,63 @@ def run_script(name: str, base_url: str) -> dict[str, float]:
             raise ValueError(f"Expected {spec['steps']} steps, got {len(steps)}")
         first.append(steps[0])
         last.append(steps[-1])
-    return {
+    timings = {
         "startup": max(ready) - started,
         "first step": max(first) - max(ready),
         "warm steps": max(last) - max(first),
     }
+    return timings, recovered_from
+
+
+class ClientFailed(RuntimeError):
+    pass
+
+
+EXCEPTION_LINE = re.compile(r"^[\w.]+(Error|Exception)\b")
+
+
+def run_client(command: list[str], env: dict[str, str], timeout_s: float) -> None:
+    """Run a client script, streaming its stderr, and raise with its final exception."""
+    print("running", " ".join(command))
+    exceptions = collections.deque(maxlen=1)
+
+    def tee(stream) -> None:
+        for line in stream:
+            sys.stderr.write(line)
+            if EXCEPTION_LINE.match(line):
+                exceptions.append(line.strip())
+
+    with subprocess.Popen(
+        command, env=env, stderr=subprocess.PIPE, text=True
+    ) as process:
+        pump = threading.Thread(target=tee, args=(process.stderr,))
+        pump.start()
+        try:
+            process.wait(timeout=timeout_s)
+        finally:
+            process.kill()
+            pump.join()
+    if process.returncode:
+        raise ClientFailed(
+            f"exit {process.returncode}: {exceptions[0] if exceptions else 'no exception'}"
+        )
+
+
+def swe_gym_command(spec: dict, output: Path, timeout_s: float) -> list[str]:
+    return [
+        sys.executable,
+        SWE_GYM,
+        "--clients",
+        str(spec["clients"]),
+        "--steps",
+        str(spec["steps"]),
+        "--groups-per-batch",
+        str(spec["groups"]),
+        "--hours",
+        str(timeout_s / 3600),
+        "--output",
+        str(output),
+    ]
 
 
 def _history_dict():
@@ -305,13 +358,15 @@ def slack_report_blocks(rows: list[dict]) -> list[dict]:
         ]
     ]
     for row in rows:
-        if row["status"] == "success":
-            runtime, delta = (
-                _raw_cell(str(timedelta(seconds=round(row["total_duration_s"])))),
-                _raw_cell(row["delta"]),
-            )
-        else:
+        if row["status"] == "failed":
             runtime, delta = _raw_cell("FAILED"), _raw_cell("n/a")
+        else:
+            runtime = _raw_cell(str(timedelta(seconds=round(row["total_duration_s"]))))
+            delta = _raw_cell(
+                row["delta"]
+                if row["status"] == "success"
+                else "resumed from checkpoints, not compared"
+            )
         table_rows.append([_raw_cell(row["config"]), runtime, delta])
     return [
         {
@@ -358,6 +413,7 @@ def _row(
 ) -> dict:
     ok = point.status == "success"
     prior = next((p for p in reversed(history[:-1]) if p.status == "success"), None)
+    finished = point.status != "failed"
     delta = "n/a"
     if ok and prior:
         delta = ", ".join(
@@ -367,7 +423,7 @@ def _row(
     return {
         "config": config,
         "status": point.status,
-        "total_duration_s": point.total_duration_s if ok else None,
+        "total_duration_s": point.total_duration_s if finished else None,
         "delta": delta,
         "timings": point.timings,
         "metrics": point.metrics,
@@ -420,7 +476,11 @@ def _post_report(rows: list[dict]) -> None:
                     }
                 )
             else:
-                text = f"`{row['config']}` failed"
+                text = (
+                    f"`{row['config']}` failed"
+                    if row["status"] == "failed"
+                    else f"`{row['config']}` resumed from checkpoints after a failure"
+                )
                 if row.get("error"):
                     text += f"\n```{row['error'][:1500]}```"
             if row.get("modal_app_url"):
@@ -459,13 +519,16 @@ def _post_report(rows: list[dict]) -> None:
     timeout=MONITOR_TIMEOUT_S,
     secrets=[api_secret, hf_secret],
     single_use_containers=True,
+    # A preempted client restarts its run from scratch.
+    nonpreemptible=True,
 )
 def monitor(script: str) -> dict:
     started = time.time()
     error: str | None = None
+    recovered_from: str | None = None
     timings = {}
     try:
-        timings = run_script(script, os.environ["TINKER_BASE_URL"])
+        timings, recovered_from = run_script(script, os.environ["TINKER_BASE_URL"])
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         print(f"error: {script} failed: {error}")
@@ -481,10 +544,10 @@ def monitor(script: str) -> dict:
         ts=started,
         timings=timings,
         total_duration_s=time.time() - started,
-        status="failed" if error else "success",
+        status="failed" if error else "recovered" if recovered_from else "success",
         modal_app_url=url,
     )
-    return _row(script, point, _record(script, point), error)
+    return _row(script, point, _record(script, point), error or recovered_from)
 
 
 def _failed_row(script: str, started: float, error: str) -> dict:
@@ -520,7 +583,7 @@ def launch_nightly() -> list[dict]:
         else:
             rows.append(payload)
     _post_report(rows)
-    if any(row["status"] != "success" for row in rows):
+    if any(row["status"] == "failed" for row in rows):
         raise RuntimeError("synmon finished with failures")
     return rows
 

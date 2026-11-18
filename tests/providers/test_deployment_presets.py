@@ -41,6 +41,7 @@ def test_all_packaged_recipes_validate_offline(path):
     "preset,algorithm,draft",
     [
         ("qwen3-8b-lora-32k", "DFLASH", "z-lab/Qwen3-8B-DFlash-b16"),
+        ("qwen35-9b-instruct-lora-16k", "DFLASH", "modal-labs/Qwen3.5-9B-DFlash"),
         ("qwen35-9b-instruct-lora-32k", "DFLASH", "modal-labs/Qwen3.5-9B-DFlash"),
         ("qwen38-27b-lora-32k", "DFLASH", "incoai/Qwen3.8-27B-DFlash2"),
         ("glm53-flash-lora-32k", "DFLASH", "modal-labs/GLM-5.3-Flash-DFlash"),
