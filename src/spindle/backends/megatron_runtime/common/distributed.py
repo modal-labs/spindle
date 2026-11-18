@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .config import EngineModelConfig
-from .kernels import pin_fla_block_counts
+from spindle.backends.fla_kernels import pin_fla_block_counts
 
 
 def initialize_megatron(config: EngineModelConfig) -> None:

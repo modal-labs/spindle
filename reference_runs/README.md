@@ -48,7 +48,8 @@ Script arguments cannot override these values. Direct callers of
 tokenizer in its definition. It inherits the committed `qwen38-27b-lora-256k`
 topology: two eight-H200 trainer nodes, TP2/CP8, and two
 four-H200 sampler replicas. The definition selects exact H200 hardware and one
-training client/adapter slot.
+training client/adapter slot. Trainer compiler caches stay on local disk because
+shared-cache validation read a generated Python module containing null bytes.
 The workload generates at most 2,048 response tokens; it does not validate 256K
 sequences. Compare new
 measurements against the same validation, rather than the 4B learning curve.
