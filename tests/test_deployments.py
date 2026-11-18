@@ -279,7 +279,7 @@ def test_deepseek_v051_image_rejects_native_kv_routing(source):
     recipe.inference_lora_routing_source = source
     with pytest.raises(
         ValueError,
-        match="requires adapter names in KV events, which SGLang added in v0.5.22",
+        match=r"requires adapter names in KV events, which SGLang added in v0\.5\.22",
     ):
         DeploymentConfig.create(recipe)
 
