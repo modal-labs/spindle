@@ -13,6 +13,7 @@ from spindle.backends.miles_runtime.runtime import (
     _array_bridge,
     _configure_actor_spec,
     _materialize_capture,
+    _refusal,
     _require_cluster_nodes,
     _worker_env,
 )
@@ -154,6 +155,31 @@ def test_upstream_error_result_invalidates_runtime():
         runtime._run(error())
     with pytest.raises(BackendFailed, match="unavailable"):
         runtime._run(error())
+
+
+@pytest.mark.parametrize(
+    ("result", "refusal"),
+    [
+        ({"error": "refused", "error_category": "user"}, "refused"),
+        ([None, {"error": "refused", "error_category": "user"}], "refused"),
+        ([{"error": "refused", "error_category": "user"}, {"error": "crashed"}], None),
+        ({"error": "crashed"}, None),
+        ({"out_of_memory": True, "error": "CUDA out of memory"}, None),
+        ([None, {"loss": 1.0}], None),
+        (None, None),
+    ],
+    ids=[
+        "single-rank",
+        "one-rank-of-many",
+        "mixed-with-crash",
+        "crash",
+        "out-of-memory",
+        "success",
+        "none",
+    ],
+)
+def test_refusal_accepts_only_user_errors(result, refusal):
+    assert _refusal(result) == refusal
 
 
 @pytest.mark.parametrize(

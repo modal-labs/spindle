@@ -75,7 +75,7 @@ from spindle.configs.qwen35_4b_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "qwen35-4b-lora-32k-attn-only"
-    trainer_image = "miles-v0.1.1-52a7a99"
+    trainer_image = "miles-v0.1.1-fdd808c"
     inference_image = "sglang-v0.5.23-c4182b2"
     overrides = {
         **Parent.overrides,
@@ -117,7 +117,7 @@ from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
 
 class Config(Parent):
     name = "qwen35-9b-instruct-lora-16k-h100"
-    trainer_image = "miles-v0.1.1-52a7a99"
+    trainer_image = "miles-v0.1.1-fdd808c"
     inference_image = "sglang-v0.5.23-c4182b2"
     trainer_gpu = "H100"
     trainer_gpus_per_node = 8

@@ -255,9 +255,9 @@ class MilesRuntime:
             raise BackendFailed("Miles trainer is unavailable") from self._failure
         try:
             result = self._call(coroutine)
+            refused = _refusal(result)
             out_of_memory = isinstance(result, dict) and result.get(OUT_OF_MEMORY)
-            refused = None if out_of_memory else _refusal(result)
-            if not out_of_memory and refused is None:
+            if refused is None and not out_of_memory:
                 _check_result(result)
         except Exception as exc:
             self._failure = exc

@@ -703,6 +703,9 @@ class MilesCommandBackend(Backend):
                 json.dumps(
                     {
                         "event": "spindle_checkpoint_revision_mismatch",
+                        "message": "checkpoint was saved with a different Miles "
+                        "commit than this trainer runs; restoring it because its "
+                        "format and layout match",
                         "saved": metadata.get("miles_revision"),
                         "running": self.runtime.revision,
                     }
