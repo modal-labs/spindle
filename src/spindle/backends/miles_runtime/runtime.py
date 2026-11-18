@@ -212,11 +212,9 @@ class MilesRuntime:
     def torch_profile_start(self) -> None:
         self._run_best_effort(self._trainer._execute_slots("torch_profile_start"))
 
-    def torch_profile_stop(self, output_dir: str, *, fork: bool) -> list[dict | None]:
+    def torch_profile_stop(self, output_dir: str) -> list[dict | None]:
         return self._run_best_effort(
-            self._trainer._execute_slots(
-                "torch_profile_stop", output_dir=output_dir, fork=fork
-            )
+            self._trainer._execute_slots("torch_profile_stop", output_dir=output_dir)
         )
 
     def torch_profile_wait(self) -> None:

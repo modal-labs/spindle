@@ -543,9 +543,7 @@ class MilesCommandBackend(Backend):
             self._profile_step_done = True
         files: list[str] = []
         try:
-            results = self.runtime.torch_profile_stop(
-                self._profile.output_dir, fork=self.config.actor_num_nodes == 1
-            )
+            results = self.runtime.torch_profile_stop(self._profile.output_dir)
             for result in results or []:
                 if result:
                     files.extend(result.values())

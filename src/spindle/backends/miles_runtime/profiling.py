@@ -206,8 +206,8 @@ class RankProfiler:
         )
         self._profile.__enter__()
 
-    def stop(self, output_dir: str, name: str, *, fork: bool = True) -> dict[str, str]:
-        """Stop on the thread that called ``start``; a child process writes the files unless ``fork`` is false."""
+    def stop(self, output_dir: str, name: str) -> dict[str, str]:
+        """Stop on the thread that called ``start``; a child process writes the files."""
         if self._profile is None:
             raise RuntimeError("RankProfiler.stop() called without start()")
         if torch.cuda.is_available():
@@ -219,9 +219,6 @@ class RankProfiler:
             "trace": os.path.join(output_dir, f"{name}.trace.json.gz"),
             "table": os.path.join(output_dir, f"{name}.key_averages.txt"),
         }
-        if not fork:
-            _write(profile, output_dir, name, paths)
-            return paths
         # A child process keeps the GIL-bound export off the training thread.
         pid = os.fork()
         if pid == 0:
