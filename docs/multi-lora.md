@@ -208,4 +208,4 @@ The two views can differ in these ways:
 - KV events are replayed from SGLang's buffer of the last 10,000 event batches. If the sidecar falls further behind than that, or restarts while SGLang keeps running, it rebuilds from the buffer only: cached prefixes whose earlier blocks are no longer buffered stay unlisted until SGLang stores them again. The hook reads the cache itself and has no such limit.
 - KV events do not identify GPU-resident adapters, so `gpu_adapters` is empty and the router ranks a replica with the adapter on its GPU no higher than one that only has it loaded in CPU memory.
 
-With SGLang's default `page_size` of 1, the sidecar keeps about 60 MiB per million cached tokens and spends about 3 microseconds of CPU per cached token. The sidecar needs `pyzmq` and `msgspec`, which SGLang images already include.
+With SGLang's default `page_size` of 1, the sidecar keeps about 175 MiB per million cached tokens and spends about 1 microsecond of CPU per cached token. The replica's KV pool size bounds the number of cached tokens. The sidecar needs `pyzmq` and `msgspec`, which SGLang images already include.

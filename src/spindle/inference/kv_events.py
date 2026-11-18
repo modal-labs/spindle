@@ -16,7 +16,6 @@ import sys
 import threading
 import time
 from array import array
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Literal, NamedTuple, NotRequired, TypedDict, cast
 
@@ -38,24 +37,11 @@ REPLAY_STALL_TIMEOUT_SECONDS = 2.0
 PREFIX_TOKENS = 64
 BLOCK_HASH_BYTES = 8
 BLOCK_HASH_ARRAY_CODE = "q"
-NARROW_REF_BYTES = 4
-WIDE_REF_BYTES = 8
-NARROW_REF_ARRAY_CODE = "I"
-WIDE_REF_ARRAY_CODE = "Q"
+POSITION_ARRAY_CODE = "I"
 BYTE_ARRAY_CODE = "B"
-SLOT_STATE_BYTES = 1
-EMPTY_SLOT = 0
-LIVE_SLOT = 1
-TOMBSTONE_SLOT = 2
-INITIAL_INDEX_SLOTS = 1024
-MAX_OCCUPIED_FRACTION = 0.7  # Rehash once this share of slots is live or tombstoned.
-MIN_LIVE_FRACTION_TO_GROW = (
-    0.5  # Below this, rehash at the same size to drop tombstones.
-)
 CHAIN_BLOCK_INDEX_BITS = 16
 BLOCKS_PER_CHAIN = 1 << CHAIN_BLOCK_INDEX_BITS
 CHAIN_BLOCK_INDEX_MASK = BLOCKS_PER_CHAIN - 1
-NARROW_CHAIN_ID_LIMIT = 1 << (NARROW_REF_BYTES * 8 - CHAIN_BLOCK_INDEX_BITS)
 MMAP_THRESHOLD_BYTES = 4096  # Smaller chains avoid the cost of an mmap.
 REPLAY_YIELD_BATCHES = 32  # Let the loop run between this many replayed batches.
 SEQUENCE_FRAME_BYTES = 8
@@ -84,108 +70,6 @@ class KVSnapshot(NamedTuple):
     ready: bool
     checked_at: float
     prefixes: tuple[str, ...]
-
-
-class _BlockIndex:
-    """Map block hashes to compact chain references."""
-
-    storage: mmap.mmap
-    keys: memoryview
-    refs: memoryview
-    states: memoryview
-
-    def __init__(self) -> None:
-        self.wide = False
-        self._allocate(INITIAL_INDEX_SLOTS)
-        self.count = 0
-        self.occupied = 0
-
-    def _allocate(self, size: int) -> None:
-        width = WIDE_REF_BYTES if self.wide else NARROW_REF_BYTES
-        self.storage = mmap.mmap(
-            -1, size * (BLOCK_HASH_BYTES + width + SLOT_STATE_BYTES)
-        )
-        view = memoryview(self.storage)
-        self.keys = view[: size * BLOCK_HASH_BYTES].cast(BLOCK_HASH_ARRAY_CODE)
-        self.refs = view[
-            size * BLOCK_HASH_BYTES : size * (BLOCK_HASH_BYTES + width)
-        ].cast(WIDE_REF_ARRAY_CODE if self.wide else NARROW_REF_ARRAY_CODE)
-        self.states = view[size * (BLOCK_HASH_BYTES + width) :]
-        view.release()
-
-    def __len__(self) -> int:
-        return self.count
-
-    def __contains__(self, key: int) -> bool:
-        return self.get(key) is not None
-
-    def __iter__(self) -> Iterator[int]:
-        return (
-            self.keys[i] for i, state in enumerate(self.states) if state == LIVE_SLOT
-        )
-
-    def get(self, key: int) -> int | None:
-        mask = len(self.states) - 1
-        slot = hash(key) & mask
-        while self.states[slot]:
-            if self.states[slot] == LIVE_SLOT and self.keys[slot] == key:
-                return self.refs[slot]
-            slot = (slot + 1) & mask
-        return None
-
-    def _insert(self, key: int, ref: int) -> None:
-        mask = len(self.states) - 1
-        slot = hash(key) & mask
-        while self.states[slot] == LIVE_SLOT:
-            slot = (slot + 1) & mask
-        if self.states[slot] == EMPTY_SLOT:
-            self.occupied += 1
-        self.states[slot] = LIVE_SLOT
-        self.keys[slot] = key
-        self.refs[slot] = ref
-        self.count += 1
-
-    def insert(self, key: int, ref: int) -> None:
-        slots = len(self.states)
-        if self.occupied + 1 >= slots * MAX_OCCUPIED_FRACTION:
-            grow = self.count >= slots * MIN_LIVE_FRACTION_TO_GROW
-            self._resize(slots * 2 if grow else slots)
-        self._insert(key, ref)
-
-    def pop(self, key: int) -> int | None:
-        mask = len(self.states) - 1
-        slot = hash(key) & mask
-        while self.states[slot]:
-            if self.states[slot] == LIVE_SLOT and self.keys[slot] == key:
-                self.states[slot] = TOMBSTONE_SLOT
-                self.count -= 1
-                return self.refs[slot]
-            slot = (slot + 1) & mask
-        return None
-
-    def _resize(self, size: int) -> None:
-        old_keys, old_refs, old_states = self.keys, self.refs, self.states
-        old_storage = self.storage
-        self._allocate(size)
-        self.count = self.occupied = 0
-        for i, state in enumerate(old_states):
-            if state == LIVE_SLOT:
-                self._insert(old_keys[i], old_refs[i])
-        old_keys.release()
-        old_refs.release()
-        old_states.release()
-        old_storage.close()
-
-    def widen(self) -> None:
-        self.wide = True
-        self._resize(len(self.states))
-
-    def clear(self) -> None:
-        self.keys.release()
-        self.refs.release()
-        self.states.release()
-        self.storage.close()
-        self.__init__()
 
 
 @dataclass(slots=True, init=False, eq=False, repr=False)
@@ -241,7 +125,7 @@ class _Chain:
         self.keys = view[: len(keys) * BLOCK_HASH_BYTES].cast(BLOCK_HASH_ARRAY_CODE)
         self.tokens = view[len(keys) * BLOCK_HASH_BYTES :].cast(BLOCK_HASH_ARRAY_CODE)
         view.release()
-        self.positions = array(NARROW_REF_ARRAY_CODE)
+        self.positions = array(POSITION_ARRAY_CODE)
         self.digests = []
         self.prefixes = []
         self.endpoint = None
@@ -298,7 +182,7 @@ class KVCache:
     """Track device-resident blocks and reusable routing prefixes."""
 
     def __init__(self) -> None:
-        self.blocks = _BlockIndex()
+        self.blocks: dict[int, int] = {}
         self.chains: list[_Chain | None] = []
         self.free_chains: list[int] = []
         self.children: dict[int, set[int]] = {}
@@ -387,7 +271,7 @@ class KVCache:
                     if child is not None:
                         pending.append((child, 0))
                 self._drop_branch(child_key)
-                self.blocks.pop(child_key)
+                self.blocks.pop(child_key, None)
             for position, prefix in zip(chain.positions, chain.prefixes, strict=True):
                 if position > first * chain.size:
                     count = self.prefix_counts[prefix] - 1
@@ -505,8 +389,6 @@ class KVCache:
             )
             chain_id = self.free_chains.pop() if self.free_chains else len(self.chains)
             chain.id = chain_id
-            if chain_id >= NARROW_CHAIN_ID_LIMIT and not self.blocks.wide:
-                self.blocks.widen()
             if chain_id == len(self.chains):
                 self.chains.append(chain)
             else:
@@ -545,7 +427,7 @@ class KVCache:
                     chain.prefixes.append(prefix)
                     self.prefix_counts[prefix] = self.prefix_counts.pop(prefix, 0) + 1
                     next_boundary = PREFIX_TOKENS
-                self.blocks.insert(key, chain_id << CHAIN_BLOCK_INDEX_BITS | index)
+                self.blocks[key] = chain_id << CHAIN_BLOCK_INDEX_BITS | index
             if offset < len(group_tokens):
                 digest.update(data[offset * BLOCK_HASH_BYTES :])
             self._set_endpoint(chain)

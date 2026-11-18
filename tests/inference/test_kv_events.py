@@ -671,13 +671,3 @@ def test_signed_block_hashes_survive_resize_and_removal() -> None:
     cache.apply(dict(type="BlockRemoved", block_hashes=[keys[1]], medium="GPU"))
     assert set(cache.blocks) == {keys[0]}
     assert not cache.prefixes
-
-
-def test_removing_last_block_releases_grown_index() -> None:
-    cache = KVCache()
-    keys = list(range(1025))
-    cache.apply(stored(keys, keys))
-    assert len(cache.blocks.states) > 1024
-    cache.apply(dict(type="BlockRemoved", block_hashes=[keys[0]], medium="GPU"))
-    assert not cache.blocks
-    assert len(cache.blocks.states) == 1024
