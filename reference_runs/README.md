@@ -50,7 +50,7 @@ topology: two eight-H200 trainer nodes, TP2/CP8, and two
 four-H200 sampler replicas. The definition selects exact H200 hardware and one
 training client/adapter slot.
 The workload generates at most 2,048 response tokens; it does not validate 256K
-sequences. This definition has no recorded GPU execution yet. Compare new
+sequences. Compare new
 measurements against the same validation, rather than the 4B learning curve.
 
 Once published, a validation TOML file is immutable. Create a new definition
