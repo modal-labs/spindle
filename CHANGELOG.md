@@ -4,10 +4,6 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
-### Changed
-
-- `qwen35-9b-instruct-lora-16k` trains on one B200 instead of eight H100s, and samples on B200 only, with the `modal-labs/Qwen3.5-9B-DFlash` drafter. It no longer falls back to H200 samplers. Older checkpoints also need the old eight-H100 layout; see "Older Qwen3.5-9B instruct 16K checkpoints" in docs/deployment-configs.md.
-
 ## 0.1.8 - 2026-11-18
 
 Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen and Nemotron-3 Nano LoRA recipes move to Miles native adapters, so checkpoints they saved before 0.1.8 load only on their original trainer image. A new recipe trains Nemotron 3.5 Super VL 120B-A12B on text, sampled logprobs match the trainer at any temperature, multi-target scoring handles mixed candidate counts in one pass, and a rewritten guide shows how to profile and tune a deployment config.
@@ -25,6 +21,7 @@ Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen a
 
 ### Changed
 
+- `qwen35-9b-instruct-lora-16k` trains on one B200 instead of eight H100s, and samples on B200 only, with the `modal-labs/Qwen3.5-9B-DFlash` drafter. It no longer falls back to H200 samplers. Older checkpoints also need the old eight-H100 layout; see "Older Qwen3.5-9B instruct 16K checkpoints" in docs/deployment-configs.md.
 - The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers, which make up three of every four layers. Checkpoints these recipes saved before this change can't be loaded into them. To keep using one, load it into a variant with the old targets, as described in [Older Qwen3.5 LoRA checkpoints](docs/deployment-configs.md#older-qwen35-lora-checkpoints).
 - Single-node dense Qwen2.5, Qwen3, Qwen3.5, Qwen3.8 and Nemotron-3 Nano LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Nano uses FP32 expert reductions and deterministic kernels so repeated scores and optimizer replay agree. Older checkpoints require their original trainer image and adapter layout.
 - Miles multi-target scoring shares one vocabulary softmax across mixed candidate counts in supported scoring modes, preserving each datum's output shape and batch order.
