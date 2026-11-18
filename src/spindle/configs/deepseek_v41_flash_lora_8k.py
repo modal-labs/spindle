@@ -10,7 +10,7 @@ class Config(BaseConfig):
 
     name = "deepseek-v41-flash-lora-8k"
     trainer_image = "miles-v0.1.2-99e1ebe"
-    inference_image = "sglang-v0.5.21-a3e0e17"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "deepseek-ai/DeepSeek-V4.1-Flash"
     # The FP8/FP4 release. The trainer dequantizes it to BF16 as it loads.
     weights_revision = "2cba9e42aa026125f3ed06c6d98c1db82f7ca027"
@@ -92,7 +92,7 @@ class Config(BaseConfig):
         "SGLANG_OPT_USE_MULTI_STREAM_OVERLAP": "0",
         # Its MHC kernels take five minutes to compile, so keep them on the
         # shared kernel-cache volume. Smaller models start faster with local caches.
-        "SGLANG_CACHE_DIR": "/root/.cache/kernel-cache/sglang",
+        "SGLANG_CACHE_DIR": "/root/.cache/kernel-cache/sglang-0.5.23",
     }
     sglang_cfg = {
         "tp_size": 8,
@@ -110,6 +110,9 @@ class Config(BaseConfig):
         "max_loaded_loras": 8,
         "max_loras_per_batch": 4,
         "lora_strict_loading": True,
+        # Bounded replay trims long prompts in late layers, which LoRA doesn't follow,
+        # and its logprobs don't match full prefill.
+        "enable_decoder_swa_bounded_replay": False,
         # Serve the text model only; the checkpoint also carries vision and MTP weights.
         "json_model_override_args": '{"vision_n_layers": 0, "num_nextn_predict_layers": 0}',
     }
