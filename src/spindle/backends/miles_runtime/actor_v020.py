@@ -30,6 +30,7 @@ from miles.utils.replay_base import routing_replay_manager
 
 from spindle.backends.score_centering import REPLAY_LOSSES
 
+from . import nemotron_h_omni
 from .actor_shared import (
     ProfiledActor,
     install_replay_patches,
@@ -55,6 +56,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
     def init(self, args: TrainerConfig, role: str, **kwargs: object) -> int | None:
         use_distributed_timeout_for_gloo(args.backend.distributed_timeout_minutes)
         if args.megatron_to_hf_mode == "bridge":
+            nemotron_h_omni.install(args.hf_checkpoint)
             # Native workers do not use the Bridge Qwen-VL provider.
             from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
                 model as qwen3_vl_model,

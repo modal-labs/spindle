@@ -542,6 +542,8 @@ def test_bundled_configs_pin_their_own_images(path, monkeypatch):
 
 
 UNUSED_IMAGE_WHITELIST = {
+    "miles-v0.1.2-99e1ebe-kpool-glm53",  # Restore GLM 256K checkpoints saved with Bridge.
+    "miles-v0.2.0-e814245",  # Restore checkpoints saved before single-node image consolidation.
     # Restore Miles LoRA checkpoints saved by Spindle 0.1.7 and earlier.
     "miles-v0.1.1-fdd808c",
     "miles-v0.1.2-f2f8447",

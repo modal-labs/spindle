@@ -8,11 +8,13 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - A two-node Qwen3.8-27B DAPO-Math reference definition uses the shared Tinker workload.
 - DAPO-Math references validate checkpoint restoration by replaying an Adam momentum step and sampling the restored adapter after the measured workload.
-- `glm53-flash-lora-256k`: GLM-5.3 Flash LoRA with 256K-token context on one 8×B300 node, with expert-routing replay. It trains on a new image, `miles-v0.1.2-99e1ebe-kpool-glm53`, which changes GLM's sparse-attention indexer so 256K sequences fit in GPU memory.
+- `glm53-flash-lora-256k`: GLM-5.3 Flash LoRA with 256K-token context on one 8×B300 node, with expert-routing replay.
 - `deepseek-v41-flash-1017-lora-64k`: DeepSeek-V4.1-Flash-1017 LoRA with 64K context. Like `deepseek-v41-flash-lora-64k`, it trains on B300 or B200.
 - `kimi-k3-lora-32k` trains LoRA adapters on Moonshot AI Kimi K3 from the MXFP4 release weights, with a 2-node B300 trainer and a 1-node B300 sampler. Adapters train attention, the dense first layer and the shared experts; routed experts stay frozen.
 
 ### Changed
+
+- The 35 single-node Miles LoRA recipes in this upgrade use Miles v0.2.0 at fork revision `26989c0`. Qwen3.6 MoE and GLM-5.3 Flash 48K/64K/256K use native canonical adapters; GPT-OSS and other Nemotron recipes retain Bridge adapters. GLM Flash uses blockwise native indexer scoring to bound memory at 256K.
 
 - `qwen38-27b-lora-256k` uses `miles-v0.2.0-8c5de26` and local trainer compiler caches to avoid corrupt generated modules observed with shared caches. Checkpoints saved with the previous `miles-v0.1.1-52a7a99` default cannot restore with the new image. Set `trainer_image` back to `miles-v0.1.1-52a7a99` to restore those checkpoints.
 - Miles LoRA checkpoints restore on a trainer running a different Miles commit, as long as the checkpoint format, adapter layout, base model and LoRA settings match. Before, any commit change rejected the restore, so moving a config to a newer image stranded its saved training states. Training states saved with 0.1.7 or earlier now restore on the current v0.1.x images without setting `trainer_image`. Checkpoints saved on `miles-v0.1.x` images still don't restore on `miles-v0.2.0` images, which use a different checkpoint format.
