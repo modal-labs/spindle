@@ -27,7 +27,7 @@ from spindle.inference.serving import (
     terminate,
     wait_http,
 )
-from spindle.providers.modal.scoped_pool import set_minimum
+from spindle.providers.modal import scoped_pool
 from spindle.telemetry.otlp import sample_trace
 
 from .app_tags import app_tags
@@ -43,7 +43,6 @@ from .sampling import ModalSamplingTaskPlatform
 from .scoped_assignment import claim_model
 from .scoped_control import ScopedControlPlane
 from .scoped_pins import forget_pin_route, pin_demand, publish_pin, touch_pin
-from .scoped_pool import ScopedFlashPool
 from .serve import run_engine_with_backend
 
 
@@ -318,7 +317,9 @@ def build_app(
                 registry, shared_kv(), engines, engine.name, model_id
             )
             if latest.min_containers:
-                await set_minimum.aio(route["function_id"], latest.min_containers)
+                await scoped_pool.set_minimum.aio(
+                    route["function_id"], latest.min_containers
+                )
             return route
 
         if action == "pin_demand":
@@ -382,7 +383,7 @@ def build_app(
             route = await route_for(
                 task["model_id"], task.get("publish_version"), task.get("latest")
             )
-            gateway = ScopedFlashPool(route).gateway_url()
+            gateway = scoped_pool.ScopedFlashPool(route).gateway_url()
         try:
             stats = {}
             with sample_trace(task, stats):
