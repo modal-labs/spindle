@@ -7,37 +7,9 @@ import argparse
 import json
 import tomllib
 from pathlib import Path
-from typing import Self
 
 from matplotlib import pyplot
-from pydantic import BaseModel, ConfigDict, model_validator
-
-
-class ReferenceRun(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    validation: str
-    output: str
-    spindle_commit: str
-    trainer_image: str
-    miles_commit: str
-    tinker_sdk: str
-    hardware: str
-    region: str | None = None
-    notes: str = ""
-
-
-class ReferenceRunIndex(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    runs: list[ReferenceRun]
-
-    @model_validator(mode="after")
-    def unique_ids(self) -> Self:
-        if len({run.id for run in self.runs}) != len(self.runs):
-            raise ValueError("duplicate run IDs in index")
-        return self
+from catalog import ReferenceRunIndex
 
 
 PANELS = [

@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import multiprocessing
+from multiprocessing.synchronize import Event
 import runpy
 import sys
 import tomllib
@@ -18,12 +20,95 @@ from spindle.configuration import BaseConfig
 from spindle.deployments import DeploymentConfig, load
 
 ROOT = Path(__file__).parents[1] / "reference_runs"
+sys.path.insert(0, str(ROOT))
 spec = importlib.util.spec_from_file_location("reference_launcher", ROOT / "run.py")
 assert spec and spec.loader
 launcher = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = launcher
 spec.loader.exec_module(launcher)
 plotter = runpy.run_path(str(ROOT / "plot.py"))
+
+
+def _record_worker(index: str, entry: dict, ready: Event, release: Event) -> None:
+    with launcher.record_run(Path(index), launcher.ReferenceRun(**entry)) as output:
+        output.write_text('{"event":"completed"}\n')
+        ready.set()
+        assert release.wait(10)
+
+
+@pytest.mark.parametrize("collision", ["id", "output", None])
+def test_recording_concurrent_runs_preserves_index(
+    collision: str | None, tmp_path: Path
+) -> None:
+    index = tmp_path / "index.toml"
+    index.write_text("# keep provenance comments\nruns = []\n")
+    entry = {
+        "id": "first",
+        "validation": "test",
+        "output": "first.jsonl",
+        "spindle_commit": "a" * 40,
+        "trainer_image": "test-image",
+        "miles_commit": "b" * 40,
+        "tinker_sdk": "0.26.0",
+        "hardware": "test hardware",
+    }
+    context = multiprocessing.get_context("fork")
+    ready, release = context.Event(), context.Event()
+    worker = context.Process(
+        target=_record_worker, args=(str(index), entry, ready, release)
+    )
+    worker.start()
+    try:
+        assert ready.wait(10)
+        second = {**entry, "id": "second", "output": "second.jsonl"}
+        if collision is not None:
+            second[collision] = entry[collision]
+            with pytest.raises(ValueError, match="Another run holds"):
+                with launcher.record_run(index, launcher.ReferenceRun(**second)):
+                    pytest.fail("Colliding run entered workload")
+        else:
+            with launcher.record_run(index, launcher.ReferenceRun(**second)) as output:
+                output.write_text('{"event":"completed"}\n')
+    finally:
+        release.set()
+        worker.join(10)
+        if worker.is_alive():
+            worker.kill()
+            worker.join()
+    assert worker.exitcode == 0
+    result = plotter["ReferenceRunIndex"].model_validate(
+        tomllib.loads(index.read_text())
+    )
+    assert {run.id for run in result.runs} == (
+        {"first", "second"} if collision is None else {"first"}
+    )
+    assert index.read_text().startswith("# keep provenance comments")
+    with pytest.raises(ValueError, match="already indexed"):
+        with launcher.record_run(index, launcher.ReferenceRun(**entry)):
+            pytest.fail("Completed run was overwritten")
+
+
+def test_failed_run_keeps_partial_metrics_without_indexing(tmp_path: Path) -> None:
+    index = tmp_path / "index.toml"
+    entry = launcher.ReferenceRun(
+        id="failed",
+        validation="test",
+        output="partial.jsonl",
+        spindle_commit="a" * 40,
+        trainer_image="test",
+        miles_commit="b" * 40,
+        tinker_sdk="0.26.0",
+        hardware="test",
+    )
+    with pytest.raises(RuntimeError, match="workload failed"):
+        with launcher.record_run(index, entry) as output:
+            output.write_text('{"event":"run"}\n')
+            raise RuntimeError("workload failed")
+    assert not index.exists()
+    assert (tmp_path / "partial.jsonl").read_text() == '{"event":"run"}\n'
+    with pytest.raises(FileExistsError):
+        with launcher.record_run(index, entry):
+            pytest.fail("Partial metrics were overwritten")
 
 
 @pytest.mark.parametrize(
@@ -97,6 +182,38 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     ]
     assert (value, sdk_patch) == (23, "sdk-patch-preserved")
     assert sys.path == before_path and sys.argv is before_argv
+
+    index = tmp_path / "index.toml"
+    provenance = tmp_path / "execution.toml"
+    provenance.write_text(
+        toml.dumps(
+            {
+                "id": "recorded",
+                "validation": "run",
+                "output": "recorded.jsonl",
+                "spindle_commit": "a" * 40,
+                "trainer_image": "observed-image",
+                "miles_commit": "b" * 40,
+                "tinker_sdk": "0.26.0",
+                "hardware": "observed GPUs",
+            }
+        )
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run", str(definition), "--record", str(provenance), "--index", str(index)],
+    )
+    launcher.main()
+    entry = (
+        plotter["ReferenceRunIndex"]
+        .model_validate(tomllib.loads(index.read_text()))
+        .runs[0]
+    )
+    assert (entry.id, entry.trainer_image) == ("recorded", "observed-image")
+    assert json.loads((tmp_path / entry.output).read_text())[0][3] == str(
+        tmp_path / entry.output
+    )
 
 
 @pytest.mark.parametrize(

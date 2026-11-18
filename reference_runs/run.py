@@ -1,6 +1,7 @@
 """Prepare a reference deployment or launch its Tinker workload."""
 
 import argparse
+import contextlib
 import pprint
 import runpy
 import sys
@@ -8,6 +9,8 @@ import tomllib
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from catalog import ReferenceRun, record_run
 
 from spindle.configuration import BaseConfig
 from spindle.deployments import config_path, load
@@ -56,6 +59,12 @@ def main() -> None:
         "--write-config", type=Path, help="write a new deployment Python file and exit"
     )
     destination.add_argument("--output", type=Path, help="new JSONL output file")
+    destination.add_argument(
+        "--record", type=Path, help="execution provenance TOML; index after success"
+    )
+    parser.add_argument(
+        "--index", type=Path, default=Path(__file__).with_name("index.toml")
+    )
     args = parser.parse_args()
     definition = ValidationRunConfig.model_validate(
         tomllib.loads(args.validation.read_text())
@@ -82,13 +91,32 @@ def main() -> None:
         parser.error(
             "--base-model, --output and --tokenizer are supplied by the launcher"
         )
+    entry = (
+        ReferenceRun.model_validate(tomllib.loads(args.record.read_text()))
+        if args.record
+        else None
+    )
+    if entry is not None and entry.validation != args.validation.stem:
+        parser.error("record validation must match the selected definition")
+    registration = (
+        record_run(args.index, entry)
+        if entry is not None
+        else contextlib.nullcontext(args.output)
+    )
+    with registration as output:
+        launch(definition, recipe, parent, output)
+
+
+def launch(
+    definition: ValidationRunConfig, recipe: BaseConfig, parent: Path, output: Path
+) -> None:
     script = (parent / definition.script).resolve()
     arguments = [
         str(script),
         "--base-model",
         recipe.name,
         "--output",
-        str(args.output),
+        str(output),
         "--tokenizer",
         definition.tokenizer.model,
         definition.tokenizer.revision,
