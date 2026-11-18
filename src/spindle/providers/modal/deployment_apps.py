@@ -88,12 +88,15 @@ TRAINER_IMAGES = {
     "miles-v0.2.0-15afe21": miles_v020_image.image_01_15afe21,
     # https://github.com/modal-projects/miles/pull/44 Support per-adapter seeds in the v0.2.0 LoRA slot API (on top of #37, Beam LoRA)
     "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
+    # https://github.com/modal-projects/miles/pull/49 Native canonical and routed-expert adapters, including Nemotron Nano
+    "miles-v0.2.0-e814245": miles_v020_image.image_03_e814245,
     # Upstream NVIDIA/Megatron-LM commit; no Spindle fork
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {
     "sglang-inkling2-a2e3c49-head": inkling2_head_lora_sampler_image,
     "sglang-inkling2-a2e3c49": inkling2_sampler_image,
+    "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
     # https://github.com/modal-projects/sglang/pull/81 Serve DeepSeek-V4 LoRA on quantized bases
     "sglang-v0.5.21-a3e0e17": deepseek_v41_image.image_01_a3e0e17,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks

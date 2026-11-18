@@ -128,6 +128,7 @@ class MilesBackendConfig(BaseModel):
     actor_num_gpus_per_node: PositiveInteger
     actor_num_nodes: PositiveInteger = 1
     megatron_to_hf_mode: Literal["bridge", "raw"] = "bridge"
+    lora_type: Literal["lora", "canonical_lora"] = "lora"
     tensor_model_parallel_size: PositiveInteger = 1
     context_parallel_size: PositiveInteger = 1
     expert_model_parallel_size: PositiveInteger = 1
@@ -198,7 +199,11 @@ class MilesBackendConfig(BaseModel):
             for name in self.target_modules
             if name.rsplit(".", 1)[-1] in GDN_INPUT_PROJECTIONS
         ]
-        if gdn_targets and sorted(gdn_targets) != sorted(GDN_INPUT_PROJECTIONS):
+        if (
+            self.lora_type == "lora"
+            and gdn_targets
+            and sorted(gdn_targets) != sorted(GDN_INPUT_PROJECTIONS)
+        ):
             raise ValueError(
                 "linear-attention LoRA trains one adapter over the fused input "
                 f"projection; list all of {', '.join(GDN_INPUT_PROJECTIONS)} by name"
@@ -253,9 +258,8 @@ class MilesBackendConfig(BaseModel):
             str(int(self.default_lora_alpha)),
             "--lora-dropout",
             str(self.lora_dropout),
-            # Miles v0.2.0 defaults serve entries to canonical_lora; v0.1.x multi-LoRA supports only lora.
             "--lora-type",
-            "lora",
+            self.lora_type,
             "--target-modules",
             ",".join(self.target_modules),
             "--no-gradient-accumulation-fusion",

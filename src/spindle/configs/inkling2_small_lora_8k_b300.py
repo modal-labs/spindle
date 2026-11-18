@@ -24,6 +24,7 @@ class Config(BaseConfig):
     miles_cfg = {
         "model_type": "inkling2",
         "megatron_to_hf_mode": "raw",
+        "lora_type": "canonical_lora",
         "tensor_model_parallel_size": 1,
         "expert_model_parallel_size": 8,
         "expert_tensor_parallel_size": 1,
@@ -41,7 +42,6 @@ class Config(BaseConfig):
             "model.llm.unembed",
         ],
         "cli_options": {
-            "lora_type": "canonical_lora",
             "qkv_format": "thd",
             "recompute_granularity": "full",
             "recompute_method": "uniform",

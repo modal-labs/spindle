@@ -81,3 +81,12 @@ image_02_803bccb = runtime_image_for(
     revision="803bccbcb947d3041f5b57e11c986f8523a0cb56",
     core_packages=CORE_SAMPLER_PACKAGES,
 ).add_local_python_source("spindle", ignore=ignore_config_source)
+
+
+# Canonical GDN adapters use the merged target aliases.
+image_03_e003cf9 = runtime_image_for(
+    image=SGLANG_IMAGE,
+    branch=SGLANG_BRANCH,
+    revision="e003cf90c44c78249ce4ed3db3cf2f768af724a8",
+    core_packages=CORE_SAMPLER_PACKAGES,
+).add_local_python_source("spindle", ignore=ignore_config_source)
