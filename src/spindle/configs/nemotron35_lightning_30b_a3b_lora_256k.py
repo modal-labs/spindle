@@ -3,7 +3,7 @@ from spindle.configs.nemotron35_lightning_30b_a3b_lora_64k_h200 import Config as
 
 class Config(Parent):
     name = "nemotron35-lightning-30b-a3b-lora-256k"
-    trainer_image = "miles-v0.2.0-7524da0"
+    trainer_image = "miles-v0.2.0-dee82e2"
     inference_image = "sglang-v0.5.23-c4182b2"
     max_context_length = 262144
     trainer_gpus_per_node = 8

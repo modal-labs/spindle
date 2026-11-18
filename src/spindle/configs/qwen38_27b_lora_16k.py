@@ -3,7 +3,7 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "qwen38-27b-lora-16k"
-    trainer_image = "miles-v0.2.0-7524da0"
+    trainer_image = "miles-v0.2.0-dee82e2"
     inference_image = "sglang-v0.5.23-e003cf9"
     model = "Qwen/Qwen3.8-27B"
     max_context_length = 16384
