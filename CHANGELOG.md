@@ -6,6 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- `spindle usage --group-by` takes several label keys separated by commas, such as `team_id,run_id`, and prints one column per key.
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
 - Sampling supports the Tinker SDK's `prompt_logprobs_last_n`. It returns prompt logprobs for only the last N prompt tokens, so the rest of the prompt can come from the prefix cache.
 - `nemotron35-super-vl-120b-a12b-lora-64k` trains LoRA adapters on NVIDIA Nemotron 3.5 Super VL 120B-A12B. Training and sampling take text only: image inputs are not accepted, and adapters apply to the language model.

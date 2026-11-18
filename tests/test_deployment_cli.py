@@ -1004,6 +1004,22 @@ def test_billed_app_costs_sums_every_app_the_deployment_created() -> None:
             ["--format", "csv"],
             "run_id,usd\nA,2.50\nunknown,0.50\nunattributed,1.00\n",
         ),
+        # Several label keys print one column each; a missing label is unknown.
+        (
+            ["--group-by", "team_id,run_id"],
+            (
+                "team_id       run_id          USD\n"
+                "t-1           A              2.50\n"
+                "unknown       unknown        0.50\n"
+                "---------------------------------\n"
+                "unattributed                 1.00\n"
+                "total                        4.00\n"
+            ),
+        ),
+        (
+            ["--group-by", "team_id,run_id", "--format", "csv"],
+            "team_id,run_id,usd\nt-1,A,2.50\nunknown,unknown,0.50\nunattributed,,1.00\n",
+        ),
     ],
 )
 def test_usage_prints_each_runs_share_of_the_bill(
@@ -1027,7 +1043,7 @@ def test_usage_prints_each_runs_share_of_the_bill(
             },
             asdict(row("r2", train_tokens=1)),
         ],
-        "sessions": {"s1": {"run_id": "A"}},
+        "sessions": {"s1": {"run_id": "A", "team_id": "t-1"}},
     }
     read_usage = SimpleNamespace(remote=lambda since, until: usage)
     monkeypatch.setattr(cli.modal.Function, "from_name", lambda *a, **k: read_usage)
@@ -1050,6 +1066,52 @@ def test_usage_prints_each_runs_share_of_the_bill(
     )
 
     assert capsys.readouterr().out == expected
+
+
+def test_usage_keeps_label_values_apart_from_summary_lines(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    rows = [
+        UsageRow(
+            timestamp=HOUR.timestamp(),
+            model_id="m",
+            request_uuid="r1",
+            app_name="dd-trainer-m",
+            session_id="s1",
+            train_tokens=5,
+        )
+    ]
+    usage = {
+        "rows": [asdict(r) for r in rows],
+        "sessions": {"s1": {"run_id": "idle", "team_id": "ads,ranking"}},
+    }
+    read_usage = SimpleNamespace(remote=lambda since, until: usage)
+    monkeypatch.setattr(cli.modal.Function, "from_name", lambda *a, **k: read_usage)
+    costs = tmp_path / "costs.json"
+    costs.write_text(json.dumps({"dd-trainer-m": 2.0}))
+
+    cli.main(
+        [
+            "usage",
+            "--frontend",
+            "dd",
+            "--costs",
+            str(costs),
+            "--since",
+            "2026-11-10T22:00:00Z",
+            "--until",
+            "2026-11-10T23:00:00Z",
+            "--group-by",
+            "team_id,run_id",
+            "--format",
+            "csv",
+        ]
+    )
+
+    assert (
+        capsys.readouterr().out
+        == 'team_id,run_id,usd\n"ads,ranking",idle (run_id),2.00\n'
+    )
 
 
 @pytest.mark.parametrize(

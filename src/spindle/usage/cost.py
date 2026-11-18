@@ -7,34 +7,31 @@ from collections.abc import Iterable, Mapping
 
 from .rows import UsageRow
 
-SUMMARY_LINES = ("idle", "cold_start", "unattributed", "total")
-
 
 def attribute_cost(
     rows: Iterable[UsageRow],
     app_costs: Mapping[str, float],
     *,
     sessions: Mapping[str, Mapping[str, str]],
-    group_by: str = "run_id",
-) -> dict[str, float]:
+    group_by: tuple[str, ...] = ("run_id",),
+) -> dict[str | tuple[str, ...], float]:
     """Split each app's cost across groups by the tokens its GPUs processed.
 
-    Idle and cold-start time are priced at the app's cost per container-second and
-    reported as their own groups. Cost with no tokens to split it by is `unattributed`,
-    so the groups add up to `app_costs`. A label value that is also a summary line's
-    name is shown with the key, such as `idle (run_id)`.
+    A group is the tuple of a session's values for the `group_by` label keys, with
+    `unknown` for a missing label. Idle and cold-start time are priced at the app's
+    cost per container-second and reported under the string keys `idle` and
+    `cold_start`. Cost with no tokens to split it by is `unattributed`, so the
+    groups add up to `app_costs`.
     """
     by_app: dict[str, list[UsageRow]] = defaultdict(list)
     for row in rows:
         by_app[row.app_name].append(row)
 
-    def group(session_id: str | None) -> str:
-        if session_id is None:
-            return "unknown"
-        name = (sessions.get(session_id) or {}).get(group_by, "unknown")
-        return f"{name} ({group_by})" if name in SUMMARY_LINES else name
+    def group(session_id: str | None) -> tuple[str, ...]:
+        labels = sessions.get(session_id or "") or {}
+        return tuple(labels.get(key, "unknown") for key in group_by)
 
-    costs: dict[str, float] = defaultdict(float)
+    costs: dict[str | tuple[str, ...], float] = defaultdict(float)
     for app_name, cost in app_costs.items():
         app_rows = by_app.get(app_name, [])
         container_s = sum(
