@@ -7,7 +7,8 @@ Test it out with:
 ```
 
 Run tinker-cookbook's multi-turn guess-the-number GRPO recipe on one model, or on every
-model the server serves, and compare with that model's last successful run:
+model with a checkout LoRA recipe. Deploys an isolated checkout server, then
+runs the workloads against it and stops it on exit:
 
 ```shell
     uv run modal run -e spindle-ci -m synthetic_monitoring.config_validation::regress --model Qwen/Qwen3-8B
@@ -25,7 +26,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -34,10 +34,16 @@ from zoneinfo import ZoneInfo
 import modal
 
 from synthetic_monitoring.chart import RunPoint, render_timing_history_chart
+from synthetic_monitoring.checkout import (
+    checkout_server,
+    regression_recipes,
+    verify_checkout,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODAL_ENV = "spindle-ci"
 HISTORY_DICT_NAME = "spindle-synmon-prod-timings"
+REGRESSION_HISTORY_DICT_NAME = "spindle-synmon-checkout-timings"
 NIGHTLY_TZ = "America/Los_Angeles"
 TRAINER_APPS = {
     "dapo-math": "prod-trainer-prod-qwen38-27b-lora-64k",
@@ -132,12 +138,14 @@ hf_secret = modal.Secret.from_name("huggingface-secret", environment_name=MODAL_
 app = modal.App("spindle-synmon-launcher")
 
 
-def client_env(base_url: str) -> dict[str, str]:
+def client_env(base_url: str, api_key: str | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["TINKER_BASE_URL"] = base_url
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, ["/opt/proxy-auth", env.get("PYTHONPATH")])
     )
+    if api_key is not None:
+        env["TINKER_API_KEY"] = api_key
     return env
 
 
@@ -163,7 +171,7 @@ def guess_number_renderer(model: str) -> str | None:
 
 
 def run_guess_number(
-    model: str, renderer: str, base_url: str
+    model: str, renderer: str, base_url: str, api_key: str
 ) -> tuple[dict[str, float], dict[str, float]]:
     log_path = Path(tempfile.mkdtemp(prefix="synmon-guess-number-"))
     command = [
@@ -183,7 +191,10 @@ def run_guess_number(
     print("running", " ".join(command))
     started = time.time()
     subprocess.run(
-        command, check=True, env=client_env(base_url), timeout=GUESS_NUMBER["timeout_s"]
+        command,
+        check=True,
+        env=client_env(base_url, api_key),
+        timeout=GUESS_NUMBER["timeout_s"],
     )
     lines = (log_path / "metrics.jsonl").read_text().splitlines()
     steps = [json.loads(line) for line in lines if line.strip()]
@@ -285,9 +296,9 @@ def run_script(name: str, base_url: str) -> dict[str, float]:
     }
 
 
-def _history_dict():
+def _history_dict(name: str = HISTORY_DICT_NAME):
     return modal.Dict.from_name(
-        HISTORY_DICT_NAME, create_if_missing=True, environment_name=MODAL_ENV
+        name, create_if_missing=True, environment_name=MODAL_ENV
     )
 
 
@@ -334,9 +345,12 @@ def slack_report_blocks(rows: list[dict]) -> list[dict]:
 
 
 def _record(
-    config: str, point: RunPoint, one_success_per_day: bool = True
+    config: str,
+    point: RunPoint,
+    one_success_per_day: bool = True,
+    history_name: str = HISTORY_DICT_NAME,
 ) -> list[RunPoint]:
-    history = _history_dict()
+    history = _history_dict(history_name)
     points = [RunPoint(**item) for item in history.get(config, [])]
     if one_success_per_day and point.status == "success":
         day = datetime.fromtimestamp(point.ts, tz=ZoneInfo(NIGHTLY_TZ)).date()
@@ -348,7 +362,8 @@ def _record(
         ]
     points.append(point)
     history[config] = [
-        {k: v for k, v in asdict(p).items() if k != "metrics" or v} for p in points
+        {k: v for k, v in asdict(p).items() if v is not None and (k != "metrics" or v)}
+        for p in points
     ]
     return points
 
@@ -525,43 +540,38 @@ def launch_nightly() -> list[dict]:
     return rows
 
 
-@app.function(image=regression_image, secrets=[api_secret], timeout=10 * 60)
-def served_models() -> dict[str, str | None]:
-    """Each base model the server serves, with its guess-number renderer or None."""
-    headers = {
-        "x-api-key": os.environ["TINKER_API_KEY"],
-        "Modal-Key": os.environ["MODAL_PROXY_TOKEN_ID"],
-        "Modal-Secret": os.environ["MODAL_PROXY_TOKEN_SECRET"],
-    }
-    base_url = os.environ["TINKER_BASE_URL"].rstrip("/").removesuffix("/api/v1")
-    request = urllib.request.Request(
-        base_url + "/api/v1/get_server_capabilities", headers=headers
-    )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        models = json.load(response)["supported_models"]
-    return {
-        m["model_name"]: guess_number_renderer(m["model_name"])
-        for m in models
-        if "/" in m["model_name"]
-    }
+@app.function(image=regression_image, timeout=10 * 60)
+def regression_renderers(models: list[str]) -> dict[str, str | None]:
+    return {model: guess_number_renderer(model) for model in models}
+
+
+@app.function(image=regression_image, timeout=3 * 60)
+def verify_regression_server(
+    base_url: str, api_key: str, commit: str, recipes: list[str]
+) -> None:
+    verify_checkout(base_url, api_key, commit, recipes)
 
 
 @app.function(
     image=regression_image,
     timeout=GUESS_NUMBER["timeout_s"] + 15 * 60,
-    secrets=[api_secret],
     single_use_containers=True,
 )
-def regression(model: str, renderer: str) -> dict:
-    config = f"guess-number/{model}"
+def regression(
+    model: str,
+    recipe_name: str,
+    renderer: str,
+    base_url: str,
+    api_key: str,
+    commit: str,
+) -> dict:
+    config = f"guess-number/{recipe_name}"
     started = time.time()
     error: str | None = None
     timings: dict[str, float] = {}
     metrics: dict[str, float] = {}
     try:
-        timings, metrics = run_guess_number(
-            model, renderer, os.environ["TINKER_BASE_URL"]
-        )
+        timings, metrics = run_guess_number(model, renderer, base_url, api_key)
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         print(f"error: {config} failed: {error}")
@@ -571,8 +581,20 @@ def regression(model: str, renderer: str) -> dict:
         total_duration_s=time.time() - started,
         status="failed" if error else "success",
         metrics=metrics,
+        source_commit=commit,
+        server_url=base_url,
     )
-    return _row(config, point, _record(config, point, one_success_per_day=False), error)
+    return _row(
+        config,
+        point,
+        _record(
+            config,
+            point,
+            one_success_per_day=False,
+            history_name=REGRESSION_HISTORY_DICT_NAME,
+        ),
+        error,
+    )
 
 
 def select_runs(
@@ -606,25 +628,62 @@ def _print_regression(row: dict) -> None:
 
 
 @app.local_entrypoint()
-def regress(model: str = "", all_models: bool = False, parallel: int = 4) -> None:
-    if bool(model) == all_models:
-        raise SystemExit("Pass --model <base model>[,<base model>...] or --all-models.")
-    runnable, skipped = select_runs(
-        served_models.remote(),
-        None if all_models else list(dict.fromkeys(model.split(","))),
+def regress(
+    model: str = "", all_models: bool = False, parallel: int = 4, config: str = ""
+) -> None:
+    if sum((bool(model), all_models, bool(config))) != 1:
+        raise SystemExit(
+            "Pass --model <base model>[,...], --config <recipe>[,...], or --all-models."
+        )
+    if parallel < 1:
+        raise SystemExit("--parallel must be positive")
+    recipes = regression_recipes(
+        model.split(",") if model else None, config.split(",") if config else None
     )
+    renderers = regression_renderers.remote(
+        list(dict.fromkeys(recipe.model for recipe in recipes))
+    )
+    runnable, skipped = select_runs(renderers, None)
     for name, reason in skipped:
         print(f"skip   {name}: {reason}")
-    runs = regression.with_options(max_containers=parallel).starmap(
-        runnable, return_exceptions=True
-    )
+    supported = {name for name, _ in runnable}
+    recipes = [recipe for recipe in recipes if recipe.model in supported]
+    if not recipes:
+        raise SystemExit("No selected recipes have a cookbook renderer")
     failed = False
-    for (name, _), row in zip(runnable, runs, strict=True):
-        if isinstance(row, Exception):
-            print(f"FAILED guess-number/{name}: {type(row).__name__}: {row}")
-            failed = True
-        else:
-            _print_regression(row)
-            failed |= row["status"] != "success"
+    with checkout_server(recipes) as (base_url, api_key, commit, secret_name):
+        credentials = modal.Secret.from_name(secret_name, environment_name=MODAL_ENV)
+        verify_regression_server.with_options(secrets=[credentials]).remote(
+            base_url, api_key, commit, [recipe.name for recipe in recipes]
+        )
+        worker = regression.with_options(max_containers=parallel, secrets=[credentials])
+        calls = []
+        pending = set()
+        try:
+            for recipe in recipes:
+                print(f"Running {recipe.name}: {recipe.model}", flush=True)
+                call = worker.spawn(
+                    recipe.model,
+                    recipe.name,
+                    renderers[recipe.model],
+                    base_url,
+                    api_key,
+                    commit,
+                )
+                calls.append((recipe.name, call))
+                pending.add(call)
+            for name, call in calls:
+                try:
+                    row = call.get()
+                except Exception as exc:
+                    print(f"FAILED guess-number/{name}: {type(exc).__name__}: {exc}")
+                    failed = True
+                else:
+                    _print_regression(row)
+                    failed |= row["status"] != "success"
+                pending.remove(call)
+        finally:
+            for call in pending:
+                call.cancel(terminate_containers=True)
     if failed:
         raise SystemExit(1)

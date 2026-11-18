@@ -63,6 +63,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- The on-demand synthetic regression deploys the current checkout to a temporary server, verifies its commit and recipes, and runs the cookbook workloads there. It stops the deployment afterward and stores checkout results separately from nightly production monitoring. Clustered regression trainers exclude reserved GPU capacity.
+
 - The standard 32K LoRA recipes for Qwen3-8B, Qwen3.5-9B Instruct, Qwen3.8-27B and GLM-5.3 Flash use DFlash; Qwen3.5-4B uses native MTP. These replace the separate `with-spec` and `mtp` variants. Qwen3-8B samples on one B300 instead of two H100 GPUs, and Qwen3.5-4B uses B200 for training and sampling.
 
 ### Fixed
