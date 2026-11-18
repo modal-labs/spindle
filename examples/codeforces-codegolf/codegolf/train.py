@@ -451,6 +451,7 @@ async def _train(root, data, app, cfg, commit, telemetry):
                     )
                 publish_started = time.monotonic()
                 sampling = await training.save_weights_and_get_sampling_client_async()
+                metric["publication_seconds"] = time.monotonic() - publish_started
                 if buffer is not None:
                     buffer.publish(step, sampling)
                     metric["pipeline"]["publish_seconds"] = (
