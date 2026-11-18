@@ -10,3 +10,4 @@ dist/
 .env
 scripts/results/
 *.so
+reference_runs/**/.*.lock

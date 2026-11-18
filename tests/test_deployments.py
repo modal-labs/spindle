@@ -288,8 +288,9 @@ def test_model_weights_override_assets_but_not_the_served_model():
 
 
 @pytest.mark.parametrize("source", ["kv_events", "compare"])
-def test_deepseek_v051_image_rejects_native_kv_routing(source):
+def test_sglang_v0521_image_rejects_native_kv_routing(source):
     recipe = load(config_path("deepseek-v41-flash-lora-8k"))
+    recipe.inference_image = "sglang-v0.5.21-a3e0e17"
     recipe.inference_lora_routing_source = source
     with pytest.raises(
         ValueError,
@@ -361,7 +362,14 @@ def test_switching_routing_redeploys_the_pool():
     assert affinity.inference_identity() != resolved().inference_identity()
 
 
-@pytest.mark.parametrize("source", ["kv_events", "compare"])
+def test_config_saved_before_routing_source_restores_as_hook():
+    saved = resolved().model_dump()
+    del saved["recipe"]["inference_lora_routing_source"]
+    restored = DeploymentConfig.from_registry(saved)
+    assert restored.recipe.inference_lora_routing_source == "hook"
+
+
+@pytest.mark.parametrize("source", ["hook", "compare"])
 def test_switching_routing_source_redeploys_only_the_inference_pool(source):
     original = resolved()
     switched = resolved(inference_lora_routing_source=source)

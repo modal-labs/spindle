@@ -194,7 +194,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     native = json.loads(commands[0][4])
     assert native["context_length"] == row.max_context_length
     if kind == "lora":
-        assert calls[0][1]["routing_source"] == "hook"
+        assert calls[0][1]["routing_source"] == "kv_events"
         assert native["enable_lora"] is True
         assert native["max_lora_rank"] == 32
         assert native["lora_target_modules"] == [
@@ -239,12 +239,10 @@ def test_routing_source_gates_pool_environment_and_sidecar(
         if routing is None
         else routing
     )
-    if source != "hook" and (not lora or effective != "cache_wait"):
-        with pytest.raises(ValueError, match="LoRA recipe with inference_lora_routing"):
-            DeploymentConfig.create(spec)
-        return
-
     row = DeploymentConfig.create(spec)
+    if not lora or effective != "cache_wait":
+        source = "hook"
+        assert row.recipe.inference_lora_routing_source == "hook"
     pool = (
         LoraPoolSpec(row.definition_id) if lora else FFTPoolSpec.base(row.definition_id)
     )
@@ -627,6 +625,8 @@ UNUSED_IMAGE_WHITELIST = {
     "miles-v0.1.1-fdd808c",
     "miles-v0.1.2-f2f8447",
     "miles-v0.1.2-464efc9-glm53",
+    # DeepSeek-V4.1-Flash sampler image in Spindle 0.1.8 and earlier.
+    "sglang-v0.5.21-a3e0e17",
 }
 
 

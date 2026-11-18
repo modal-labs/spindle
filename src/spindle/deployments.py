@@ -96,7 +96,10 @@ class DeploymentConfig(BaseModel):
     @field_validator("recipe", mode="before")
     @classmethod
     def restore_recipe(cls, value):
-        return BaseConfig(**value) if isinstance(value, dict) else value
+        if not isinstance(value, dict):
+            return value
+        # Configs saved before this setting existed were deployed with the hook.
+        return BaseConfig(**{"inference_lora_routing_source": "hook", **value})
 
     @field_serializer("recipe")
     def serialize_recipe(self, recipe):
@@ -158,19 +161,17 @@ class DeploymentConfig(BaseModel):
                 else "affinity"
             )
             recipe.inference_lora_routing = routing
-        if routing_source != "hook":
-            if recipe.parameterization != "lora" or routing != "cache_wait":
-                raise ValueError(
-                    "inference_lora_routing_source='kv_events' or 'compare' requires "
-                    "a LoRA recipe with inference_lora_routing='cache_wait'; "
-                    "set inference_lora_routing_source='hook' otherwise"
-                )
+        if recipe.parameterization != "lora" or routing != "cache_wait":
+            # Nothing reads the prefix list, so neither producer runs.
+            recipe.inference_lora_routing_source = "hook"
+        elif routing_source != "hook":
             version = _SGLANG_IMAGE_VERSION.match(recipe.inference_image)
             if version and tuple(map(int, version.groups())) < (0, 5, 22):
                 raise ValueError(
                     f"inference_lora_routing_source={routing_source!r} requires adapter "
-                    "names in KV events, which SGLang added in v0.5.22; use 'hook' "
-                    "with v0.5.21 and earlier sampler images"
+                    "names in KV events, which SGLang added in v0.5.22; set "
+                    "inference_lora_routing_source='hook' with v0.5.21 and earlier "
+                    "sampler images"
                 )
             deployment.inference_settings["kv_events_config"] = json.dumps(
                 KV_EVENTS_CONFIG

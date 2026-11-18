@@ -4,6 +4,7 @@ import json
 import fastapi.encoders
 import httpx
 import pytest
+import zstandard
 from tinker import types
 from tinker.proto.request_conv import forward_backward_request_to_proto
 from tinker.types.forward_backward_input import ForwardBackwardInput
@@ -126,10 +127,14 @@ def test_proto_forward_backward_over_http() -> None:
             ),
         )
         body = forward_backward_request_to_proto(request).SerializeToString()
-        request_id = await client.forward_backward(
-            body,
+        request_id = await client.forward_backward(body, "application/x-protobuf")
+        # A retry may arrive compressed; it must resolve to the same request.
+        retried = await client.forward_backward(
+            zstandard.ZstdCompressor().compress(body),
             "application/x-protobuf",
+            "zstd",
         )
+        assert retried == request_id
         state = await client.retrieve_future(request_id, timeout=1.0)
         assert state.status == FutureStatus.COMPLETE
         payload = state.result["payload"]

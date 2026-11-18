@@ -107,6 +107,31 @@ A checkpoint always restores on the config that saved it, so `create_training_cl
 
 To train the linear-attention layers, start a new run on the bundled recipe. An old checkpoint can't be extended with the new adapters.
 
+### Older Qwen3.5-9B instruct 16K checkpoints
+
+`qwen35-9b-instruct-lora-16k` used to train on eight H100s with tensor parallel size 8. It now trains on one B200. A checkpoint loads only on the trainer layout, image and adapter type that saved it. Load a checkpoint saved with Spindle v0.1.7 or earlier into this variant, following the steps above:
+
+```python
+from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
+
+
+class Config(Parent):
+    name = "qwen35-9b-instruct-lora-16k-h100"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
+    trainer_gpu = "H100"
+    trainer_gpus_per_node = 8
+    overrides = {
+        **Parent.overrides,
+        "miles_cfg.megatron_to_hf_mode": "bridge",
+        "miles_cfg.lora_type": "lora",
+        "miles_cfg.tensor_model_parallel_size": 8,
+    }
+
+
+config = Config()
+```
+
 ## Spec decoding
 
 We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 
@@ -117,6 +142,7 @@ The following LoRA recipes enable speculative decoding by default:
 | --- | --- | --- |
 | `qwen35-4b-lora-32k` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
 | `qwen3-8b-lora-32k` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
+| `qwen35-9b-instruct-lora-16k` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
 | `qwen35-9b-instruct-lora-32k` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
 | `qwen38-27b-lora-32k` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
 | `glm53-flash-lora-32k` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |
@@ -146,7 +172,7 @@ The defaults suit training loops. An eval sends one short batch, and any replica
 - Stop idle replicas after 60 seconds.
 
 ```python
-from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
+from spindle.configs.qwen35_9b_lora_16k import Config as Parent
 
 
 class Config(Parent):
@@ -190,7 +216,7 @@ Native slots support dense projections, the output head and grouped expert proje
 
 ### Images
 
-`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53`, `miles-v0.2.0-8c5de26`, `miles-v0.2.0-e814245` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2`, `sglang-v0.5.23-c4182b2-glm53` and `sglang-v0.5.23-e003cf9` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26` support seeded LoRA initialization (`create_lora_training_client(seed=...)`), and `miles-v0.2.0-8c5de26` also adds Beam LoRA support. `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` (DeepSeek-V4.1) and `miles-v0.1.2-464efc9-glm53` (GLM-5.3 Flash) are the images Spindle 0.1.7 and earlier trained on. No bundled config uses them; set one as `trainer_image` to restore a training state saved on it, because a checkpoint restores only on the Miles revision that saved it. Use a `module:attribute` path for an image you define in your own code.
+`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53`, `miles-v0.1.2-99e1ebe-kpool-glm53`, `miles-v0.2.0-8c5de26`, `miles-v0.2.0-e814245` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2`, `sglang-v0.5.23-c4182b2-glm53` and `sglang-v0.5.23-e003cf9` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53`, `miles-v0.1.2-99e1ebe-kpool-glm53` and `miles-v0.2.0-8c5de26` support seeded LoRA initialization (`create_lora_training_client(seed=...)`), and `miles-v0.2.0-8c5de26` also adds Beam LoRA support. `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` (DeepSeek-V4.1) and `miles-v0.1.2-464efc9-glm53` (GLM-5.3 Flash) are the images Spindle 0.1.7 and earlier trained on. No bundled config uses them; set one as `trainer_image` to restore a training state saved on it, because a checkpoint restores only on the Miles revision that saved it. Use a `module:attribute` path for an image you define in your own code.
 
 Every bundled config sets both images itself rather than inheriting them, so upgrading SGLang or Miles for one config doesn't change any other. If you leave a field empty in your own config, it uses the backend default (`miles-v0.1.1-52a7a99`, `megatron-2d1fa8d` or `sglang-v0.5.23-c4182b2`), and that default can change in a later Spindle release. Set both fields to keep a config on the images it was tested with.
 
@@ -349,7 +375,7 @@ curl -sS -i -X POST "$TINKER_BASE_URL/api/v1/spindle/deployments" \
        "overrides": {"trainer_gpu": "H200", "miles_cfg.max_tokens_per_gpu": 8192}}'
 ~~~
 
-`DELETE /api/v1/spindle/deployments/{name}` removes a config and stops its trainer and inference apps, and `GET /api/v1/spindle/deployments` lists them. If models still train on the config, `DELETE` returns HTTP 409 listing them; add `?force=true` to remove it anyway, which ends their training.
+`DELETE /api/v1/spindle/deployments/{name}` removes a config and stops its trainer, inference, and sampler pool apps, and `GET /api/v1/spindle/deployments` lists them. If models still train on the config, `DELETE` returns HTTP 409 listing them; add `?force=true` to remove it anyway, which ends their training.
 
 Configs deployed before this API are already registered and listed. To move a config kept in a Python file onto the API, send its fields as `recipe` (`vars(config)`).
 

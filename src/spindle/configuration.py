@@ -88,7 +88,8 @@ class BaseConfig:
     # None picks cache_wait for LoRA pools with one SGLang data-parallel rank,
     # and affinity otherwise.
     inference_lora_routing = None
-    inference_lora_routing_source: RoutingSource = "hook"
+    # Where cache_wait pools get each replica's cached prefixes; "hook" for SGLang before v0.5.22.
+    inference_lora_routing_source: RoutingSource = "kv_events"
     # None uses Modal's default, which adds replicas as soon as load passes the target.
     inference_scaleup_window_s = None
     inference_scaledown_window_s = 300
