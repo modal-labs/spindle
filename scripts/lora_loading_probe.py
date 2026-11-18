@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import torch
+
 from spindle.inference.lora_packing import build_upload_plan
 
 _local = threading.local()
@@ -156,8 +158,6 @@ def patch_pool(cls: Any, module: dict) -> None:
                 lora_embed_tokens_module,
                 lora_lm_head_module,
             )
-        import torch  # Only the serving worker executes GPU activation.
-
         started, cpu = time.perf_counter(), time.thread_time()
         stats = {"copies": 0, "bytes": 0}
         _local.transfers = stats
