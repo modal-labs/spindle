@@ -7,8 +7,9 @@ from spindle.inference import lora_packing
 
 
 @pytest.mark.parametrize("cancelled", [None, "a", "d", "blocked"])
+@pytest.mark.parametrize("queued", [4, 8])
 def test_completed_upload_survives_until_admission_and_cancellation_releases_it(
-    monkeypatch: pytest.MonkeyPatch, cancelled: str | None
+    monkeypatch: pytest.MonkeyPatch, cancelled: str | None, queued: int
 ) -> None:
     class Event:
         def __init__(self) -> None:
@@ -63,7 +64,8 @@ def test_completed_upload_survives_until_admission_and_cancellation_releases_it(
         def __init__(self, loader: Loader) -> None:
             self.lora_overlap_loader = loader
             self.waiting_queue = [
-                SimpleNamespace(lora_id=uid, finished=lambda: False) for uid in "abcd"
+                SimpleNamespace(lora_id=uid, finished=lambda: False)
+                for uid in "abcdefgh"[:queued]
             ]
             self.chunked_req = None
             self.blocked = set()
@@ -115,18 +117,22 @@ def test_completed_upload_survives_until_admission_and_cancellation_releases_it(
             req for req in scheduler.waiting_queue if req.lora_id != cancelled
         ]
         scheduler.waiting_queue.append(
-            SimpleNamespace(lora_id="e", finished=lambda: False)
+            SimpleNamespace(lora_id="x", finished=lambda: False)
         )
         if cancelled == "blocked":
             scheduler.blocked.add("a")
     expected = {req.lora_id for req in scheduler.waiting_queue}
     if cancelled == "blocked":
         expected.remove("a")
-    for _ in range(3):
+    admitted = set()
+    for _ in range(8):
         batch = scheduler.get_next_batch_to_run(batch, None)
-    assert {req.lora_id for req in batch.reqs} == expected
+        admitted.update(req.lora_id for req in batch.reqs)
+        if len(batch.reqs) == 4:
+            batch = SimpleNamespace(reqs=[])
+    assert admitted == expected
     assert {req.lora_id for req in scheduler.waiting_queue} == (
         {"a"} if cancelled == "blocked" else set()
     )
     assert not loader._spindle_lora_reservations
-    assert loader.uploads == (4 if cancelled is None else 5)
+    assert loader.uploads == (queued if cancelled is None else queued + 1)
