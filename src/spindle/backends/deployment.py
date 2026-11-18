@@ -133,6 +133,13 @@ def backend_config(spec, asset_path="/assets/pending"):
     if spec.trainer_image.startswith("miles-v0.2.0-"):
         if config.megatron_to_hf_mode == "raw" and config.lora_type != "canonical_lora":
             raise ValueError("Miles native LoRA requires lora_type canonical_lora")
+        if (
+            config.megatron_to_hf_mode == "bridge"
+            and config.lora_type == "canonical_lora"
+        ):
+            raise ValueError(
+                "canonical_lora requires megatron_to_hf_mode raw in Spindle"
+            )
         if spec.trainer_nodes != 1:
             raise ValueError("miles-v0.2.0 supports only single-node trainers")
     elif config.lora_type == "canonical_lora" and (

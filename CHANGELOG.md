@@ -12,6 +12,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
+- Built-in Miles v0.2.0 images reject the unvalidated Bridge/canonical adapter combination before starting a trainer.
+
 - Malformed `spindle add` fields such as `--=1` reach recipe validation instead of being parsed as abbreviated top-level options.
 
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.

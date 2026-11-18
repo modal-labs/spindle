@@ -793,12 +793,32 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
             {"miles_cfg__megatron_to_hf_mode": "raw", "miles_cfg__lora_type": "lora"},
             "canonical_lora",
         ),
+        (
+            {
+                "miles_cfg__megatron_to_hf_mode": "bridge",
+                "miles_cfg__lora_type": "canonical_lora",
+            },
+            "requires megatron_to_hf_mode raw",
+        ),
         ({"trainer_nodes": 2}, "single-node"),
     ],
 )
-def test_miles_v020_rejects_untested_trainer_layouts(changes, match):
+@pytest.mark.parametrize("image", ["miles-v0.2.0-15afe21", "miles-v0.2.0-e814245"])
+def test_miles_v020_rejects_untested_trainer_layouts(changes, match, image):
     with pytest.raises(ValueError, match=match):
-        backend_config(recipe(trainer_image="miles-v0.2.0-15afe21", **changes))
+        backend_config(recipe(trainer_image=image, **changes))
+
+
+@pytest.mark.parametrize("image", ["miles-v0.2.0-15afe21", "miles-v0.2.0-e814245"])
+@pytest.mark.parametrize("mode,layout", [("raw", "canonical_lora"), ("bridge", "lora")])
+def test_miles_v020_accepts_supported_adapter_layouts(image, mode, layout):
+    backend_config(
+        recipe(
+            trainer_image=image,
+            miles_cfg__megatron_to_hf_mode=mode,
+            miles_cfg__lora_type=layout,
+        )
+    )
 
 
 @pytest.mark.parametrize("image", ["", "miles-v0.1.2-f2f8447"])
