@@ -13,6 +13,8 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterable, Mapping
+from typing import Any, TypedDict, cast
 
 import modal
 import modal.experimental
@@ -73,18 +75,19 @@ TRAINER_IMAGES = {
     "miles-v0.1.2-99e1ebe-glm53": miles_v012_image.glm53_image_02_99e1ebe,
     # https://github.com/modal-projects/miles/pull/44 Support per-adapter seeds in the v0.2.0 LoRA slot API (on top of #37, Beam LoRA)
     "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
+    # https://github.com/modal-projects/miles/pull/49 Native canonical and routed-expert adapters, including Nemotron Nano
+    "miles-v0.2.0-e814245": miles_v020_image.image_03_e814245,
     # Upstream NVIDIA/Megatron-LM commit; no Spindle fork
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {
+    "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
     # https://github.com/modal-projects/sglang/pull/81 Serve DeepSeek-V4 LoRA on quantized bases
     "sglang-v0.5.21-a3e0e17": deepseek_v41_image.image_01_a3e0e17,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks
     "sglang-v0.5.23-c4182b2": rollout_image.image_01_c4182b2,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks, with GLM-5.3 Flash sampler settings
     "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
-    # https://github.com/modal-projects/sglang/pull/99 Serve LoRA on all Qwen3.5 linear-attention projections
-    "sglang-v0.5.23-803bccb": rollout_image.image_02_803bccb,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {
@@ -94,7 +97,7 @@ DEFAULT_IMAGES = {
 }
 
 
-def image_for(backend, name=""):
+def image_for(backend: str, name: str = "") -> modal.Image:
     if not modal.is_local():
         return modal.Image.debian_slim()
     if ":" in name:
@@ -111,7 +114,9 @@ def image_for(backend, name=""):
     return images[name]
 
 
-def build_sampler_image(frontend, environment, images=("",)):
+def build_sampler_image(
+    frontend: str, environment: str | None, images: Iterable[str] = ("",)
+) -> None:
     """Build the pool image ahead of the first request; pools reuse the cached build."""
     app = modal.App.lookup(
         frontend, environment_name=environment, create_if_missing=True
@@ -120,7 +125,7 @@ def build_sampler_image(frontend, environment, images=("",)):
         image_for("sglang", name).build(app)
 
 
-def volumes_for(platform):
+def volumes_for(platform: dict[str, Any]) -> dict[str, modal.Volume]:
     storage = platform["storage"]
     return {
         KERNEL_CACHE_ROOT: kernel_cache_volume,
@@ -135,7 +140,9 @@ def volumes_for(platform):
     }
 
 
-def secrets_for(platform, *, training=False):
+def secrets_for(
+    platform: dict[str, Any], *, training: bool = False
+) -> list[modal.Secret]:
     names = platform["secrets"]
     result = [modal.Secret.from_name(names["api"], required_keys=["TINKER_API_KEY"])]
     if training:
@@ -150,7 +157,9 @@ def secrets_for(platform, *, training=False):
     return result
 
 
-def trainer_experimental_options(rdma, platform):
+def trainer_experimental_options(
+    rdma: bool, platform: dict[str, Any]
+) -> dict[str, bool]:
     if not rdma:
         return {}
     options = {"efa_enabled": True}
@@ -160,7 +169,12 @@ def trainer_experimental_options(rdma, platform):
     return options
 
 
-def server_placement(region):
+class ServerPlacement(TypedDict, total=False):
+    routing_region: str
+    compute_region: str
+
+
+def server_placement(region: str | None) -> ServerPlacement:
     if region is None:
         return {}
     return {"routing_region": region, "compute_region": region}
@@ -187,16 +201,21 @@ def log_scheduled_gpus(role: str) -> None:
     print(f"spindle {role} scheduled on {len(names)}x {', '.join(sorted(set(names)))}")
 
 
-def deployment_env(values):
+def deployment_env(values: Mapping[str, str]) -> dict[str, str]:
     """Keep user environment overrides separate from Spindle's deployment wiring."""
     if any(key.startswith("SPINDLE_") for key in values):
         raise ValueError("SPINDLE_ environment variables are managed by Spindle")
     return dict(values)
 
 
-def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None):
+def build_trainer_app(
+    deployment: DeploymentConfig,
+    platform: dict[str, Any] | None = None,
+    *,
+    image: modal.Image | None = None,
+) -> tuple[modal.App, modal.Function[[str, str, str], None, None]]:
     if platform is None:
-        platform = deployment.recipe.platform
+        platform = cast(dict[str, Any], deployment.recipe.platform)
     recipe = deployment.recipe
     trainer_name = recipe.name
     app = modal.App(
@@ -210,7 +229,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         "SPINDLE_APP_NAME": platform["frontend"],
     }
 
-    def trainer(instance_id: str, config_json: str, frontend_app_id: str):
+    def trainer(instance_id: str, config_json: str, frontend_app_id: str) -> None:
         timeline(TRAINER_COMPONENT, instance_id=instance_id).mark(
             "trainer_function_entered"
         )
@@ -233,7 +252,7 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
             else image_for(recipe.backend, recipe.trainer_image)
         ),
         gpu=gpu_request(recipe.trainer_gpu, recipe.trainer_gpus_per_node),
-        region=platform["modal"]["region"],  # ty: ignore[invalid-argument-type]
+        region=platform["modal"]["region"],
         cpu=recipe.trainer_cpu,
         memory=recipe.trainer_memory_mib,
         ephemeral_disk=recipe.trainer_disk_mib or None,
@@ -241,18 +260,22 @@ def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None
         max_containers=None,
         min_containers=0,
         single_use_containers=True,
-        volumes=volumes_for(platform),
+        volumes={**volumes_for(platform)},
         secrets=secrets_for(platform, training=True),
-        env=env,  # ty: ignore[invalid-argument-type]
+        env={**env},
         experimental_options=trainer_experimental_options(rdma, platform),
     )(trainer)
 
     return app, trainer
 
 
-def run_trainer(deployment, instance_id, platform=None):
+def run_trainer(
+    deployment: DeploymentConfig,
+    instance_id: str,
+    platform: dict[str, Any] | None = None,
+) -> None:
     if platform is None:
-        platform = deployment.recipe.platform
+        platform = cast(dict[str, Any], deployment.recipe.platform)
     recipe = deployment.recipe
     settings = deployment.trainer_settings
     assets = volumes_for(platform)["/assets"]
@@ -293,7 +316,7 @@ def run_trainer(deployment, instance_id, platform=None):
         else "spindle.backends.megatron_fft:build_executor"
     )
 
-    async def failed(error):
+    async def failed(error: Exception) -> None:
         await shared_kv().put(
             f"deployment_failure:{deployment.definition_id}",
             {"error": str(error), "instance_id": instance_id, "failed_at": time.time()},
@@ -330,10 +353,16 @@ def _warm_lora_pool(frontend: str, definition_id: str) -> None:
         logging.getLogger(__name__).exception("warm LoRA pool %s", definition_id)
 
 
-def build_rollout_app(deployment, pool, platform=None, *, image=None):
+def build_rollout_app(
+    deployment: DeploymentConfig,
+    pool: LoraPoolSpec | FFTPoolSpec,
+    platform: dict[str, Any] | None = None,
+    *,
+    image: modal.Image | None = None,
+) -> tuple[modal.App, modal.Server]:
     """Create one frozen-base LoRA pool or one FFT latest/pinned/base pool."""
     if platform is None:
-        platform = deployment.recipe.platform
+        platform = cast(dict[str, Any], deployment.recipe.platform)
     recipe = deployment.recipe
     lora = recipe.parameterization == "lora"
     if pool.definition_id != deployment.definition_id:
@@ -361,19 +390,21 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         cpu=recipe.inference_cpu,
         memory=recipe.inference_memory_mib,
         ephemeral_disk=recipe.inference_disk_mib or None,
-        volumes=volumes_for(platform),
+        volumes={**volumes_for(platform)},
         secrets=secrets_for(platform),
-        env=deployment_env(
-            SGLANG_ENV
-            # Split-K speeds up decode-sized LoRA batches on H200 and B200.
-            | ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
-            | recipe.inference_env
-            | (
-                {
-                    "SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1",
-                }
-                if lora and recipe.inference_lora_routing == "cache_wait"
-                else {}
+        env=dict(
+            deployment_env(
+                SGLANG_ENV
+                # Split-K speeds up decode-sized LoRA batches on H200 and B200.
+                | ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
+                | recipe.inference_env
+                | (
+                    {
+                        "SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1",
+                    }
+                    if lora and recipe.inference_lora_routing == "cache_wait"
+                    else {}
+                )
             )
         ),
         min_containers=minimum,
@@ -389,7 +420,7 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
     )
     class Server:
         @modal.enter()
-        def start(self):
+        def start(self) -> None:
             self.sidecar = None
             self.sglang = None
             self.busy_poll = None
@@ -460,7 +491,7 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                     self.busy_poll = poll_busy(usage, busy)
 
         @modal.exit()
-        def stop(self):
+        def stop(self) -> None:
             if self.busy_poll is not None:
                 self.busy_poll.set()
             terminate(self.sidecar)
@@ -469,10 +500,15 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
     return app, Server
 
 
-def build_inference_app(deployment, platform=None, *, image=None):
+def build_inference_app(
+    deployment: DeploymentConfig,
+    platform: dict[str, Any] | None = None,
+    *,
+    image: modal.Image | None = None,
+) -> tuple[modal.App, modal.Function[[str, dict[str, Any]], str, str]]:
     """Deploy the code that provisions this configuration's inference pools."""
     if platform is None:
-        platform = deployment.recipe.platform
+        platform = cast(dict[str, Any], deployment.recipe.platform)
 
     if image is None:
         image = (
@@ -490,7 +526,7 @@ def build_inference_app(deployment, platform=None, *, image=None):
     inference_name = deployment.name
 
     @app.function(name="provision", image=image, serialized=True, timeout=1800)
-    def provision(config_json: str, pool_data: dict):
+    def provision(config_json: str, pool_data: dict[str, Any]) -> str:
         saved = DeploymentConfig.model_validate_json(config_json)
         if saved.name != inference_name:
             raise ValueError("inference settings do not match the deployed app")

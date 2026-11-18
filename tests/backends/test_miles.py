@@ -117,6 +117,9 @@ class FakeMilesRuntime:
         self.calls.append(("torch_profile_stop", output_dir))
         return [{"trace": f"{output_dir}/rank0.trace.json.gz"}]
 
+    def torch_profile_wait(self):
+        self.calls.append(("torch_profile_wait",))
+
     def close(self):
         self.closed = True
 
@@ -224,13 +227,18 @@ def test_config_points_reference_load_at_the_hf_checkpoint() -> None:
     )
 
 
-def test_config_exports_lora_through_the_raw_converter() -> None:
-    config = _config(megatron_to_hf_mode="raw")
+@pytest.mark.parametrize("lora_type", ["lora", "canonical_lora"])
+def test_config_exports_lora_through_the_raw_converter(lora_type) -> None:
+    config, _, _ = parse_backend_config(
+        json.loads(
+            _config(megatron_to_hf_mode="raw", lora_type=lora_type).model_dump_json()
+        )
+    )
 
     arguments = config.miles_arguments()
     assert arguments[arguments.index("--megatron-to-hf-mode") + 1] == "raw"
     assert "--multi-lora-n-adapters" in arguments
-    assert arguments[arguments.index("--lora-type") + 1] == "lora"
+    assert arguments[arguments.index("--lora-type") + 1] == lora_type
     with pytest.raises(ValueError, match="megatron_to_hf_mode"):
         _config(megatron_to_hf_mode="direct")
 
@@ -531,6 +539,38 @@ def test_checkpoint_capture_persist_and_restore(tmp_path, monkeypatch) -> None:
         True,
     )
     assert backend.jobs["model-a"].optimizer_step == 3
+
+
+@pytest.mark.parametrize("saved_layout", [None, "lora", "canonical_lora"])
+@pytest.mark.parametrize("layout", ["lora", "canonical_lora"])
+def test_checkpoint_layout_is_checked_before_changing_a_live_slot(
+    tmp_path, saved_layout, layout
+) -> None:
+    backend = _backend(tmp_path)
+    backend.config = backend.config.model_copy(update={"lora_type": layout})
+    backend.accept_model("model-a", _spec())
+    backend.capture_checkpoint(
+        "model-a", "capture-a", destination="step-1", include_optimizer=True
+    )
+    uri = Path(backend.persist_checkpoint("capture-a", "step-1"))
+    metadata_path = uri / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata["lora_config"]["lora_type"] == layout
+    if saved_layout is None:
+        del metadata["lora_config"]["lora_type"]
+    else:
+        metadata["lora_config"]["lora_type"] = saved_layout
+    metadata_path.write_text(json.dumps(metadata))
+    backend.jobs["model-a"].optimizer_step = 7
+    calls = list(backend.runtime.calls)
+    if (saved_layout or "lora") == layout:
+        backend.load_checkpoint("model-a", str(uri))
+        assert backend.jobs["model-a"].optimizer_step == 0
+    else:
+        with pytest.raises(ValueError, match="LoRA layout"):
+            backend.load_checkpoint("model-a", str(uri))
+        assert backend.runtime.calls == calls
+        assert backend.jobs["model-a"].optimizer_step == 7
 
 
 def test_checkpoint_restore_refreshes_files_saved_by_another_container(

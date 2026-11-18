@@ -157,9 +157,12 @@ def test_candidate_scores_and_gradients_share_logits(nested):
     assert len(calls) == (2 if nested else 1)
 
 
+@pytest.mark.parametrize("v020_args", [False, True])
 @pytest.mark.parametrize("context_parallel_size", [1, 2])
 @pytest.mark.parametrize("widths", [(3, 3, None), (3, 2, 1), (3, 2, None), (1, 1, 1)])
-def test_candidate_columns_share_one_softmax_pass(context_parallel_size, widths):
+def test_candidate_columns_share_one_softmax_pass(
+    context_parallel_size, widths, v020_args
+):
     torch.manual_seed(5)
     targets = [
         torch.tensor([[1, 4, 6], [2, 5, 0]]),
@@ -203,10 +206,12 @@ def test_candidate_columns_share_one_softmax_pass(context_parallel_size, widths)
         _response_masks=lambda batch, _: batch["loss_masks"],
     )
     install_multi_target_hooks(losses, math_utils)
+    parallel = {"context_parallel_size": context_parallel_size}
     args = SimpleNamespace(
-        context_parallel_size=context_parallel_size,
         allgather_cp=False,
         true_on_policy_mode=False,
+        # Miles v0.2.0 keeps parallel sizes under args.backend.
+        **({"backend": SimpleNamespace(**parallel)} if v020_args else parallel),
     )
     batch = {
         "unconcat_tokens": [

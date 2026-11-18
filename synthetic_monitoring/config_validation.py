@@ -148,7 +148,13 @@ def guess_number_renderer(model: str) -> str | None:
     try:
         names = get_recommended_renderer_names(model)
     except (KeyError, ValueError):
-        return None
+        # Cookbook 0.6.1 omits these models; their existing renderers apply.
+        return {
+            "Qwen/Qwen2.5-3B": "role_colon",
+            "Qwen/Qwen2.5-7B-Instruct": "qwen3_instruct",
+            "Qwen/Qwen3-4B": "qwen3_disable_thinking",
+            "Qwen/Qwen3.5-2B": "qwen3_5_disable_thinking",
+        }.get(model)
     for preferred in ("disable_thinking", "low_reasoning"):
         for name in names:
             if preferred in name:

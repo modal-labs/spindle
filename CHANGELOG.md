@@ -6,15 +6,20 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- `spindle usage --group-by` takes several label keys separated by commas, such as `team_id,run_id`, and prints one column per key.
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
 - Sampling supports the Tinker SDK's `prompt_logprobs_last_n`. It returns prompt logprobs for only the last N prompt tokens, so the rest of the prompt can come from the prefix cache.
 - `nemotron35-super-vl-120b-a12b-lora-64k` trains LoRA adapters on NVIDIA Nemotron 3.5 Super VL 120B-A12B. Training and sampling take text only: image inputs are not accepted, and adapters apply to the language model.
 
 ### Removed
 
-- Removed unused trainer images `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53` and `miles-v0.2.0-15afe21`. Custom configs that select these names must use a supported image or define their own image with a `module:attribute` path. Checkpoints saved on the removed Miles revisions need an image with the same revision to restore.
+- Removed unused trainer images `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53` and `miles-v0.2.0-15afe21`, plus unused sampler image `sglang-v0.5.23-803bccb`. Custom configs that select these names must use a supported image or define their own image with a `module:attribute` path. Checkpoints saved on the removed Miles revisions need an image with the same revision to restore.
 
 ### Fixed
+
+- Built-in Miles v0.2.0 images reject the unvalidated Bridge/canonical adapter combination before starting a trainer.
+
+- Malformed `spindle add` fields such as `--=1` reach recipe validation instead of being parsed as abbreviated top-level options.
 
 - Miles LoRA images support seeded adapter initialization under `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26`. The default Miles image and every bundled Miles config use these. A checkpoint restores only on the Miles revision that saved it.
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
@@ -22,14 +27,19 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - Sampling requests with an option Spindle does not support, such as `prompt_alt_tokens_k` or `topk_sample_logprobs`, now fail right away with a 400 that names the option. Before, the server retried them three times before the client saw an error.
 - When a `forward_backward` or `forward` call runs out of GPU memory on a Miles LoRA trainer, the request fails with an out-of-memory error and the trainer keeps serving, with earlier gradients kept. This covers one-GPU trainers and dense models that use only data parallelism. Other layouts still restart the trainer.
 - On those trainers, when `forward_backward` requests from several clients run together and one runs out of GPU memory, only that request fails. The others run again one at a time and return their normal results. Before, every request that ran with it failed with the same error and lost its gradients.
+- Miles LoRA trainers deployed with `SPINDLE_TORCH_PROFILE_STEP` keep serving requests while the profiled step's trace is written. Before, every client on the trainer waited for the write, which took from half a minute to several minutes. Traces no longer record tensor shapes or memory unless you set `SPINDLE_TORCH_PROFILE_SHAPES=1` or `SPINDLE_TORCH_PROFILE_MEMORY=1`.
 - Miles LoRA trainers deployed with `SPINDLE_TORCH_PROFILE_STEP` no longer crash after the profiled step when the client sends the next `forward_backward` while sampler weights are still publishing. The trainer no longer writes `controller.trace.json.gz` or `controller.key_averages.txt`; the per-GPU `rank<N>` traces are unchanged.
 - `create_lora_training_client` now fails right away with a 400 when the deployment can't train the requested LoRA: a rank above its maximum, a different `train_attn` or `train_mlp`, or `train_unembed=False` on a deployment that trains the unembedding. The error names the settings to use. Before, it came only after a trainer had started and loaded the model.
 
 ### Changed
 
+- Synthetic guess-number regressions select existing cookbook renderers for Qwen2.5-3B/7B-Instruct, Qwen3-4B and Qwen3.5-2B instead of skipping them when cookbook model metadata is missing.
+
+- Single-node dense Qwen2.5, Qwen3, Qwen3.5, Qwen3.8 and Nemotron-3 Nano LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Nano uses FP32 expert reductions and deterministic kernels so repeated scores and optimizer replay agree. Older checkpoints require their original trainer image and adapter layout.
+
 - Reference runs use flat TOML definitions, a typed execution index, and flat JSONL outputs. A shared launcher selects the exact deployment for the existing DAPO-Math workload.
 - Miles multi-target scoring shares one vocabulary softmax across mixed candidate counts in supported scoring modes, preserving each datum's output shape and batch order.
-- `nemotron35-lightning-30b-a3b-lora-64k` trains on two B300s with one model copy per GPU. The previous two-H200 layout is now `nemotron35-lightning-30b-a3b-lora-64k-h200`; use it when B300s are not available. The 256K recipe and the shared-server recipe keep H200 trainers.
+- `nemotron35-lightning-30b-a3b-lora-64k` trains on two B300s with one model copy per GPU, and samples on B200s with 128 requests per sampler. The previous H200 layout is now `nemotron35-lightning-30b-a3b-lora-64k-h200`; use it when B300s or B200s are not available. The 256K recipe and the shared-server recipe keep H200 trainers and samplers.
 - MoE LoRA training on the default Miles images gives the expert token permute a scatter-add backward, which is faster than the BF16 index_add it replaces.
 - Miles LoRA training builds the logits gradient once per micro-batch instead of once per row. Steps with many short rows run faster and hold less memory; results are unchanged.
 - Every bundled config sets its own `trainer_image` and `inference_image`, so SGLang and Miles can be upgraded one config at a time. The images each config runs are unchanged. Configs that leave these fields empty still use the defaults. See [Images](docs/deployment-configs.md#images).
