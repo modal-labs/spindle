@@ -107,6 +107,31 @@ A checkpoint always restores on the config that saved it, so `create_training_cl
 
 To train the linear-attention layers, start a new run on the bundled recipe. An old checkpoint can't be extended with the new adapters.
 
+### Older Qwen3.5-9B instruct 16K checkpoints
+
+`qwen35-9b-instruct-lora-16k` used to train on eight H100s with tensor parallel size 8. It now trains on one B200. A checkpoint loads only on the trainer layout, image and adapter type that saved it. Load a checkpoint saved with Spindle v0.1.7 or earlier into this variant, following the steps above:
+
+```python
+from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
+
+
+class Config(Parent):
+    name = "qwen35-9b-instruct-lora-16k-h100"
+    trainer_image = "miles-v0.1.1-fdd808c"
+    inference_image = "sglang-v0.5.23-c4182b2"
+    trainer_gpu = "H100"
+    trainer_gpus_per_node = 8
+    overrides = {
+        **Parent.overrides,
+        "miles_cfg.megatron_to_hf_mode": "bridge",
+        "miles_cfg.lora_type": "lora",
+        "miles_cfg.tensor_model_parallel_size": 8,
+    }
+
+
+config = Config()
+```
+
 ## Spec decoding
 
 We have certain configs with speculative decoding using public DFlash checkpoints, which we finds increases rollout tps by 2-3x depending on workload. Note that this throughput gain is dependent on accept length which can differ based on your training domain, # of steps in RL, and sampling params. 
@@ -117,6 +142,7 @@ The following LoRA recipes enable speculative decoding by default:
 | --- | --- | --- |
 | `qwen35-4b-lora-32k` | Native MTP (`NEXTN`) | Reuses the target checkpoint |
 | `qwen3-8b-lora-32k` | DFlash | `z-lab/Qwen3-8B-DFlash-b16` |
+| `qwen35-9b-instruct-lora-16k` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
 | `qwen35-9b-instruct-lora-32k` | DFlash | `modal-labs/Qwen3.5-9B-DFlash` |
 | `qwen38-27b-lora-32k` | DFlash | `incoai/Qwen3.8-27B-DFlash2` |
 | `glm53-flash-lora-32k` | DFlash | `modal-labs/GLM-5.3-Flash-DFlash` |
@@ -146,7 +172,7 @@ The defaults suit training loops. An eval sends one short batch, and any replica
 - Stop idle replicas after 60 seconds.
 
 ```python
-from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
+from spindle.configs.qwen35_9b_lora_16k import Config as Parent
 
 
 class Config(Parent):

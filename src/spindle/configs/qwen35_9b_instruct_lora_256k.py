@@ -1,6 +1,6 @@
 """SWE-gym 256K recipe: four B300 trainer GPUs and eight B300 samplers."""
 
-from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
+from spindle.configs._qwen35_9b_instruct_lora import Qwen35InstructLora as Parent
 
 
 class Config(Parent):

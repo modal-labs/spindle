@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Changed
+
+- `qwen35-9b-instruct-lora-16k` trains on one B200 instead of eight H100s, and samples on B200 only, with the `modal-labs/Qwen3.5-9B-DFlash` drafter. It no longer falls back to H200 samplers. Older checkpoints also need the old eight-H100 layout; see "Older Qwen3.5-9B instruct 16K checkpoints" in docs/deployment-configs.md.
+
 ## 0.1.8 - 2026-11-18
 
 Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen and Nemotron-3 Nano LoRA recipes move to Miles native adapters, so checkpoints they saved before 0.1.8 load only on their original trainer image. A new recipe trains Nemotron 3.5 Super VL 120B-A12B on text, sampled logprobs match the trainer at any temperature, multi-target scoring handles mixed candidate counts in one pass, and a rewritten guide shows how to profile and tune a deployment config.
