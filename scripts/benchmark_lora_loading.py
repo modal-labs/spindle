@@ -250,6 +250,9 @@ def run_benchmark(
 ) -> dict:
     folder = Path("/out") / run_id
     folder.mkdir(parents=True)
+    anchor = {"wall": time.time(), "perf_counter": time.perf_counter()}
+    anchor["offset_s"] = anchor["wall"] - anchor["perf_counter"]
+    (folder / "clock-anchor.json").write_text(json.dumps(anchor))
     os.environ["SPINDLE_LORA_TRACE_ROOT"] = str(folder)
     adapter = Path("/adapters") / adapter_path
     weights = adapter / "adapter_model.safetensors"
@@ -271,7 +274,7 @@ def run_benchmark(
     )
     report = {
         "run_id": run_id,
-        "workload_version": 7,
+        "workload_version": 8,
         "source": "c4182b22139a5730c9f18907cc0b178a305bb0f1",
         "task_id": os.environ.get("MODAL_TASK_ID"),
         "settings": settings,
