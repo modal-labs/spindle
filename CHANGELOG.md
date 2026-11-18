@@ -10,7 +10,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
-- The 35 single-node Miles LoRA recipes in this upgrade use Miles v0.2.0 at fork revision `1dc972b`. Qwen3.6 MoE and GLM-5.3 Flash 48K/64K/256K use native canonical adapters; GPT-OSS and other Nemotron recipes retain Bridge adapters. GLM Flash uses blockwise native indexer scoring to bound memory at 256K.
+- The 35 single-node Miles LoRA recipes in this upgrade use Miles v0.2.0 at fork revision `fd8f5c1`. Qwen3.6 MoE and GLM-5.3 Flash 48K/64K/256K use native canonical adapters; GPT-OSS and other Nemotron recipes retain Bridge adapters. GLM Flash uses blockwise native indexer scoring to bound memory at 256K.
 
 - DeepSeek-V4.1-Flash samplers run SGLang v0.5.23 like every other sampler, with decoder SWA bounded replay turned off. On v0.5.23 that feature made LoRA samplers crash on long prompts, and its logprobs don't match a full prefill. The samplers switch over at their next deploy (#304).
 

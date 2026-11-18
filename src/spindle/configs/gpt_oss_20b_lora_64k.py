@@ -3,7 +3,7 @@ from spindle.configs.gpt_oss_20b_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "gpt-oss-20b-lora-64k"
-    trainer_image = "miles-v0.2.0-1dc972b"
+    trainer_image = "miles-v0.2.0-fd8f5c1"
     inference_image = "sglang-v0.5.23-c4182b2"
     overrides = {
         "max_context_length": 65536,
