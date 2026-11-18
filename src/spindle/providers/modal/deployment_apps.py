@@ -184,6 +184,24 @@ def deployment_env(values):
     return dict(values)
 
 
+def sampler_env(recipe) -> dict[str, str]:
+    """Environment variables for a sampler container; Spindle's routing switch wins."""
+    lora = recipe.parameterization == "lora"
+    env = dict(SGLANG_ENV)
+    if lora:
+        # Split-K speeds up decode-sized LoRA batches on H200 and B200.
+        env["SGLANG_ENABLE_LORA_CSGMV_SPLIT_K"] = "1"
+    env |= recipe.inference_env
+    if (
+        lora
+        and recipe.inference_lora_routing == "cache_wait"
+        and recipe.inference_lora_routing_source in {"hook", "compare"}
+    ):
+        # Turns on the scheduler hook in Spindle's SGLang fork.
+        env["SGLANG_SPINDLE_ROUTING_OBSERVATIONS"] = "1"
+    return deployment_env(env)
+
+
 def build_trainer_app(deployment: DeploymentConfig, platform=None, *, image=None):
     if platform is None:
         platform = deployment.recipe.platform
@@ -353,19 +371,7 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
         ephemeral_disk=recipe.inference_disk_mib or None,
         volumes=volumes_for(platform),
         secrets=secrets_for(platform),
-        env=deployment_env(
-            SGLANG_ENV
-            # Split-K speeds up decode-sized LoRA batches on H200 and B200.
-            | ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
-            | recipe.inference_env
-            | (
-                {"SGLANG_SPINDLE_ROUTING_OBSERVATIONS": "1"}
-                if lora
-                and recipe.inference_lora_routing == "cache_wait"
-                and recipe.inference_lora_routing_source in {"hook", "compare"}
-                else {}
-            )
-        ),
+        env=sampler_env(recipe),
         min_containers=minimum,
         max_containers=maximum,
         target_concurrency=recipe.inference_target_concurrency
@@ -404,16 +410,16 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                     recipe.inference_startup_timeout_s,
                 )
                 startup.mark("sglang_healthy")
-                self.sidecar = (
-                    start_lora_sidecar(
+                if lora:
+                    self.sidecar = start_lora_sidecar(
                         port=8000,
                         sglang_port=8001,
                         bulletin_root="/bulletin",
                         bulletin_volume=platform["storage"]["bulletin"],
                         routing_source=recipe.inference_lora_routing_source,
                     )
-                    if lora
-                    else start_fft_sidecar(
+                else:
+                    self.sidecar = start_fft_sidecar(
                         port=8000,
                         sglang_port=8001,
                         bulletin_root="/bulletin",
@@ -421,7 +427,6 @@ def build_rollout_app(deployment, pool, platform=None, *, image=None):
                         run_id=pool.model_id,
                         pinned_version=None if pool.latest else pool.version,
                     )
-                )
                 self.supervisor = supervise_children(self.sglang, self.sidecar)
                 wait_http(
                     "http://127.0.0.1:8000/health",

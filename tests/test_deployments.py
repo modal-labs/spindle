@@ -279,7 +279,7 @@ def test_deepseek_v051_image_rejects_native_kv_routing(source):
     recipe.inference_lora_routing_source = source
     with pytest.raises(
         ValueError,
-        match=r'Use inference_lora_routing_source="hook" with SGLang v0.5.21',
+        match="requires adapter names in KV events, which SGLang added in v0.5.22",
     ):
         DeploymentConfig.create(recipe)
 
@@ -290,7 +290,7 @@ def test_deepseek_v051_image_rejects_native_kv_routing(source):
         (dict(inference_lora_routing="nearest"), "unknown inference_lora_routing"),
         (
             dict(inference_lora_routing_source="other"),
-            "unknown inference_lora_routing_source",
+            "Input should be 'hook', 'kv_events' or 'compare'",
         ),
         (
             dict(inference_routing_prefill_tokens_per_second=0),
@@ -353,7 +353,6 @@ def test_switching_routing_source_redeploys_only_the_inference_pool(source):
     switched = resolved(inference_lora_routing_source=source)
     assert switched.inference_identity() != original.inference_identity()
     assert switched.trainer_identity() == original.trainer_identity()
-    assert len(switched.inference_identity()) == len(original.inference_identity()) + 1
 
 
 def test_trainer_image_is_part_of_trainer_identity():

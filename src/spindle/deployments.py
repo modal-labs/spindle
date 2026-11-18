@@ -9,18 +9,30 @@ import runpy
 import sys
 from importlib.resources import files
 from pathlib import Path
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    TypeAdapter,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from spindle import __version__
 from spindle.backends.deployment import (
     resolve_backend_settings,
     resolve_draft_asset_path,
 )
-from spindle.configuration import KV_EVENTS_CONFIG, ROUTING_SOURCES, BaseConfig
+from spindle.configuration import KV_EVENTS_CONFIG, BaseConfig, RoutingSource
 
 # Modal's smallest ephemeral disk request.
 MIN_EPHEMERAL_DISK_MIB = 524_288
+
+
+_ROUTING_SOURCE = TypeAdapter(RoutingSource)
+_SGLANG_IMAGE_VERSION = re.compile(r"sglang-v(\d+)\.(\d+)\.(\d+)-")
 
 
 def _jsonable(value):
@@ -90,6 +102,11 @@ class DeploymentConfig(BaseModel):
     def serialize_recipe(self, recipe):
         return vars(recipe)
 
+    @model_validator(mode="after")
+    def check_routing_source(self) -> Self:
+        _ROUTING_SOURCE.validate_python(self.recipe.inference_lora_routing_source)
+        return self
+
     @classmethod
     def from_registry(cls, row: object) -> DeploymentConfig:
         """Load a stored config, ignoring fields a newer Spindle wrote."""
@@ -114,8 +131,6 @@ class DeploymentConfig(BaseModel):
         if routing not in {None, "affinity", "cache_wait"}:
             raise ValueError(f"unknown inference_lora_routing: {routing}")
         routing_source = pinned.inference_lora_routing_source
-        if routing_source not in ROUTING_SOURCES:
-            raise ValueError(f"unknown inference_lora_routing_source: {routing_source}")
         prefill_rate = pinned.inference_routing_prefill_tokens_per_second
         if prefill_rate is not None and not (
             isinstance(prefill_rate, (int, float))
@@ -150,10 +165,12 @@ class DeploymentConfig(BaseModel):
                     "a LoRA recipe with inference_lora_routing='cache_wait'; "
                     "set inference_lora_routing_source='hook' otherwise"
                 )
-            if recipe.inference_image.startswith("sglang-v0.5.21-"):
+            version = _SGLANG_IMAGE_VERSION.match(recipe.inference_image)
+            if version and tuple(map(int, version.groups())) < (0, 5, 22):
                 raise ValueError(
-                    'Use inference_lora_routing_source="hook" with SGLang v0.5.21 '
-                    "sampler images; their KV events carry no adapter names"
+                    f"inference_lora_routing_source={routing_source!r} requires adapter "
+                    "names in KV events, which SGLang added in v0.5.22; use 'hook' "
+                    "with v0.5.21 and earlier sampler images"
                 )
             deployment.inference_settings["kv_events_config"] = json.dumps(
                 KV_EVENTS_CONFIG
@@ -244,7 +261,7 @@ class DeploymentConfig(BaseModel):
 
     def inference_identity(self) -> tuple:
         recipe = self.recipe
-        identity = (
+        return (
             recipe.name,
             recipe.model,
             recipe.model_weights,
@@ -269,13 +286,9 @@ class DeploymentConfig(BaseModel):
             recipe.inference_env,
             # cache_wait pools publish routing observations; others do not.
             recipe.inference_lora_routing,
+            recipe.inference_lora_routing_source,
             self.inference_settings,
             self.spindle_version,
-        )
-        return identity + (
-            (recipe.inference_lora_routing_source,)
-            if recipe.inference_lora_routing_source != "hook"
-            else ()
         )
 
 
