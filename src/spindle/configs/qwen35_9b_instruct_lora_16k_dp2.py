@@ -3,7 +3,7 @@ from spindle.configs._qwen35_9b_instruct_lora import Qwen35InstructLora as Paren
 
 class Config(Parent):
     name = "qwen35-9b-instruct-lora-16k-dp2"
-    trainer_image = "miles-v0.2.0-860ffee"
+    trainer_image = "miles-v0.2.0-26989c0"
     inference_image = "sglang-v0.5.23-e003cf9"
     overrides = {
         "miles_cfg.megatron_to_hf_mode": "raw",

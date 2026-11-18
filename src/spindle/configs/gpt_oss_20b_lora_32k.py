@@ -3,7 +3,7 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "gpt-oss-20b-lora-32k"
-    trainer_image = "miles-v0.2.0-860ffee"
+    trainer_image = "miles-v0.2.0-26989c0"
     inference_image = "sglang-v0.5.23-c4182b2"
     model = "openai/gpt-oss-20b"
     model_weights = "lmsys/gpt-oss-20b-bf16"
