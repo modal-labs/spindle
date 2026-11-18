@@ -1,6 +1,7 @@
 import importlib
 import importlib.util
 import builtins
+import json
 import sys
 import threading
 import types
@@ -280,7 +281,8 @@ def test_gloo_group_waits_as_long_as_the_distributed_timeout(
     assert groups == [{"backend": "gloo", "timeout": timedelta(minutes=expected)}]
 
 
-def test_v020_native_worker_starts_without_loading_the_bridge_provider(monkeypatch):
+@pytest.mark.parametrize("mode", ["raw", "bridge"])
+def test_v020_worker_initializes_its_selected_provider(monkeypatch, tmp_path, mode):
     _load_actor(monkeypatch)
     from spindle.backends.score_centering import REPLAY_LOSSES
 
@@ -313,15 +315,60 @@ def test_v020_native_worker_starts_without_loading_the_bridge_provider(monkeypat
         "miles.backends.megatron_utils.lora.actor"
     ].MultiLoRATrainRayActor
 
+    bridges = {}
+    if mode == "bridge":
+        from spindle.backends.miles_runtime.nemotron_h_omni import ARCHITECTURE
+
+        (tmp_path / "config.json").write_text(
+            json.dumps({"architectures": [ARCHITECTURE]})
+        )
+        _module(monkeypatch, "miles_plugins.megatron_bridge")
+        auto_bridge = _module(
+            monkeypatch, "megatron.bridge.models.conversion.auto_bridge"
+        )
+        auto_bridge.SUPPORTED_HF_ARCHITECTURES = ()
+        _module(
+            monkeypatch, "megatron.bridge.models.conversion.mapping_registry"
+        ).MegatronMappingRegistry = lambda *mappings: mappings
+        _module(
+            monkeypatch, "megatron.bridge.models.conversion.model_bridge"
+        ).MegatronModelBridge = types.SimpleNamespace(
+            register_bridge=lambda *, source, target: (
+                lambda bridge: bridges.setdefault(source, bridge)
+            )
+        )
+
+        class NemotronHBridge:
+            def provider_bridge(self, pretrained):
+                return pretrained.config
+
+        class MilesNemotronHBridge(NemotronHBridge):
+            pass
+
+        _module(
+            monkeypatch, "megatron.bridge.models.nemotronh.nemotron_h_bridge"
+        ).NemotronHBridge = NemotronHBridge
+        _module(monkeypatch, "megatron.core.models.mamba").MambaModel = object
+
     def initialize(self, args, role, **kwargs):
         self.mode = args.megatron_to_hf_mode
+        if self.mode == "bridge":
+            assert ARCHITECTURE in auto_bridge.SUPPORTED_HF_ARCHITECTURES
+            provider = bridges[ARCHITECTURE]()
+            self.language_config = provider.provider_bridge(
+                types.SimpleNamespace(
+                    config=types.SimpleNamespace(llm_config="text config")
+                )
+            )
         return 0
 
     monkeypatch.setattr(parent, "init", initialize, raising=False)
     original_import = builtins.__import__
 
     def without_bridge(name, *args, **kwargs):
-        if name.startswith("megatron.bridge") or name == "miles_plugins.models":
+        if mode == "raw" and (
+            name.startswith("megatron.bridge") or name == "miles_plugins.models"
+        ):
             raise AssertionError(f"native Spindle worker imported {name}")
         return original_import(name, *args, **kwargs)
 
@@ -338,13 +385,16 @@ def test_v020_native_worker_starts_without_loading_the_bridge_provider(monkeypat
     actor = module.SpindleMilesTrainRayActor()
     result = actor.init(
         types.SimpleNamespace(
-            megatron_to_hf_mode="raw",
+            megatron_to_hf_mode=mode,
+            hf_checkpoint=str(tmp_path),
             backend=types.SimpleNamespace(distributed_timeout_minutes=30),
         ),
         "actor",
     )
     assert result == 0
-    assert actor.mode == "raw"
+    assert actor.mode == mode
+    if mode == "bridge":
+        assert actor.language_config == "text config"
 
 
 def test_checkpoint_is_published_from_committed_state(monkeypatch, tmp_path) -> None:
