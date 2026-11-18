@@ -61,6 +61,8 @@ When several clients share a trainer, it trains all of their queued batches toge
 
 Sampler replicas scale between `inference_min_replicas` and `inference_max_replicas`. Each sampled sequence counts as one request, so `num_samples=4` counts four times. By default another replica starts once every replica holds `sglang_cfg.max_running_requests` requests. Set `inference_target_concurrency` lower to scale out earlier. Idle replicas stop after `inference_scaledown_window_s`, so replicas added in one sampling round stay up for the next.
 
+In an RL loop the sampler sits idle while the trainer runs a step. A step includes `forward_backward`, `optim_step` and `save_weights_for_sampler` for every model you train, and the first step also compiles kernels. If the step takes longer than `inference_scaledown_window_s`, the last replica stops, and the next sampling round waits several minutes for a new one to load. Set the window longer than your slowest step. The default of 300 seconds fits steps of up to about four minutes.
+
 `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
 
 ### Older Qwen3.5 LoRA checkpoints
@@ -164,7 +166,7 @@ separately from these deployment recipes.
 
 ## Recommended configuration for eval jobs
 
-The defaults suit training loops. An eval sends one short batch, and any replica it starts takes a few minutes to load, so it arrives after the work is done and then sits idle. For eval-only configs:
+The defaults suit training loops. An eval sends one short batch, and any replica it starts takes a few minutes to load, so it arrives after the work is done and then sits idle. For eval-only configs that no trainer samples from:
 
 - Give one replica more slots, so it can take the whole batch.
 - Wait 120 seconds before adding a replica.
@@ -190,6 +192,8 @@ config = Config()
 ```
 
 On a running server, add this as its own config with `spindle add` and pass its name as `base_model`.
+
+Don't use these settings in a config you also train with. A 60-second window stops the sampler during almost every training step.
 
 ## Backend options
 
