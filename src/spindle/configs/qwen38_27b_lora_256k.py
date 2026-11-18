@@ -5,12 +5,10 @@ class Config(Parent):
     name = "qwen38-27b-lora-256k"
     trainer_image = "miles-v0.2.0-8c5de26"
     inference_image = "sglang-v0.5.23-c4182b2"
-    trainer_env = {
-        "TRITON_CACHE_DIR": "/tmp/spindle-kernel-cache/triton",
-        "TORCHINDUCTOR_CACHE_DIR": "/tmp/spindle-kernel-cache/inductor",
-    }
     max_context_length = 262144
     overrides = {
+        "trainer_env.TRITON_CACHE_DIR": "/tmp/spindle-kernel-cache/triton",
+        "trainer_env.TORCHINDUCTOR_CACHE_DIR": "/tmp/spindle-kernel-cache/inductor",
         "trainer_nodes": 2,
         "trainer_gpu": "H200",
         "miles_cfg.tensor_model_parallel_size": 2,
