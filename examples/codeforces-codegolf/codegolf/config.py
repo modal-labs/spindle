@@ -9,6 +9,8 @@ DEFAULT_RUN = "golf"
 DEFAULT_VARIANT = "prompt-v8"
 DEFAULT_STEPS = 1000
 VARIANTS = (
+    "stream-v11",
+    "batch-v11",
     "thinking-v10",
     "thinking-v9",
     "prompt-v8",
@@ -24,7 +26,13 @@ ADVANTAGE_ESTIMATORS = ("grpo", "tailrl")
 
 def with_config_defaults(config):
     """Interpret specs saved before estimator selection and multi-sample eval."""
-    return {"advantage_estimator": "grpo", "eval_samples": 1, **config}
+    return {
+        "advantage_estimator": "grpo",
+        "eval_samples": 1,
+        "stream_minibatches": False,
+        "sequence_mean": False,
+        **config,
+    }
 
 
 @dataclasses.dataclass
@@ -46,8 +54,14 @@ class Config:
     output_token_scale: int = 16384
     advantage_std_floor: float = 0.5
     advantage_estimator: str = "grpo"
+    stream_minibatches: bool = False
+    sequence_mean: bool = False
 
     def __post_init__(self):
+        if self.stream_minibatches and (
+            not self.sequence_mean or getattr(self, "async_rollouts", False)
+        ):
+            raise ValueError("Streaming requires sequence_mean and no rollout buffer")
         if self.advantage_estimator not in ADVANTAGE_ESTIMATORS:
             raise ValueError(f"Unknown advantage estimator: {self.advantage_estimator}")
         if not isinstance(self.eval_samples, int) or self.eval_samples < 1:
@@ -95,6 +109,17 @@ class ThinkingConfig(ExplicitPromptConfig):
 
 
 @dataclasses.dataclass
+class BatchConfig(ExplicitPromptConfig):
+    async_rollouts: bool = False
+    sequence_mean: bool = True
+
+
+@dataclasses.dataclass
+class StreamConfig(BatchConfig):
+    stream_minibatches: bool = True
+
+
+@dataclasses.dataclass
 class LongThinkingConfig(ThinkingConfig):
     # Sampling clamps this to 65,536 minus the prompt and one reserved token.
     max_tokens: int = 65536
@@ -103,7 +128,11 @@ class LongThinkingConfig(ThinkingConfig):
 def config_for(variant=DEFAULT_VARIANT, steps=DEFAULT_STEPS, *, eval_samples=None):
     if steps <= 0:
         raise ValueError("steps must be positive")
-    if variant == "thinking-v10":
+    if variant == "stream-v11":
+        config = StreamConfig(steps=steps)
+    elif variant == "batch-v11":
+        config = BatchConfig(steps=steps)
+    elif variant == "thinking-v10":
         config = LongThinkingConfig(steps=steps)
     elif variant == "thinking-v9":
         config = ThinkingConfig(steps=steps)

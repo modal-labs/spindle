@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from codegolf import train as module
-from codegolf.config import AsyncConfig
+from codegolf.config import AsyncConfig, StreamConfig
 from codegolf.reward import advantages, score
 from codegolf.store import Store
 
@@ -46,10 +46,10 @@ class Sampler:
         ).result_async()
 
 
-@pytest.mark.parametrize("async_mode", [False, True])
-@pytest.mark.parametrize("failure", ["optimizer", "publication"])
+@pytest.mark.parametrize("mode", ["batch", "buffer", "stream"])
+@pytest.mark.parametrize("failure", ["forward", "optimizer", "publication"])
 @pytest.mark.parametrize("estimator", ["grpo", "tailrl"])
-def test_checkpoint_recovery(tmp_path, monkeypatch, failure, async_mode, estimator):
+def test_checkpoint_recovery(tmp_path, monkeypatch, failure, mode, estimator):
     created, restored, released = [], [], []
     identities = []
     fault = [True]
@@ -58,6 +58,7 @@ def test_checkpoint_recovery(tmp_path, monkeypatch, failure, async_mode, estimat
         def __init__(self):
             self.model_id = str(len(created))
             self.step = 0
+            self.forward_groups = 0
 
         def get_tokenizer(self):
             return Tokenizer()
@@ -72,6 +73,7 @@ def test_checkpoint_recovery(tmp_path, monkeypatch, failure, async_mode, estimat
             return Sampler()
 
         async def forward_backward_async(self, items, loss, **kwargs):
+            self.forward_groups += 1
             assert loss == "ppo"
             assert len(items) == cfg.group_size
             rewards = [
@@ -95,9 +97,19 @@ def test_checkpoint_recovery(tmp_path, monkeypatch, failure, async_mode, estimat
                 assert inputs["weights"].data[0] == 0
                 total_weights.append(sum(inputs["weights"].data))
             assert total_weights == pytest.approx([total_weights[0]] * len(items))
+            if (
+                failure == "forward"
+                and self.step == 1
+                and self.forward_groups == cfg.prompts_per_step
+                and fault[0]
+            ):
+                fault[0] = False
+                return Future(error=RuntimeError("lost forward response"))
             return Future(SimpleNamespace(metrics={}))
 
         async def optim_step_async(self, params):
+            assert self.forward_groups == cfg.prompts_per_step
+            self.forward_groups = 0
             self.step += 1
             # The optimizer applied the update, but its response was lost.
             if failure == "optimizer" and self.step == 2 and fault[0]:
@@ -156,10 +168,14 @@ def test_checkpoint_recovery(tmp_path, monkeypatch, failure, async_mode, estimat
             }
         )
     )
-    config_type = AsyncConfig if async_mode else module.Config
+    config_type = {
+        "batch": module.Config,
+        "buffer": AsyncConfig,
+        "stream": StreamConfig,
+    }[mode]
     cfg = config_type(
         steps=3,
-        prompts_per_step=1,
+        prompts_per_step=2 if mode == "stream" else 1,
         group_size=4,
         eval_problems=1,
         eval_samples=4 if estimator == "tailrl" else 1,
@@ -167,7 +183,7 @@ def test_checkpoint_recovery(tmp_path, monkeypatch, failure, async_mode, estimat
         checkpoint_every=1,
         eval_every=1,
     )
-    if async_mode:
+    if mode == "buffer":
         cfg = dataclasses.replace(
             cfg, rollout_workers=2, buffer_batches=2, prefill_batches=2
         )
@@ -207,7 +223,7 @@ def test_checkpoint_recovery(tmp_path, monkeypatch, failure, async_mode, estimat
     assert len(created) == 3 and created[-1].step == 5
     assert store.read("completions/0003.json")["step"] == 3
     assert store.read("complete.json")["step"] == 5
-    if async_mode:
+    if mode == "buffer":
         for metric_path in (tmp_path / "run" / "metrics").glob("*.json"):
             metric = json.loads(metric_path.read_text())
             assert 0 <= metric["pipeline"]["policy_lag_upper_bound"] <= 4

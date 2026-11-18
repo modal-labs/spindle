@@ -23,6 +23,8 @@ def validate_config_change(source, destination):
         "eval_samples",
         "steps",
         "async_rollouts",
+        "stream_minibatches",
+        "sequence_mean",
         "max_policy_lag",
         "rollout_workers",
         "buffer_batches",

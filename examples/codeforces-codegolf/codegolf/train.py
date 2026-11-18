@@ -37,6 +37,67 @@ async def gather_work(*awaitables):
     return [task.result() for task in tasks]
 
 
+def training_datums(records, cfg):
+    total_sequences = cfg.prompts_per_step * cfg.group_size
+    token_scale = (
+        1.0
+        if cfg.sequence_mean
+        else sum(len(row["tokens"]) for record in records for row in record["rows"])
+    )
+    items = []
+    for record in records:
+        adv = advantages(
+            [row["reward"] for row in record["rows"]],
+            cfg.advantage_std_floor,
+            estimator=cfg.advantage_estimator,
+        )
+        for row, advantage in zip(record["rows"], adv, strict=True):
+            items.append(
+                datum(
+                    record["prompt"],
+                    row["tokens"],
+                    row["logprobs"],
+                    advantage,
+                    token_scale / (total_sequences * len(row["tokens"])),
+                )
+            )
+    return items
+
+
+async def forward_backward(training, records, cfg):
+    future = await training.forward_backward_async(
+        training_datums(records, cfg),
+        "ppo",
+        loss_fn_config={"clip_low_threshold": 0.8, "clip_high_threshold": 1.2},
+    )
+    return await future.result_async()
+
+
+async def streamed_forward(training, awaitables, cfg):
+    records, metrics = [], []
+    wait_seconds = forward_seconds = 0.0
+    async with asyncio.TaskGroup() as group:
+        tasks = [group.create_task(work) for work in awaitables]
+        for completed in asyncio.as_completed(tasks):
+            started = time.monotonic()
+            record = await completed
+            wait_seconds += time.monotonic() - started
+            started = time.monotonic()
+            result = await forward_backward(training, [record], cfg)
+            forward_seconds += time.monotonic() - started
+            records.append(record)
+            metrics.append(result.metrics)
+    return (
+        records,
+        {"minibatches": metrics},
+        {
+            "group_wait_seconds": wait_seconds,
+            "forward_backward_seconds": forward_seconds,
+            "minibatches": len(records),
+        },
+    )
+
+
 async def retry_read(fn, store, kind, attempts=5):
     for attempt in range(attempts):
         try:
@@ -298,6 +359,7 @@ async def _train(root, data, app, cfg, commit, telemetry):
                 started = time.time()
                 next_step = step + 1
                 batch = None
+                streamed_metrics = None
                 wait_started = time.monotonic()
                 if buffer is not None:
                     batch = await buffer.get(step)
@@ -306,9 +368,20 @@ async def _train(root, data, app, cfg, commit, telemetry):
                     selected = random.Random(cfg.seed + next_step).sample(
                         training_problems, cfg.prompts_per_step
                     )
-                    records = await gather_work(
-                        *(group(p, cfg.group_size) for p in selected)
-                    )
+                    if cfg.stream_minibatches:
+                        (
+                            records,
+                            training_metrics,
+                            streamed_metrics,
+                        ) = await streamed_forward(
+                            training,
+                            [group(p, cfg.group_size) for p in selected],
+                            cfg,
+                        )
+                    else:
+                        records = await gather_work(
+                            *(group(p, cfg.group_size) for p in selected)
+                        )
                 rollout_queue_wait_seconds = time.monotonic() - wait_started
                 persist_started = time.monotonic()
                 await store.write_many(
@@ -319,40 +392,15 @@ async def _train(root, data, app, cfg, commit, telemetry):
                 )
                 rollout_persist_seconds = time.monotonic() - persist_started
                 rollout_wait_seconds = time.monotonic() - wait_started
-                items = []
-                total_tokens = sum(len(r["tokens"]) for g in records for r in g["rows"])
-                total_sequences = sum(len(g["rows"]) for g in records)
-                for g in records:
-                    adv = advantages(
-                        [r["reward"] for r in g["rows"]],
-                        cfg.advantage_std_floor,
-                        estimator=cfg.advantage_estimator,
-                    )
-                    for r, a in zip(g["rows"], adv, strict=True):
-                        items.append(
-                            datum(
-                                g["prompt"],
-                                r["tokens"],
-                                r["logprobs"],
-                                a,
-                                total_tokens / (total_sequences * len(r["tokens"])),
-                            )
-                        )
                 # Never retry a possibly applied update. Any mutation failure rebuilds
                 # a trainer and restores the latest durable model+optimizer checkpoint.
                 update_started = time.monotonic()
-                fb = await training.forward_backward_async(
-                    items,
-                    "ppo",
-                    loss_fn_config={
-                        "clip_low_threshold": 0.8,
-                        "clip_high_threshold": 1.2,
-                    },
-                )
+                if not cfg.stream_minibatches:
+                    fb_result = await forward_backward(training, records, cfg)
+                    training_metrics = fb_result.metrics
                 optim = await training.optim_step_async(
                     types.AdamParams(learning_rate=cfg.learning_rate)
                 )
-                fb_result = await fb.result_async()
                 optim_result = await optim.result_async()
                 update_seconds = time.monotonic() - update_started
                 step = next_step
@@ -360,10 +408,12 @@ async def _train(root, data, app, cfg, commit, telemetry):
                 metric.update(
                     advantage_estimator=cfg.advantage_estimator,
                     seconds=time.time() - started,
-                    training=fb_result.metrics,
+                    training=training_metrics,
                     optimizer=optim_result.metrics,
                     model_id=training.model_id,
                 )
+                if streamed_metrics is not None:
+                    metric["streaming"] = streamed_metrics
                 if batch is not None:
                     metric["pipeline"] = {
                         "policy_lag_upper_bound": step - 1 - batch.policy_step,

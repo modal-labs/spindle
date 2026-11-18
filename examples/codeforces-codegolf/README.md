@@ -13,6 +13,35 @@ validation. See [setup](#setup-and-execution) to run the example and
 
 ## Asynchronous execution
 
+### Streaming within an update
+
+Use `--variant stream-v11` to start forward/backward on each complete problem
+group while the remaining groups generate and finish judging. All groups use
+the sampler selected at the start of the update. The optimizer runs once, after
+every group succeeds. A failed group or training request discards partial
+gradients by restoring the last durable checkpoint on a replacement trainer.
+
+Use `--variant batch-v11` for the matched non-streaming baseline. Both variants
+use prompt-v8 rewards, prompts and sampler capacity, without the cross-update
+rollout buffer. Both use the same sequence-mean objective: each completion token
+has weight `1 / (prompts_per_step * group_size * completion_length)` on the FFT
+backend's summed loss. Earlier variants retain their batch-token-count scaling.
+Start new runs or checkpoint forks; do not change variants when resuming a run.
+
+```bash
+uv run --env-file .env codegolf launch --run golf-stream --variant stream-v11
+uv run --env-file .env codegolf status --run golf-stream
+```
+
+Compare the variants sequentially on the same deployment, initialization,
+dataset and step target. Metrics retain each minibatch's training response and
+report `streaming.group_wait_seconds`, `streaming.forward_backward_seconds`
+and the minibatch count. Group wait excludes time spent awaiting training.
+Extra training requests and smaller packed batches can offset the overlap;
+no GPU speedup has been measured for these variants.
+
+### Prefetched updates
+
 The default `prompt-v8` generates and judges rollouts while the trainer updates
 weights. Four workers fill a queue of two ready batches, then continue producing
 as the trainer consumes them one at a time. The run uses 4–8 inference replicas
