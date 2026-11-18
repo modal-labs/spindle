@@ -1,0 +1,200 @@
+{
+  "model": "thinkingmachines/Inkling-2-Small",
+  "model_revision": "1df2d97d45210d94f781f42a6521392e5a539e46",
+  "spindle_runtime": "3e0139d56b726eef8c860e639c0518150dab6bd1",
+  "miles_runtime": "e186d97710dcc319da659f8bc25dbb674e227909",
+  "trainer": "8x B300",
+  "sampler": "8x B300, separate node",
+  "exclude_reserved_capacity": true,
+  "tinker": "0.26.0",
+  "rank": 32,
+  "adapter_slots": 2,
+  "sdk_results": [
+    {
+      "stage": "create_adapter_41",
+      "seconds": 3699.6248650790003
+    },
+    {
+      "stage": "create_adapter_42",
+      "seconds": 1.7721077800001694
+    },
+    {
+      "loss": 2.8942715326944985,
+      "backward": false
+    },
+    {
+      "stage": "adapter_b_initial_forward",
+      "seconds": 55.398346260999915
+    },
+    {
+      "loss": 2.8942715326944985,
+      "backward": true
+    },
+    {
+      "stage": "adapter_a_backward_0",
+      "seconds": 34.51214748299981
+    },
+    {
+      "stage": "adapter_a_step_0",
+      "seconds": 0.49345355500008736
+    },
+    {
+      "loss": 2.8376359939575195,
+      "backward": true
+    },
+    {
+      "stage": "adapter_a_backward_1",
+      "seconds": 2.6171427939998466
+    },
+    {
+      "stage": "adapter_a_step_1",
+      "seconds": 0.4893475600001693
+    },
+    {
+      "loss": 2.8942715326944985,
+      "backward": false
+    },
+    {
+      "stage": "adapter_b_isolation_forward",
+      "seconds": 0.9574935939999705
+    },
+    {
+      "stage": "inkling-b-before_publish",
+      "seconds": 2.2680641490001108
+    },
+    {
+      "stage": "inkling-b-before_sample",
+      "seconds": 3.802079004999996
+    },
+    {
+      "stage": "base_sampling_logprobs",
+      "seconds": 0.556643086999884
+    },
+    {
+      "stage": "inkling-a-trained_publish",
+      "seconds": 7.567951576999803
+    },
+    {
+      "stage": "inkling-a-trained_sample",
+      "seconds": 3.2288178349999725
+    },
+    {
+      "stage": "trained_sampling_logprobs",
+      "seconds": 0.5739878790000148
+    },
+    {
+      "stage": "frozen_sampling_logprobs",
+      "seconds": 0.46518015799983914
+    },
+    {
+      "sampler_logprob_delta": 0.8667951226234436
+    },
+    {
+      "loss": 2.6545491218566895,
+      "backward": false
+    },
+    {
+      "stage": "adapter_a_saved_forward",
+      "seconds": 1.0869683750001968
+    },
+    {
+      "stage": "save_state",
+      "seconds": 6.954215817999739
+    },
+    {
+      "loss": 2.6545491218566895,
+      "backward": true
+    },
+    {
+      "stage": "adapter_a_mutate_backward",
+      "seconds": 2.413577116000397
+    },
+    {
+      "stage": "adapter_a_mutate_step",
+      "seconds": 0.41256538700008605
+    },
+    {
+      "loss": 2.423431873321533,
+      "backward": false
+    },
+    {
+      "stage": "adapter_a_mutated_forward",
+      "seconds": 1.226670163000108
+    },
+    {
+      "stage": "restore_state_and_optimizer",
+      "seconds": 4.0207412919999115
+    },
+    {
+      "loss": 2.6545491218566895,
+      "backward": false
+    },
+    {
+      "stage": "adapter_a_restored_forward",
+      "seconds": 3.1422743459997946
+    },
+    {
+      "loss": 2.8942715326944985,
+      "backward": true
+    },
+    {
+      "stage": "adapter_b_backward",
+      "seconds": 4.193104180000319
+    },
+    {
+      "stage": "adapter_b_step",
+      "seconds": 0.46687591899990366
+    },
+    {
+      "stage": "inkling-b-trained_publish",
+      "seconds": 8.223827348999748
+    },
+    {
+      "stage": "inkling-b-trained_sample",
+      "seconds": 4.327758389999872
+    },
+    {
+      "stage": "full_context_backward",
+      "seconds": 29.63987401700024
+    },
+    {
+      "stage": "full_context_step",
+      "seconds": 0.4699541400000271
+    },
+    {
+      "stage": "inkling-a-full-context_publish",
+      "seconds": 3.284261522000179
+    },
+    {
+      "stage": "inkling-a-full-context_sample",
+      "seconds": 3.192881534999742
+    },
+    {
+      "stage": "full_context_sample",
+      "seconds": 0.9371992679998584
+    },
+    {
+      "context_prompt_tokens": 8185,
+      "context_completion_tokens": 5
+    },
+    {
+      "status": "passed"
+    }
+  ],
+  "cookbook": {
+    "package": "tinker-cookbook",
+    "version": "0.7.0",
+    "tinker": "0.39.1",
+    "torch": "2.14.1+cpu",
+    "tml_renderers": "0.4.2",
+    "status": "passed",
+    "steps": 1,
+    "num_tokens": 32,
+    "num_loss_tokens": 1.0000000298023224,
+    "train_mean_nll": 3.4183804988861084
+  },
+  "cleanup": {
+    "deployment_stop_completed": true,
+    "remaining_validation_containers": 0
+  }
+}
