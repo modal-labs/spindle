@@ -13,15 +13,16 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Removed
 
-- Removed unused trainer images `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447`, `miles-v0.1.2-464efc9-glm53` and `miles-v0.2.0-15afe21`, plus unused sampler image `sglang-v0.5.23-803bccb`. Custom configs that select these names must use a supported image or define their own image with a `module:attribute` path. Checkpoints saved on the removed Miles revisions need an image with the same revision to restore.
+- Removed unused trainer image `miles-v0.2.0-15afe21` and unused sampler image `sglang-v0.5.23-803bccb`. Custom configs that select these names must use a supported image or define their own image with a `module:attribute` path. Checkpoints saved on the removed Miles revision need an image with the same revision to restore.
 
 ### Fixed
 
+- The default Miles image, `miles-v0.1.1-52a7a99`, restores training states saved on `miles-v0.1.1-fdd808c` by Spindle 0.1.7. Before, they restored only on the old image.
 - Built-in Miles v0.2.0 images reject the unvalidated Bridge/canonical adapter combination before starting a trainer.
 
 - Malformed `spindle add` fields such as `--=1` reach recipe validation instead of being parsed as abbreviated top-level options.
 
-- Miles LoRA images support seeded adapter initialization under `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26`. The default Miles image and every bundled Miles config use these. A checkpoint restores only on the Miles revision that saved it.
+- Miles LoRA images support seeded adapter initialization under `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26`. The default Miles image and every bundled Miles config use these.
 - Miles LoRA trainers no longer rescale gradients kept from earlier `forward_backward` calls, including another client's on the same trainer. The `miles-v0.2.0` image already had this fix.
 - `miles-v0.2.0` trainers with two GPUs no longer hang at start-up. Ray now starts with enough CPUs for the extra workers this image runs.
 - Sampling requests with an option Spindle does not support, such as `prompt_alt_tokens_k` or `topk_sample_logprobs`, now fail right away with a 400 that names the option. Before, the server retried them three times before the client saw an error.

@@ -67,7 +67,7 @@ Sampler replicas scale between `inference_min_replicas` and `inference_max_repli
 
 The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers. A checkpoint saved by these recipes before that change has no adapters for those layers, so loading it fails with `checkpoint LoRA target_modules do not match the deployment`.
 
-To keep training or sampling from such a checkpoint, deploy a variant with the old target list and the old sampler image:
+To keep training or sampling from such a checkpoint, deploy a variant with the old target list, the `miles-v0.1.1-52a7a99` trainer image and the old sampler image:
 
 ```python
 from spindle.configs.qwen35_4b_lora_32k import Config as Parent
@@ -75,7 +75,7 @@ from spindle.configs.qwen35_4b_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "qwen35-4b-lora-32k-attn-only"
-    trainer_image = "miles-v0.1.1-fdd808c"
+    trainer_image = "miles-v0.1.1-52a7a99"
     inference_image = "sglang-v0.5.23-c4182b2"
     overrides = {
         **Parent.overrides,
@@ -190,7 +190,7 @@ Native slots support dense projections, the output head and grouped expert proje
 
 ### Images
 
-`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53`, `miles-v0.2.0-8c5de26`, `miles-v0.2.0-e814245` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2`, `sglang-v0.5.23-c4182b2-glm53` and `sglang-v0.5.23-e003cf9` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26` support seeded LoRA initialization (`create_lora_training_client(seed=...)`), and `miles-v0.2.0-8c5de26` also adds Beam LoRA support. `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` (DeepSeek-V4.1) and `miles-v0.1.2-464efc9-glm53` (GLM-5.3 Flash) are the images Spindle 0.1.7 and earlier trained on. No bundled config uses them; set one as `trainer_image` to restore a training state saved on it, because a checkpoint restores only on the Miles revision that saved it. Use a `module:attribute` path for an image you define in your own code.
+`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53`, `miles-v0.2.0-8c5de26`, `miles-v0.2.0-e814245` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2`, `sglang-v0.5.23-c4182b2-glm53` and `sglang-v0.5.23-e003cf9` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53` and `miles-v0.2.0-8c5de26` support seeded LoRA initialization (`create_lora_training_client(seed=...)`), and `miles-v0.2.0-8c5de26` also adds Beam LoRA support. `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` (DeepSeek-V4.1) and `miles-v0.1.2-464efc9-glm53` (GLM-5.3 Flash) are the images Spindle 0.1.7 and earlier trained on. No bundled config uses them. `miles-v0.1.1-52a7a99` restores training states saved on `miles-v0.1.1-fdd808c`, so that pair needs no old image. Checkpoints it saves restore only on `miles-v0.1.1-52a7a99`. To restore a state saved on `miles-v0.1.2-f2f8447` or `miles-v0.1.2-464efc9-glm53`, set that image as `trainer_image`, because those checkpoints restore only on the Miles revision that saved them. Use a `module:attribute` path for an image you define in your own code.
 
 Every bundled config sets both images itself rather than inheriting them, so upgrading SGLang or Miles for one config doesn't change any other. If you leave a field empty in your own config, it uses the backend default (`miles-v0.1.1-52a7a99`, `megatron-2d1fa8d` or `sglang-v0.5.23-c4182b2`), and that default can change in a later Spindle release. Set both fields to keep a config on the images it was tested with.
 
@@ -206,7 +206,7 @@ To change an image:
 
 `miles-v0.2.0-8c5de26` supports single-node dense native adapters; `miles-v0.2.0-e814245` also supports routed expert adapters and Nemotron-3 Nano. On the built-in v0.2.0 images, use `raw` with `canonical_lora` or `bridge` with `lora`. Spindle rejects Bridge with `canonical_lora`, which has not been validated here. The older Miles images support the fused `lora` layout.
 
-A checkpoint restores only on a trainer with the same Miles revision and adapter layout as the one that saved it. Checkpoints without a recorded layout are treated as `lora`. Keep the original image and layout to restore older checkpoints after switching a recipe to native canonical adapters.
+A checkpoint restores only on a trainer with the same Miles revision and adapter layout as the one that saved it. The one exception is `miles-v0.1.1-52a7a99`, which also restores checkpoints saved on `miles-v0.1.1-fdd808c`. Checkpoints without a recorded layout are treated as `lora`. Keep the original image and layout to restore older checkpoints after switching a recipe to native canonical adapters.
 
 ## Prepare and launch
 

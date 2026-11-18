@@ -38,6 +38,13 @@ from .miles_runtime.data import build_outputs, pad_slot_rows, prepare_batch
 from .miles_runtime.profiling import StepPhaseTimer, TorchProfileConfig
 from .miles_runtime.runtime import MilesRuntime
 
+# Miles revision -> older revisions whose checkpoints it restores unchanged.
+RESTORABLE_MILES_REVISIONS = {
+    "52a7a99d9f9e6188ece91a0583ef417093601025": {
+        "fdd808c008175d4895fd8c57c95ef4fa5bb6a2a0"
+    },
+}
+
 
 @dataclass(slots=True)
 class MilesJobState:
@@ -623,7 +630,9 @@ class MilesCommandBackend(Backend):
             raise ValueError("unsupported Miles checkpoint schema")
         if metadata.get("backend") != "miles":
             raise ValueError("checkpoint was not created by the Miles backend")
-        if metadata.get("miles_revision") != self.runtime.revision:
+        revision = self.runtime.revision
+        restorable = {revision, *RESTORABLE_MILES_REVISIONS.get(revision, ())}
+        if metadata.get("miles_revision") not in restorable:
             raise ValueError("checkpoint Miles revision does not match the deployment")
         if metadata.get("checkpoint_format") != self.runtime.checkpoint_format:
             raise ValueError("unsupported Miles checkpoint format")

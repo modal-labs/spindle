@@ -867,19 +867,39 @@ def test_weights_only_capture_excludes_optimizer(tmp_path):
         backend.load_checkpoint("model-a", str(uri), restore_optimizer=True)
 
 
-def test_checkpoint_rejects_different_resolved_main_commit(tmp_path):
+MILES_FDD808C = "fdd808c008175d4895fd8c57c95ef4fa5bb6a2a0"
+MILES_52A7A99 = "52a7a99d9f9e6188ece91a0583ef417093601025"
+
+
+@pytest.mark.parametrize(
+    "saved_revision, deployed_revision, accepted",
+    [
+        (MILES_FDD808C, MILES_52A7A99, True),
+        (MILES_52A7A99, MILES_FDD808C, False),
+        ("a" * 40, "b" * 40, False),
+    ],
+)
+def test_checkpoint_restores_on_same_or_compatible_miles_revision(
+    tmp_path, saved_revision, deployed_revision, accepted
+):
     runtime = FakeMilesRuntime()
+    runtime.revision = saved_revision
     backend = _backend(tmp_path, runtime)
     backend.accept_model("model-a", _spec())
     backend.capture_checkpoint(
         "model-a", "capture-a", destination="step-1", include_optimizer=True
     )
     uri = backend.persist_checkpoint("capture-a", "step-1")
-    runtime.revision = "b" * 40
+    runtime.revision = deployed_revision
     calls = list(runtime.calls)
-    with pytest.raises(ValueError, match="Miles revision does not match"):
+    if accepted:
         backend.load_checkpoint("model-a", uri, restore_optimizer=True)
-    assert runtime.calls == calls
+        assert runtime.calls[-1][0] == "load_slot"
+        assert runtime.calls[-1][4] is not None
+    else:
+        with pytest.raises(ValueError, match="Miles revision does not match"):
+            backend.load_checkpoint("model-a", uri, restore_optimizer=True)
+        assert runtime.calls == calls
 
 
 def test_miles_checkpoint_storage_lifecycle_uses_control_plane_layout(tmp_path):
