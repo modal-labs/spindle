@@ -1,6 +1,6 @@
 # Profiling a step
 
-Miles LoRA trainer only; off by default. For what to measure first, how to classify a bottleneck (overhead, compute, memory, communication, slow rank), sampler signals, and which config fields to change, follow [docs/profiling.md](https://github.com/modal-labs/spindle/blob/main/docs/profiling.md). Prefer config changes; a backend change goes to a GitHub issue first.
+Trainer traces: Miles LoRA trainer only; off by default. Sampler traces: by hand on a one-replica variant (below). For what to measure first, how to classify a bottleneck (overhead, compute, memory, communication, slow rank), sampler signals, and which config fields to change, follow [docs/profiling.md](https://github.com/modal-labs/spindle/blob/main/docs/profiling.md). Prefer config changes; a backend change goes to a GitHub issue first.
 
 ## Capture
 
@@ -19,6 +19,12 @@ uv run modal volume get <platform.storage.checkpoints, default spindle-checkpoin
 ```
 
 Open at https://ui.perfetto.dev (loads `.json.gz` directly). Search `spindle/` to jump between phases. Look for idle GPU streams inside `spindle/forward_backward` (CPU/comms stalls), long `ncclKernel_*`, and time outside labelled phases.
+
+## Sampler trace and rollout benchmark
+
+- Trace a one-replica variant (own name, `inference_max_replicas = 1`, `inference_env = {"SGLANG_TORCH_PROFILER_DIR": "/checkpoints/torch-profile/<variant>"}`), not the production pool. While the rollout benchmark keeps it busy: `modal container exec <container id> -- curl -s -X POST http://127.0.0.1:8001/start_profile -H 'Content-Type: application/json' -d '{"num_steps": 20, "activities": ["CPU", "GPU"], "with_stack": false, "record_shapes": false}'`. SGLang auto-stops after `num_steps` (no `/stop_profile`) and pauses the replica <1 s while writing `<id>-TP-<rank>.trace.json.gz`.
+- In the trace: `step[DECODE bs=N]` / `step[EXTEND ...]` per pass, `scheduler.*` CPU work, `cudaGraphLaunch` per graph replay, LoRA kernels named `*lora*`. For the DuckDB window queries below, use `e->>'name' LIKE 'step[DECODE%' AND e->>'cat' = 'gpu_user_annotation'`.
+- Drive it with `uv run scripts/rollout_benchmark.py --base-url <url> --model-path tinker://... --prompts p.jsonl --copies 2 --rounds 5` (stock Tinker SDK; omit `--base-url` for Tinker). JSONL lines are `{"tokens": [...]}` or `{"messages": [...]}`. Compare the median of rounds after the first.
 
 ## DuckDB queries
 
