@@ -23,6 +23,7 @@ class ReferenceRun(BaseModel):
     spindle_commit: str | None = None
     spindle_version: str | None = None
     trainer_image: str | None = None
+    inference_image: str | None = None
     miles_commit: str | None = None
     tinker_sdk: str | None = None
     hardware: str | None = None
