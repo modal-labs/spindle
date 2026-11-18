@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -118,12 +119,20 @@ async def release(training):
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
                 os.environ["TINKER_BASE_URL"] + "/api/v1/unload_model",
-                headers={"X-API-Key": os.environ["TINKER_API_KEY"]},
+                headers={"X-API-Key": os.environ["TINKER_API_KEY"], **proxy_headers()},
                 json={"model_id": training.model_id},
             )
             response.raise_for_status()
     finally:
         training.holder.close()
+
+
+def proxy_headers():
+    token_id = os.environ.get("MODAL_PROXY_TOKEN_ID")
+    token_secret = os.environ.get("MODAL_PROXY_TOKEN_SECRET")
+    if token_id and token_secret:
+        return {"Modal-Key": token_id, "Modal-Secret": token_secret}
+    return {}
 
 
 async def train(root: Path, data: Path, app: modal.App, cfg: Config, commit=None):
@@ -181,8 +190,16 @@ async def _train(root, data, app, cfg, commit, telemetry):
         completed = store.read("complete.json")
         if completed is not None and completed["step"] >= cfg.steps:
             return state
+        headers_arg = (
+            "default_headers_overrides"
+            if "default_headers_overrides"
+            in inspect.signature(tinker.ServiceClient).parameters
+            else "default_headers"
+        )
         service = tinker.ServiceClient(
-            base_url=os.environ["TINKER_BASE_URL"], api_key=os.environ["TINKER_API_KEY"]
+            base_url=os.environ["TINKER_BASE_URL"],
+            api_key=os.environ["TINKER_API_KEY"],
+            **{headers_arg: proxy_headers()},
         )
         try:
             await store.event("trainer_create", recovery=recovery, checkpoint=state)

@@ -28,6 +28,12 @@ Use your Modal profile and the `spindle-proxy` secret, or pass
 `proxy_secret=modal.Secret.from_name(...)`. An API key is generated for each run
 unless you supply `api_key`. App names default to `spindle-<hash>`.
 
+Set `requires_proxy_auth=True` when your Modal environment requires protected
+endpoints. Each Tinker client must then send the allowed proxy token as
+`Modal-Key` and `Modal-Secret` headers in addition to its Spindle API key.
+Tinker SDK 0.26–0.35 accepts these through `ServiceClient(default_headers=...)`;
+SDK 0.36 uses `default_headers_overrides` instead.
+
 ## Recovering a lost trainer
 
 When a training request reports HTTP 410 with `error="model_lost"`, create a

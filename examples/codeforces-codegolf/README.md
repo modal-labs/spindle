@@ -40,6 +40,26 @@ and the minibatch count. Group wait excludes time spent awaiting training.
 Extra training requests and smaller packed batches can offset the overlap;
 no GPU speedup has been measured for these variants.
 
+`benchmark_streaming.py` runs both variants in batch–stream–stream–batch order
+on one scoped deployment, with 8 H200 trainer GPUs and four H200 sampler
+replicas. Upload `problems.json` and its reference-validated `validated.json`
+to the `spindle-codegolf-streaming-benchmark` Volume first. The controller uses
+the proxy secret selected by `CODEGOLF_PROXY_SECRET` (default `spindle-proxy`)
+and creates a protected API endpoint. Set `--proxy-secret` to that same name.
+From this example directory:
+
+```bash
+CODEGOLF_PROXY_SECRET=spindle-proxy uv run modal run --detach --env your-environment \
+  benchmark_streaming.py::benchmark --label comparison-1 --commit YOUR_COMMIT \
+  --proxy-secret spindle-proxy --steps 6 --warmup 2 --max-tokens 2048
+```
+
+Each run starts from base weights. The report excludes the first two updates,
+includes publication time, and excludes evaluation and full checkpoint saves.
+Sampling is stochastic; compare completion lengths and rewards as well as
+seconds per update. The 2,048-token cap measures a shorter workload than the
+default recipe. Full reports and per-step metrics remain on the benchmark Volume.
+
 ### Prefetched updates
 
 The default `prompt-v8` generates and judges rollouts while the trainer updates

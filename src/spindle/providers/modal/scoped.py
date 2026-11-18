@@ -153,6 +153,7 @@ def build_app(
     proxy_secret,
     *,
     telemetry_secret=None,
+    requires_proxy_auth=False,
 ):
     engine = replace(
         engine,
@@ -420,7 +421,7 @@ def build_app(
         volumes={"/checkpoints": checkpoints},
     )
     @modal.concurrent(max_inputs=128)
-    @modal.asgi_app(requires_proxy_auth=False)
+    @modal.asgi_app(requires_proxy_auth=requires_proxy_auth)
     def api():
         async def prepare_model(model):
             if model.spec.get("rollout"):

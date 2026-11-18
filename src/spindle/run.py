@@ -41,6 +41,7 @@ def run(
     checkpoint_volume: str = "spindle-checkpoints",
     proxy_secret=None,
     telemetry_secret=None,
+    requires_proxy_auth: bool = False,
 ):
     """Yield (url, api_key); stop pinned apps before the ephemeral parent.
 
@@ -85,6 +86,7 @@ def run(
                 checkpoint_volume,
                 proxy_secret or modal.Secret.from_name("spindle-proxy"),
                 telemetry_secret=telemetry_secret,
+                requires_proxy_auth=requires_proxy_auth,
             )
             app, api, manage, servers, prepare_assets, sampler_image = resources
             with app.run():

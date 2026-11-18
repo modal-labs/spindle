@@ -21,6 +21,7 @@ from codegolf.train import train
 
 APP_NAME = "spindle-codegolf-streaming-benchmark"
 VOLUME_NAME = APP_NAME
+PROXY_SECRET = os.environ.get("CODEGOLF_PROXY_SECRET", "spindle-proxy")
 app = modal.App(APP_NAME)
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True, version=2)
 image = control_image("transformers==5.16.1", "jinja2==3.1.6").add_local_python_source(
@@ -28,7 +29,13 @@ image = control_image("transformers==5.16.1", "jinja2==3.1.6").add_local_python_
 )
 
 
-@app.function(image=image, volumes={"/runs": volume}, timeout=7200, memory=8192)
+@app.function(
+    image=image,
+    volumes={"/runs": volume},
+    secrets=[modal.Secret.from_name(PROXY_SECRET)],
+    timeout=7200,
+    memory=8192,
+)
 def benchmark(
     label: str,
     commit: str,
@@ -63,6 +70,7 @@ def benchmark(
         engine=engine,
         name=APP_NAME,
         proxy_secret=modal.Secret.from_name(proxy_secret),
+        requires_proxy_auth=True,
         checkpoint_volume=APP_NAME + "-checkpoints",
         latest=spindle.Pool(min_containers=4, max_containers=4, scaledown_window=1200),
     ) as (url, api_key):
