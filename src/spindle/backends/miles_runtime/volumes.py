@@ -17,11 +17,12 @@ import modal
 import torch.distributed as dist
 
 
-def _checkpoint_volume_path(path: Path) -> str | None:
-    """Locate ``path`` inside the checkpoint volume, or ``None`` if outside."""
-    root = _checkpoint_root()
+def checkpoint_volume_path(path: Path) -> str | None:
+    """Locate ``path`` inside the checkpoint volume, or ``None`` without a volume or outside it."""
+    if "SPINDLE_CHECKPOINT_VOLUME" not in os.environ:
+        return None
     try:
-        return str(path.relative_to(root))
+        return str(Path(path).relative_to(_checkpoint_root()))
     except ValueError:
         return None
 
@@ -99,7 +100,7 @@ def install_cross_node_checkpoint_publish(checkpoint_io, *dependents) -> None:
     def write_checkpoint_dir(path, write_shards, metadata=None, **kwargs):
         name = os.environ.get("SPINDLE_CHECKPOINT_VOLUME")
         checkpoint_path = Path(path)
-        relative = _checkpoint_volume_path(checkpoint_path)
+        relative = checkpoint_volume_path(checkpoint_path)
         if name is not None and relative is None:
             print(
                 f"spindle_checkpoint_publish path={path} volume={name} "

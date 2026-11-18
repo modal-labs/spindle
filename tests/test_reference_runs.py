@@ -387,13 +387,32 @@ def test_catalog_outputs_plot_as_ids_and_partial_files(
         assert definition.is_file()
         assert (ROOT / run.output).is_file()
     partial = tmp_path / "partial.jsonl"
-    partial.write_text('{"event":"update","step":1,"reward":0.5}\n{"event":')
+    records = [
+        {
+            "event": "update",
+            "time": float(step),
+            "step": step,
+            "responses": 1,
+            "reward": 0.5,
+            "response_tokens_mean": 4.0,
+            "truncated_fraction": 0.0,
+        }
+        for step in range(1, 4)
+    ]
+    records[0]["seconds_since_previous_update"] = 500.0
+    records[2]["seconds_since_previous_update"] = 510.0
+    partial.write_text("".join(json.dumps(row) + "\n" for row in records) + '{"event":')
     picture = tmp_path / "comparison.png"
     monkeypatch.setattr(
         sys, "argv", ["plot", catalog[0].id, str(partial), "--output", str(picture)]
     )
     runpy.run_path(str(ROOT / "plot.py"), run_name="__main__")
     assert picture.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    interval = plotter["pyplot"].gcf().axes[3].lines[-1]
+    assert interval.get_xdata().tolist() == [1, 2, 3]
+    assert interval.get_ydata()[0] == 500.0
+    assert np.isnan(interval.get_ydata()[1])
+    assert interval.get_ydata()[2] == 510.0
 
 
 @pytest.mark.parametrize(
@@ -423,8 +442,12 @@ def test_index_rejects_invalid_provenance(problem: str, message: str) -> None:
 
 
 @pytest.mark.parametrize("validation", sorted((ROOT / "configs").glob("*.toml")))
+@pytest.mark.parametrize("restore_case", [None, "optimizer", "scores", "zero_rewards"])
 def test_reference_smoke_records_selected_tokenizer_and_updates(
-    validation: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    validation: Path,
+    restore_case: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "scripts"))
     workload = importlib.import_module("dapo_math")
@@ -433,32 +456,72 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
         return SimpleNamespace(result=lambda: value)
 
     class Training:
-        step = 0
+        def __init__(self) -> None:
+            self.step = 0
+            self.weight = 0.0
+            self.moment = 0.0
+            self.gradient = 0.0
+            self.saved: dict[str, tuple[int, float, float]] = {}
 
         def save_weights_for_sampler(self, name: str) -> SimpleNamespace:
             return future(SimpleNamespace(path=f"test://{name}"))
 
         def save_state(self, name: str) -> SimpleNamespace:
+            path = f"test://{name}"
+            self.saved[path] = self.step, self.weight, self.moment
+            return future(SimpleNamespace(path=path))
+
+        def load_state_with_optimizer(self, path: str) -> SimpleNamespace:
+            self.step, self.weight, moment = self.saved[path]
+            if restore_case != "optimizer":
+                self.moment = moment
             return future(None)
 
+        def forward(self, datums: list, loss: str) -> SimpleNamespace:
+            value = float("nan") if restore_case == "scores" else self.weight
+            return future(
+                SimpleNamespace(
+                    loss_fn_outputs=[
+                        {
+                            "logprobs": tinker.types.TensorData(
+                                data=[value]
+                                * len(datum.loss_fn_inputs["target_tokens"].data),
+                                dtype="float32",
+                                shape=datum.loss_fn_inputs["target_tokens"].shape,
+                            )
+                        }
+                        for datum in datums
+                    ]
+                )
+            )
+
         def forward_backward(self, datums: list, loss: str) -> SimpleNamespace:
-            assert len(datums) == 32
+            assert len(datums) in {8, 32}
             assert loss == "importance_sampling"
             assert all(isinstance(datum, tinker.Datum) for datum in datums)
-            assert {
+            advantages = {
                 value
                 for datum in datums
                 for value in datum.loss_fn_inputs["advantages"].data
-            } == {-0.5, 0.0, 0.5}
+            }
+            if len(datums) == 8:
+                assert advantages in ({0.0, 1.0}, {0.0})
+            elif restore_case == "zero_rewards":
+                assert advantages == {0.0}
+            else:
+                assert advantages == {-0.5, 0.0, 0.5}
+            self.gradient = float(any(advantages))
             return future(SimpleNamespace(metrics={"loss:sum": 0.0}))
 
         def optim_step(self, adam: object) -> SimpleNamespace:
             self.step += 1
+            self.moment = 0.9 * self.moment + self.gradient
+            self.weight += 0.01 * self.moment
             return future(SimpleNamespace(metrics={"update_successful:mean": 1.0}))
 
     class Sampler:
         def sample(self, prompt: object, count: int, params: object) -> SimpleNamespace:
-            return future(SimpleNamespace(sequences=sequences * (count // 2)))
+            return future(SimpleNamespace(sequences=(sequences * count)[:count]))
 
     training = Training()
     sequences = [
@@ -473,7 +536,11 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     tokenizer = SimpleNamespace(
         eos_token_id=0,
         apply_chat_template=lambda *a, **kw: [1, 2],
-        decode=lambda tokens: r"\boxed{1}" if tokens[-1] == 4 else r"\boxed{0}",
+        decode=lambda tokens: (
+            r"\boxed{1}"
+            if tokens[-1] == 4 and restore_case != "zero_rewards"
+            else r"\boxed{0}"
+        ),
     )
     definition = launcher.ValidationRunConfig.model_validate(
         tomllib.loads(validation.read_text())
@@ -522,6 +589,16 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
             str(tmp_path / "index.toml"),
         ],
     )
+    if restore_case in {"optimizer", "scores"}:
+        error = AssertionError if restore_case == "optimizer" else ValueError
+        message = "Not equal" if restore_case == "optimizer" else "nonfinite scores"
+        with pytest.raises(error, match=message):
+            launcher.main()
+        assert not any(
+            json.loads(line)["event"] == "restore_validation"
+            for line in output.read_text().splitlines()
+        )
+        return
     launcher.main()
     records = [json.loads(line) for line in output.read_text().splitlines()]
     assert records[0]["config"]["model"] == expected_model
@@ -530,6 +607,16 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     assert records[0]["recipe"] == definition.config_overrides.name
     assert [r["step"] for r in records if r["event"] == "update"] == [1, 2]
     assert training.step == 2
+    assert (training.step, training.weight, training.moment) == training.saved[
+        "test://step-2"
+    ]
+    restored = records[-1]
+    assert restored["event"] == "restore_validation"
+    assert restored["method"] == "momentum_replay"
+    assert restored["measured_restore_max_abs_error"] == 0.0
+    assert restored["restore_max_abs_error"] == restored["replay_max_abs_error"] == 0.0
+    assert restored["update_max_abs_change"] > 0
+    assert restored["sampled_tokens"] > 0
 
 
 @pytest.mark.parametrize(

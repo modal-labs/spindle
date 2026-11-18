@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -27,6 +28,7 @@ from . import nemotron_h_omni
 from .native_checkpoint import materialize_adapter
 from .out_of_memory import OUT_OF_MEMORY
 from .replay_data import install_bridge_replay, validate_routed_experts
+from .volumes import checkpoint_volume_path, sync_checkpoint_volume
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
 _runtime_import_error = None
@@ -182,6 +184,7 @@ class MilesRuntime:
                 self._bridge.save_slot(slot, path, include_optimizer=include_optimizer)
             )
             # Outside _run: a bad capture fails this request, not the shared trainer.
+            self._gather_capture(written, Path(path))
             materialize_adapter(written, Path(path), checkpoint=True)
             return
         if include_optimizer:
@@ -205,9 +208,23 @@ class MilesRuntime:
     ) -> None:
         written = self._run(self._bridge.export_slot(slot, rank, alpha, path))
         if self._v020 is not None:
+            self._gather_capture(written, Path(path))
             materialize_adapter(written, Path(path), checkpoint=False)
             return
         _materialize_capture(path)
+
+    def _gather_capture(self, written: Path, path: Path) -> None:
+        """Make every node's writes to a capture on the checkpoint volume visible here."""
+        if checkpoint_volume_path(path) is None:
+            return
+        try:
+            self._run_best_effort(
+                self._trainer._execute_slots("commit_checkpoint_volume")
+            )
+            sync_checkpoint_volume("reload")
+        except Exception:
+            shutil.rmtree(written, ignore_errors=True)
+            raise
 
     def torch_profile_start(self) -> None:
         self._run_best_effort(self._trainer._execute_slots("torch_profile_start"))
@@ -238,12 +255,15 @@ class MilesRuntime:
             raise BackendFailed("Miles trainer is unavailable") from self._failure
         try:
             result = self._call(coroutine)
+            refused = _refusal(result)
             out_of_memory = isinstance(result, dict) and result.get(OUT_OF_MEMORY)
-            if not out_of_memory:
+            if refused is None and not out_of_memory:
                 _check_result(result)
         except Exception as exc:
             self._failure = exc
             raise BackendFailed(f"Miles trainer failed: {exc}") from exc
+        if refused is not None:
+            raise ValueError(refused)
         if out_of_memory:
             raise TrainerOutOfMemory(
                 "The trainer ran out of GPU memory on this batch and skipped it. "
@@ -512,6 +532,15 @@ def _configure_args(args) -> None:
     args.lora_A_init_method = "kaiming"
     args.use_dynamic_global_batch_size = True
     args.delay_split_train_data_by_dp = True
+
+
+def _refusal(result) -> str | None:
+    """Miles marks a request it refused before changing any state as a user error."""
+    items = result if isinstance(result, (list, tuple)) else [result]
+    errors = [item for item in items if isinstance(item, dict) and "error" in item]
+    if errors and all(error.get("error_category") == "user" for error in errors):
+        return errors[0]["error"]
+    return None
 
 
 def _check_result(result) -> None:
