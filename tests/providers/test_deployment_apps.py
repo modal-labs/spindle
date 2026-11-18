@@ -514,7 +514,7 @@ def test_recipes_select_trainer_images(builders, monkeypatch):
     with pytest.raises(ValueError, match="unknown trainer image"):
         image_for("miles", "missing")
     with pytest.raises(ValueError, match="unknown sampler image"):
-        image_for("sglang", "miles-v0.1.1-fdd808c")
+        image_for("sglang", "miles-v0.1.1-52a7a99")
 
     trainer_image = object()
     monkeypatch.setitem(deployment_apps.TRAINER_IMAGES, "trainer-x", trainer_image)
@@ -539,6 +539,26 @@ def test_bundled_configs_pin_their_own_images(path, monkeypatch):
     monkeypatch.setattr(deployment_apps.modal, "is_local", lambda: True)
     deployment_apps.image_for(recipe.backend, recipe.trainer_image)
     deployment_apps.image_for("sglang", recipe.inference_image)
+
+
+UNUSED_IMAGE_WHITELIST = {
+    "miles-v0.2.0-8c5de26",  # Beam LoRA support is awaiting a bundled config.
+}
+
+
+def test_named_images_are_used_by_bundled_configs():
+    registered = set(deployment_apps.TRAINER_IMAGES) | set(
+        deployment_apps.SAMPLER_IMAGES
+    )
+    used = set()
+    for path in config_path("qwen35-9b-lora-16k").parent.glob("[!_]*.py"):
+        recipe = load(path)
+        used.update((recipe.trainer_image, recipe.inference_image))
+    unused = registered - used
+    assert unused == UNUSED_IMAGE_WHITELIST, (
+        f"Unused images: {sorted(unused - UNUSED_IMAGE_WHITELIST)}; "
+        f"stale whitelist entries: {sorted(UNUSED_IMAGE_WHITELIST - unused)}"
+    )
 
 
 FORK_IMAGE_MODULES = (
@@ -586,9 +606,7 @@ def test_image_variables_build_the_commit_they_are_named_after(module):
         assert pins and all(pin.startswith(short) for pin in pins), variable
         series.setdefault(variable.removesuffix(f"{number}_{short}"), []).append(number)
     for prefix, numbers in series.items():
-        assert numbers == [f"{index:02}" for index in range(1, len(numbers) + 1)], (
-            prefix
-        )
+        assert numbers == sorted(set(numbers)), prefix
 
 
 @functools.cache

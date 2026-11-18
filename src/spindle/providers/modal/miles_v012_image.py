@@ -38,11 +38,8 @@ def glm53_image_at(miles_commit: str) -> modal.Image:
 
 
 # Each series lists fork commits in ancestry order, each a descendant of the one before. Append new commits; never edit an entry.
-image_01_f2f8447 = image_at("f2f8447c33ac0755a0988c30d413d334dea0a26a")
 # Branch head: the GLM-5.3 provider hooks, inert without the glm53 build steps, and per-adapter seeds through load_slot.
 image_02_99e1ebe = image_at("99e1ebe8e86974e0b3c290f47f415ee47726f965")
 
-# Merged modal-projects/miles#31 on spindle-miles-v0.1.2.
-glm53_image_01_464efc9 = glm53_image_at("464efc9781bbf8edf2135f0857f5aa417685eae2")
 # Merged modal-projects/miles#43: per-adapter seeds through load_slot.
 glm53_image_02_99e1ebe = glm53_image_at("99e1ebe8e86974e0b3c290f47f415ee47726f965")
