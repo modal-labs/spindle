@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 
+from spindle.configuration import RoutingSource
+
 SGLANG_ENV = {"SGLANG_RETURN_ORIGINAL_LOGPROB": "1"}
 
 
@@ -197,6 +199,7 @@ def start_lora_sidecar(
     sglang_port: int,
     bulletin_root: str,
     bulletin_volume: str,
+    routing_source: RoutingSource = "hook",
 ) -> subprocess.Popen:
     command = [
         sys.executable,
@@ -210,6 +213,8 @@ def start_lora_sidecar(
         bulletin_root,
         "--bulletin-volume",
         bulletin_volume,
+        "--routing-source",
+        routing_source,
     ]
     return subprocess.Popen(command, start_new_session=True)
 

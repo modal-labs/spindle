@@ -1,6 +1,18 @@
 """Flat Python recipes. Modal and the backend validate their own options."""
 
 from copy import deepcopy
+from typing import Literal, get_args
+
+RoutingSource = Literal["hook", "kv_events", "compare"]
+ROUTING_SOURCES: tuple[RoutingSource, ...] = get_args(RoutingSource)
+# SGLang's publisher and the sidecar's subscriber share these loopback endpoints.
+KV_EVENTS_CONFIG: dict[str, str | bool] = {
+    "publisher": "zmq",
+    "endpoint": "tcp://127.0.0.1:5557",
+    "bind": True,
+    "replay_endpoint": "tcp://127.0.0.1:5558",
+    "topic": "kv-events",
+}
 
 
 def _apply_overrides(values, overrides):
@@ -76,6 +88,8 @@ class BaseConfig:
     # None picks cache_wait for LoRA pools with one SGLang data-parallel rank,
     # and affinity otherwise.
     inference_lora_routing = None
+    # Where cache_wait pools get each replica's cached prefixes; "hook" for SGLang before v0.5.22.
+    inference_lora_routing_source: RoutingSource = "kv_events"
     # None uses Modal's default, which adds replicas as soon as load passes the target.
     inference_scaleup_window_s = None
     inference_scaledown_window_s = 300

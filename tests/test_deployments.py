@@ -287,10 +287,26 @@ def test_model_weights_override_assets_but_not_the_served_model():
     assert row.inference_identity() != resolved().inference_identity()
 
 
+@pytest.mark.parametrize("source", ["kv_events", "compare"])
+def test_sglang_v0521_image_rejects_native_kv_routing(source):
+    recipe = load(config_path("deepseek-v41-flash-lora-8k"))
+    recipe.inference_image = "sglang-v0.5.21-a3e0e17"
+    recipe.inference_lora_routing_source = source
+    with pytest.raises(
+        ValueError,
+        match=r"requires adapter names in KV events, which SGLang added in v0\.5\.22",
+    ):
+        DeploymentConfig.create(recipe)
+
+
 @pytest.mark.parametrize(
     ("changes", "match"),
     [
         (dict(inference_lora_routing="nearest"), "unknown inference_lora_routing"),
+        (
+            dict(inference_lora_routing_source="other"),
+            "Input should be 'hook', 'kv_events' or 'compare'",
+        ),
         (
             dict(inference_routing_prefill_tokens_per_second=0),
             "prefill_tokens_per_second",
@@ -344,6 +360,21 @@ def test_switching_routing_redeploys_the_pool():
     # Only cache_wait pools run the observer.
     affinity = resolved(inference_lora_routing="affinity")
     assert affinity.inference_identity() != resolved().inference_identity()
+
+
+def test_config_saved_before_routing_source_restores_as_hook():
+    saved = resolved().model_dump()
+    del saved["recipe"]["inference_lora_routing_source"]
+    restored = DeploymentConfig.from_registry(saved)
+    assert restored.recipe.inference_lora_routing_source == "hook"
+
+
+@pytest.mark.parametrize("source", ["hook", "compare"])
+def test_switching_routing_source_redeploys_only_the_inference_pool(source):
+    original = resolved()
+    switched = resolved(inference_lora_routing_source=source)
+    assert switched.inference_identity() != original.inference_identity()
+    assert switched.trainer_identity() == original.trainer_identity()
 
 
 def test_trainer_image_is_part_of_trainer_identity():

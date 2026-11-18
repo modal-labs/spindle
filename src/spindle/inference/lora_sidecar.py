@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
-import time
 import uuid
-from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,15 +14,16 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from stitch.types import VersionConstraint, VersionRef
 
+from spindle.configuration import ROUTING_SOURCES, RoutingSource
 from spindle.startup_timing import timeline
 
 from .bulletin import SnapshotBulletin, SnapshotNotFound
 from .request_replay import RequestReplay
+from .kv_events import KVEventSubscriber
+from .routing_state import RoutingState
 
 
 ABORT_TIMEOUT_SECONDS = 2.0
-ROUTING_CATALOG_PATH = Path("/tmp/spindle-routing-work.json")
-ROUTING_CATALOG_REFRESH_SECONDS = 0.5
 
 
 def _routing_adapter(payload: dict) -> str:
@@ -45,6 +43,8 @@ def create_app(
     upstream_url: str,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    routing_source: RoutingSource = "hook",
+    kv_subscriber: KVEventSubscriber | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -62,12 +62,20 @@ def create_app(
         app.state.adapter_resolutions = {}
         app.state.routing_requests = {}
         app.state.request_work = {}
-        app.state.routing_catalog = {}
-        app.state.routing_read_at = 0.0
         app.state.request_replay = RequestReplay()
+        app.state.routing_state = RoutingState(
+            app.state.client,
+            routing_source,
+            kv_subscriber,
+            app.state.routing_requests,
+            app.state.request_work,
+            app.state.registered_adapters,
+        )
+        app.state.routing_state.start()
         try:
             yield
         finally:
+            await app.state.routing_state.stop()
             await app.state.request_replay.aclose()
             pending = list(app.state.adapter_resolutions.values())
             for task in pending:
@@ -93,55 +101,13 @@ def create_app(
 
     @app.get("/routing-state")
     async def routing_state():
-        now = time.monotonic()
-        if now - app.state.routing_read_at > ROUTING_CATALOG_REFRESH_SECONDS:
-            app.state.routing_read_at = now
-            try:
-                app.state.routing_catalog = json.loads(
-                    await asyncio.to_thread(ROUTING_CATALOG_PATH.read_text)
-                )
-            except (OSError, ValueError):
-                app.state.routing_catalog = {}
-        snapshot = app.state.routing_catalog
-        pending_adapters = sorted(set(app.state.routing_requests.values()))
-        work = None
-        if snapshot:
-            rows = {
-                row["rid"]: row
-                for row in snapshot["requests"]
-                if row["rid"] in app.state.routing_requests
-            }
-            rows.update(
-                (rid, row)
-                for rid, row in app.state.request_work.items()
-                if rid not in rows
-            )
-            work = dict(
-                age_seconds=time.time() - snapshot["timestamp"],
-                prefixes=snapshot["prefixes"],
-                cpu_adapters=snapshot["cpu_adapters"],
-                gpu_adapters=snapshot["gpu_adapters"],
-                request_ids=list(rows),
-                pending_adapters=pending_adapters,
-                prefill_tokens=sum(row["prefill_tokens"] for row in rows.values()),
-                decode_tokens=sum(row["decode_tokens"] for row in rows.values()),
-                snapshot_seconds=snapshot["snapshot_seconds"],
-                cache_kind=snapshot["cache_kind"],
-                running_requests=snapshot["running_requests"],
-                waiting_requests=snapshot["waiting_requests"],
-                kv_used_tokens=snapshot.get("kv_used_tokens", 0),
-                kv_capacity_tokens=snapshot.get("kv_capacity_tokens", 0),
-            )
-        return {
-            "replica": os.environ.get("MODAL_TASK_ID", "local"),
-            "active": len(app.state.routing_requests),
-            "adapters": dict(Counter(app.state.routing_requests.values())),
-            "request_ids": list(app.state.routing_requests),
-            "pending_adapters": pending_adapters,
-            "cpu_adapters": snapshot.get("cpu_adapters", []),
-            "age_seconds": time.time() - snapshot["timestamp"] if snapshot else None,
-            "work": work,
-        }
+        return await app.state.routing_state.body()
+
+    if routing_source == "compare":
+
+        @app.get("/routing-state/compare")
+        async def routing_compare():
+            return await app.state.routing_state.compare_body()
 
     @app.get("/health")
     async def health() -> Response:
@@ -372,6 +338,7 @@ def main() -> None:
     parser.add_argument("--upstream-url", required=True)
     parser.add_argument("--bulletin-root", required=True)
     parser.add_argument("--bulletin-volume", default="")
+    parser.add_argument("--routing-source", choices=ROUTING_SOURCES, default="hook")
     args = parser.parse_args()
 
     refresh = None
@@ -379,7 +346,7 @@ def main() -> None:
         refresh = modal.Volume.from_name(args.bulletin_volume, version=2).reload
     bulletin = SnapshotBulletin(Path(args.bulletin_root), refresh=refresh)
     uvicorn.run(
-        create_app(bulletin, args.upstream_url),
+        create_app(bulletin, args.upstream_url, routing_source=args.routing_source),
         host=args.host,
         port=args.port,
     )

@@ -10,6 +10,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- Cache-aware LoRA routing now reads each sampler's cached prefixes from SGLang's KV cache events instead of a scheduler hook in Spindle's SGLang fork. Samplers switch over at their next deploy. Set `inference_lora_routing_source = "hook"` to keep the hook; you must set it if you pin a sampler image older than SGLang v0.5.22. `"compare"` routes from the hook and reports both lists at `/routing-state/compare`. See [Cache routing snapshots](docs/multi-lora.md#cache-routing-snapshots).
 - DeepSeek-V4.1-Flash samplers run SGLang v0.5.23 like every other sampler, with decoder SWA bounded replay turned off. On v0.5.23 that feature made LoRA samplers crash on long prompts, and its logprobs don't match a full prefill. The samplers switch over at their next deploy (#304).
 
 ### Fixed

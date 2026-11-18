@@ -185,3 +185,27 @@ The deterministic path aims to give each client the same training results regard
 
 To enable it, build the patched FA3 artifacts, set SPINDLE_MILES_FA3_ARTIFACTS to their directory before deployment, and use the qwen3_5_9b_base_miles_lora_deterministic definition. The Tinker training code stays the same. We've validated on small math experiments (see  [LoRA validation](lora_validation.md) deterministic training section) but still need to do larger validation. Our changes to fa3 to make it deterministic also come at a throughput cost, and so this path remains experimental for now. 
 
+### Cache routing snapshots
+
+With `inference_lora_routing = "cache_wait"`, the router sends each request to the replica that already holds the longest part of its prompt in cache. `inference_lora_routing_source` picks where a replica's list of cached prefixes comes from:
+
+| Value | Source of the prefix list | Works with |
+| --- | --- | --- |
+| `"kv_events"` (default) | SGLang's own KV cache events, with replica load from `/v1/loads`. Uses no fork code | `sglang-v0.5.23-*` sampler images |
+| `"hook"` | A scheduler hook in Spindle's SGLang fork | Every sampler image |
+| `"compare"` | The hook, as for `"hook"`. KV events are also collected, and `GET /routing-state/compare` on the replica reports how the two lists differ | `sglang-v0.5.23-*` sampler images |
+
+`"kv_events"` and `"compare"` need KV events that name the adapter each cached block belongs to. SGLang added that in v0.5.22. If you pin a sampler image older than that, such as `sglang-v0.5.21-a3e0e17`, set `inference_lora_routing_source = "hook"`; otherwise the deploy fails with a message saying so. The setting has no effect on full-parameter recipes or with `affinity` routing.
+
+`GET /routing-state/compare` returns the number of prefixes in each list, how many they share, a few examples found in only one, each list's load numbers and age, and whether the KV event subscriber is ready.
+
+The two views can differ in these ways:
+
+- The hook selects up to 8,192 recent prefixes and refreshes about once a second. KV events cap the list at 8,192 and publish at most once every 250 ms while batches arrive. They export leaf-chain endpoints by store recency first, then the deepest boundary at or before root attachments and forks by recency, then other boundaries by store recency. A fork has multiple children or attaches inside a surviving chain. Events do not report cache-hit times.
+- On hybrid Mamba models, the hook counts only prefix boundaries with valid Mamba state. KV events cannot report that state.
+- On hybrid sliding-window pools, KV load reports the greater of full-pool and sliding-window token use; the hook reports full-pool use.
+- With SGLang disaggregation enabled, `/v1/loads` includes its prefill and decode queues in `waiting_requests`; the hook counts only the scheduler's main waiting queue.
+- KV events are replayed from SGLang's buffer of the last 10,000 event batches. If the sidecar falls further behind than that, or restarts while SGLang keeps running, it rebuilds from the buffer only: cached prefixes whose earlier blocks are no longer buffered stay unlisted until SGLang stores them again. The hook reads the cache itself and has no such limit.
+- KV events do not identify GPU-resident adapters, so `gpu_adapters` is empty and the router ranks a replica with the adapter on its GPU no higher than one that only has it loaded in CPU memory.
+
+With SGLang's default `page_size` of 1, the sidecar keeps about 175 MiB per million cached tokens and spends about 1 microsecond of CPU per cached token. The replica's KV pool size bounds the number of cached tokens. The sidecar needs `pyzmq` and `msgspec`, which SGLang images already include.
