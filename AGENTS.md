@@ -14,6 +14,7 @@ These rules apply to everyone who changes this repo, people and coding agents al
 - Make the code explain itself. Before you add a comment, try a clearer name, an extracted variable or a simpler structure. Keep a comment only when it says something the code can't, such as a non-obvious constraint or an upstream bug, and keep it to one line. Put the reasoning behind a change in the commit message or the PR description.
 - Keep changes small. Reuse existing helpers instead of adding new ones. Remove dead branches, unused constants and flags left over from a refactor.
 - Wrap replacements for pinned upstream functions in `spindle.patching.same_signature` where ty can see the upstream type.
+- Type every function you add or move. The per-file `ANN` ignores in `pyproject.toml` only shrink: never add a file to them, including a new, moved or renamed one.
 - Don't delete existing comments or docstrings that a change doesn't touch.
 
 ## Tests

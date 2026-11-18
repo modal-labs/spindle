@@ -75,7 +75,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Files written before ANN was enforced. Remove a file once its functions are typed.
+# Files written before ANN was enforced. This list only shrinks: never add a file,
+# including a new or moved one; type its functions instead. Remove a file once it is typed.
 "examples/codeforces-codegolf/codegolf/app.py" = ["ANN"]
 "examples/codeforces-codegolf/codegolf/cli.py" = ["ANN"]
 "examples/codeforces-codegolf/codegolf/config.py" = ["ANN"]
