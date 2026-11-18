@@ -3,7 +3,7 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "qwen36-35b-a3b-lora-32k"
-    trainer_image = "miles-v0.1.1-52a7a99"
+    trainer_image = "miles-v0.2.0-82e2671"
     inference_image = "sglang-v0.5.23-c4182b2"
     model = "Qwen/Qwen3.6-35B-A3B"
     max_context_length = 32768
@@ -33,6 +33,10 @@ class Config(BaseConfig):
             "recompute_method": "uniform",
             "recompute_num_layers": 1,
         },
+    }
+    overrides = {
+        "miles_cfg.megatron_to_hf_mode": "raw",
+        "miles_cfg.lora_type": "canonical_lora",
     }
     trainer_env = {
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",

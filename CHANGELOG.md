@@ -34,6 +34,8 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- All single-node Miles LoRA recipes use Miles v0.2.0 at fork revision `82e2671`. Qwen3.6 MoE and GLM-5.3 Flash use native canonical adapters; GPT-OSS and larger Nemotron recipes retain Bridge adapters.
+
 - The reference launcher accepts workload arguments only through the TOML definition's `script_args`; extra command-line arguments are rejected.
 - Reference deployment overrides use explicit typed fields and reject undeclared settings.
 - Indexed reference runs require a TOML definition in `reference_runs/configs/`. Temporary definitions can use scratch output paths.

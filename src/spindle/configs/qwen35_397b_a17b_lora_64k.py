@@ -19,6 +19,8 @@ class Config(Parent):
     inference_max_replicas = 2
     # Large eager weight loads can exceed the default twenty-minute startup window.
     inference_startup_timeout_s = 3600
+    # Keep the multi-node variant on its existing Bridge layout.
+    miles_cfg = Parent.miles_cfg
     overrides = {
         # Keep generated Python modules on local disk after a shared-cache read failure.
         "trainer_env.TORCHINDUCTOR_CACHE_DIR": "/tmp/spindle-inductor",

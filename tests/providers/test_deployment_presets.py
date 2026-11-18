@@ -1,3 +1,4 @@
+from fnmatch import fnmatchcase
 import json
 
 import pytest
@@ -157,3 +158,21 @@ def test_legacy_nemotron_does_not_inherit_native_nano_settings(preset):
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
         "CUBLAS_WORKSPACE_CONFIG",
     }.intersection(spec.trainer_env)
+
+
+@pytest.mark.parametrize(
+    "preset,unembed",
+    [("glm53-flash-lora-48k-b300", False), ("glm53-flash-lora-64k-b300", True)],
+)
+def test_glm_native_selectors_adapt_text_without_selecting_vision(preset, unembed):
+    spec = load(config_path(preset))
+    targets = spec.miles_cfg["target_modules"]
+    for module in ("self_attn.q_proj", "mlp.up_proj"):
+        assert any(
+            fnmatchcase(f"model.language_model.layers.0.{module}", target)
+            for target in targets
+        )
+        assert not any(
+            fnmatchcase(f"model.visual.blocks.0.{module}", target) for target in targets
+        )
+    assert any(fnmatchcase("lm_head", target) for target in targets) is unembed

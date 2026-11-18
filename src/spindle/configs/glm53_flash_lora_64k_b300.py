@@ -12,7 +12,7 @@ from spindle.configs.glm53_flash_lora_48k_b300 import Config as SingleNodeConfig
 
 class Config(SingleNodeConfig):
     name = "glm53-flash-lora-64k-b300"
-    trainer_image = "miles-v0.1.2-99e1ebe-glm53"
+    trainer_image = "miles-v0.2.0-82e2671"
     inference_image = "sglang-v0.5.23-c4182b2-glm53"
     # 65,536-token trajectories plus sampler completion bookkeeping.
     max_context_length = 65552
@@ -24,7 +24,7 @@ class Config(SingleNodeConfig):
         "miles_cfg.max_lora_slots": 1,
         "miles_cfg.default_lora_alpha": 16,
         "miles_cfg.target_modules": [
-            *SingleNodeConfig.miles_cfg["target_modules"],
+            *SingleNodeConfig().miles_cfg["target_modules"],
             "lm_head",
         ],
         "miles_cfg.cli_options.use_rollout_routing_replay": True,
