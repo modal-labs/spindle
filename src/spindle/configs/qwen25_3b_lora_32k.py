@@ -3,7 +3,7 @@ from spindle.configs.qwen3_4b_lora_32k import Config as Parent
 
 class Config(Parent):
     name = "qwen25-3b-lora-32k"
-    trainer_image = "miles-v0.2.0-1c27e6d"
+    trainer_image = "miles-v0.2.0-00f3289"
     inference_image = "sglang-v0.5.23-e003cf9"
     model = "Qwen/Qwen2.5-3B"
     inference_max_replicas = 8

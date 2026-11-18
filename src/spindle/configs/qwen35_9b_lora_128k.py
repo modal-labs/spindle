@@ -3,7 +3,7 @@ from spindle.configs._qwen35_9b_instruct_lora import Qwen35InstructLora as Paren
 
 class Config(Parent):
     name = "qwen35-9b-lora-128k"
-    trainer_image = "miles-v0.2.0-1c27e6d"
+    trainer_image = "miles-v0.2.0-00f3289"
     inference_image = "sglang-v0.5.23-e003cf9"
     max_context_length = 131_072
     trainer_gpu = "H200"
