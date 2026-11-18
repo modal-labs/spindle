@@ -7,7 +7,7 @@ from spindle.configs.glm53_flash_lora_64k_b300 import Config as Parent
 
 class Config(Parent):
     name = "glm53-flash-lora-256k"
-    trainer_image = "miles-v0.2.0-dee82e2"
+    trainer_image = "miles-v0.2.0-860ffee"
     inference_image = "sglang-v0.5.23-c4182b2-glm53"
     max_context_length = 262144
     inference_target_concurrency = 2

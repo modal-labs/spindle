@@ -13,7 +13,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
-- The 35 single-node Miles LoRA recipes in this upgrade use Miles v0.2.0 at fork revision `dee82e2`. Qwen3.6 MoE and GLM-5.3 Flash 48K/64K/256K use native canonical adapters; GPT-OSS and other Nemotron recipes retain Bridge adapters. GLM Flash uses blockwise native indexer scoring to bound memory at 256K.
+- The 35 single-node Miles LoRA recipes in this upgrade use Miles v0.2.0 at fork revision `860ffee`. Qwen3.6 MoE and GLM-5.3 Flash 48K/64K/256K use native canonical adapters; GPT-OSS and other Nemotron recipes retain Bridge adapters. GLM Flash uses blockwise native indexer scoring to bound memory at 256K.
 
 - `qwen38-27b-lora-256k` uses `miles-v0.2.0-8c5de26` and local trainer compiler caches to avoid corrupt generated modules observed with shared caches. Checkpoints saved with the previous `miles-v0.1.1-52a7a99` default cannot restore with the new image. Set `trainer_image` back to `miles-v0.1.1-52a7a99` to restore those checkpoints.
 - Miles LoRA checkpoints restore on a trainer running a different Miles commit, as long as the checkpoint format, adapter layout, base model and LoRA settings match. Before, any commit change rejected the restore, so moving a config to a newer image stranded its saved training states. Training states saved with 0.1.7 or earlier now restore on the current v0.1.x images without setting `trainer_image`. Checkpoints saved on `miles-v0.1.x` images still don't restore on `miles-v0.2.0` images, which use a different checkpoint format.
