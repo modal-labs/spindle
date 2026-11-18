@@ -6,11 +6,14 @@ class Config(Parent):
     trainer_image = "miles-v0.1.1-52a7a99"
     inference_image = "sglang-v0.5.23-c4182b2"
     trainer_gpu = "H200"
+    inference_gpu = "H200"
+    inference_target_concurrency = 89
     overrides = {
         "miles_cfg.tensor_model_parallel_size": 2,
         "miles_cfg.expert_model_parallel_size": 2,
         "miles_cfg.cli_options.recompute_method": "uniform",
         "miles_cfg.cli_options.recompute_num_layers": 1,
+        "sglang_cfg.max_mamba_cache_size": 448,
     }
 
 
