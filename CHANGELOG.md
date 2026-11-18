@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Added
+
+- `glm53-flash-lora-256k`: GLM-5.3 Flash LoRA with 256K-token context on one 8×B300 node, with expert-routing replay. It trains on a new image, `miles-v0.1.2-99e1ebe-kpool-glm53`, which changes GLM's sparse-attention indexer so 256K sequences fit in GPU memory.
+
 ### Changed
 
 - DeepSeek-V4.1-Flash samplers run SGLang v0.5.23 like every other sampler, with decoder SWA bounded replay turned off. On v0.5.23 that feature made LoRA samplers crash on long prompts, and its logprobs don't match a full prefill. The samplers switch over at their next deploy (#304).
