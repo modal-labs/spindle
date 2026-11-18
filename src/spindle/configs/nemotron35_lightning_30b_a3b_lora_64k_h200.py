@@ -3,7 +3,7 @@ from spindle.configs.nemotron35_lightning_30b_a3b_lora_64k import Config as Pare
 
 class Config(Parent):
     name = "nemotron35-lightning-30b-a3b-lora-64k-h200"
-    trainer_image = "miles-v0.2.0-e1b172f"
+    trainer_image = "miles-v0.2.0-3f62994"
     inference_image = "sglang-v0.5.23-c4182b2"
     trainer_gpu = "H200"
     inference_gpu = "H200"
