@@ -8,19 +8,19 @@ class Config(Parent):
     model = "Qwen/Qwen3.5-4B"
     trainer_gpu = "B200"
     inference_gpu = "B200"
-    inference_target_concurrency = 64
+    inference_target_concurrency = 128
     overrides = {
         **Parent.overrides,
         "miles_cfg.megatron_to_hf_mode": "raw",
         "miles_cfg.lora_type": "canonical_lora",
         "sglang_cfg.tp_size": 1,
         "sglang_cfg.attention_backend": "trtllm_mha",
-        "sglang_cfg.max_running_requests": 64,
+        "sglang_cfg.max_running_requests": 128,
         "sglang_cfg.max_queued_requests": 128,
         "sglang_cfg.max_loaded_loras": 4,
         "sglang_cfg.max_loras_per_batch": 4,
         "sglang_cfg.lora_backend": "csgmv",
-        "sglang_cfg.cuda_graph_max_bs_decode": 64,
+        "sglang_cfg.cuda_graph_max_bs_decode": 128,
         "sglang_cfg.speculative_algorithm": "NEXTN",
         "sglang_cfg.speculative_num_steps": 3,
         "sglang_cfg.speculative_eagle_topk": 1,
