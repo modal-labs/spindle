@@ -9,6 +9,23 @@ from spindle.providers.modal.scoped import build_app
 from spindle.run import Pool
 
 
+@pytest.mark.parametrize("protected", [False, True])
+def test_scoped_api_endpoint_auth(protected):
+    resources = build_app(
+        qwen3_5_4b_full_64k(),
+        "endpoint-auth-test",
+        "endpoint-auth-test",
+        "test-key",
+        1,
+        Pool(),
+        Pool(),
+        "test-checkpoints",
+        modal.Secret.from_dict({}),
+        **({"requires_proxy_auth": True} if protected else {}),
+    )
+    assert resources[1].info().web_info.unauthenticated is not protected
+
+
 def test_config_only_asset_cache_is_resumed_before_commit(tmp_path):
     """A failed download can leave config.json without weights or a tokenizer."""
     (tmp_path / "config.json").write_text("{}")
