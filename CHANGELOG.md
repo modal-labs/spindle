@@ -23,6 +23,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- `qwen38-27b-lora-256k` uses the seed-capable `miles-v0.2.0-8c5de26` trainer image. Restore existing checkpoints with the image that saved them.
 - The reference launcher accepts workload arguments only through the TOML definition's `script_args`; extra command-line arguments are rejected.
 - Reference deployment overrides use explicit typed fields and reject undeclared settings.
 - DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
