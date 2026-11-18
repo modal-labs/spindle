@@ -29,6 +29,7 @@ def test_gate_defaults_off_and_roundtrips_when_explicit() -> None:
     enabled = _config(shared_prefix_training=True)
     assert "--deterministic-mode" in enabled.miles_arguments()
     assert "--prefix-tree-attention" in enabled.miles_arguments()
+    assert "--lora-kernel-policy" not in enabled.miles_arguments()
     assert MilesBackendConfig.model_validate_json(enabled.model_dump_json()) == enabled
 
 
@@ -38,7 +39,6 @@ def test_gate_defaults_off_and_roundtrips_when_explicit() -> None:
         {"context_parallel_size": 2},
         {"megatron_to_hf_mode": "bridge"},
         {"lora_type": "lora"},
-        {"cli_options": {"lora_kernel_policy": "native"}},
         {"cli_options": {"prefix_tree_attention": False}},
         {"expert_tensor_parallel_size": 2},
         {"lora_dropout": 0.1},
@@ -120,7 +120,7 @@ def test_example_gate_survives_full_deployment_serialization(
     assert backend.shared_prefix_training is True
     assert backend.megatron_to_hf_mode == "raw"
     assert backend.lora_type == "canonical_lora"
-    assert backend.cli_options["lora_kernel_policy"] == "rowwise"
+    assert backend.cli_options["lora_kernel_policy"] == "native"
     assert backend.cli_options["moe_aux_loss_coeff"] == [0.0]
     assert backend.extra_args == ("--seq-length", "32768")
     assert backend.max_lora_slots == 1
@@ -134,3 +134,12 @@ def test_example_gate_survives_full_deployment_serialization(
     )
     assert restored.recipe.platform["modal"]["exclude_reserved_capacity"] is True
     assert restored.recipe.trainer_image.endswith(":image")
+
+
+@pytest.mark.parametrize("policy", ["native", "rowwise"])
+def test_shared_prefix_preserves_explicit_native_kernel_policy(policy: str) -> None:
+    config = _config(
+        shared_prefix_training=True, cli_options={"lora_kernel_policy": policy}
+    )
+    assert config.cli_options["lora_kernel_policy"] == policy
+    assert "--lora-kernel-policy" not in config.miles_arguments()

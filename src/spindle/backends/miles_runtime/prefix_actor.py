@@ -46,10 +46,8 @@ class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
             raise ValueError(
                 "Shared prefixes require zero dropout and no replay or MTP"
             )
-        if args.lora_kernel_policy != "rowwise" or not backend.deterministic_mode:
-            raise ValueError(
-                "Shared prefixes require deterministic mode and rowwise native LoRA"
-            )
+        if not backend.deterministic_mode:
+            raise ValueError("Shared prefixes require deterministic mode")
         if not args.prefix_tree_attention:
             raise ValueError("Shared prefixes require native tree attention")
         torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "8")))

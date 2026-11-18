@@ -235,7 +235,6 @@ class MilesBackendConfig(BaseModel):
             "moe_aux_loss_coeff": [0.0],
             "moe_router_bias_update_rate": 0.0,
             "moe_permute_fusion": False,
-            "lora_kernel_policy": "rowwise",
             "prefix_tree_attention": True,
         }
         if self.context_parallel_size != 1 or self.expert_tensor_parallel_size != 1:
@@ -327,8 +326,6 @@ class MilesBackendConfig(BaseModel):
                 [
                     "--prefix-tree-attention",
                     "--deterministic-mode",
-                    "--lora-kernel-policy",
-                    "rowwise",
                 ]
             )
         return [*arguments, *self.extra_args]

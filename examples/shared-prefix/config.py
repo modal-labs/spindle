@@ -52,7 +52,7 @@ class Config(Parent):
             "model.language_model.layers.*.down_proj",
         ],
         "cli_options": {
-            "lora_kernel_policy": "rowwise",
+            "lora_kernel_policy": "native",
             "deterministic_mode": True,
             "use_rollout_routing_replay": False,
             "enable_mtp_training": False,
