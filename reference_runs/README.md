@@ -110,8 +110,8 @@ The launcher records the validation name, relative output path, SDK version, and
 server-reported `spindle_commit` and `spindle_version` from the stock Tinker SDK
 `get_server_capabilities` request before starting the workload. The response
 identifies the frontend answering that request. Missing metadata is omitted; the
-launcher never substitutes its local source revision. On Tinker 0.26, an HTTP
-response hook retains these fields before the SDK discards unknown fields.
+launcher never substitutes its local source revision. The SDK request uses a raw
+response to retain fields its typed capability model discards.
 Image, hardware and region settings describe the resolved recipe; they do not
 attest the remote trainer's actual source, image or GPU identity. Observed runtime
 details can be added to the entry after verification. Historical entries may

@@ -9,9 +9,11 @@ import runpy
 import sys
 import tomllib
 from pathlib import Path
+from typing import cast
 
-import httpx
 import tinker
+from tinker._constants import RAW_RESPONSE_HEADER
+from tinker.lib.client_connection_pool_type import ClientConnectionPoolType
 from pydantic import BaseModel, ConfigDict, Field
 
 from catalog import ReferenceRun, record_run
@@ -129,21 +131,24 @@ def main() -> None:
 
 
 def server_metadata() -> dict[str, str | None]:
-    observed: dict[str, object] = {}
+    service = tinker.ServiceClient()
+    holder = service._get_rest_holder()
 
-    async def capture(response: httpx.Response) -> None:
-        if response.is_success and response.request.url.path.endswith(
-            "/get_server_capabilities"
-        ):
-            await response.aread()
-            observed.update(response.json())
+    async def read() -> object:
+        with holder.aclient(ClientConnectionPoolType.TRAIN) as client:
+            # Typed capability responses discard unknown server metadata.
+            raw_client = client.with_options(
+                default_headers={RAW_RESPONSE_HEADER: "raw"}
+            )
+            response = cast(
+                tinker.AsyncAPIResponse[tinker.types.GetServerCapabilitiesResponse],
+                await raw_client.service.get_server_capabilities(),
+            )
+            return await response.json()
 
-    # Tinker 0.26 discards unknown response fields, so retain them before parsing.
-    client = tinker.ServiceClient(
-        http_client=httpx.AsyncClient(event_hooks={"response": [capture]})
-    )
-    capabilities = client.get_server_capabilities()
-    values = capabilities.model_dump() | (capabilities.model_extra or {}) | observed
+    values = holder.run_coroutine_threadsafe(holder.execute_with_retries(read)).result()
+    if not isinstance(values, dict):
+        raise ValueError("Server capabilities must be a JSON object")
     return {
         key: value if isinstance(value := values.get(key), str) and value else None
         for key in ("spindle_commit", "spindle_version")

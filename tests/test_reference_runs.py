@@ -544,7 +544,7 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
         {"spindle_commit": 123, "spindle_version": ["invalid"]},
     ],
 )
-def test_server_metadata_survives_stock_sdk_parsing(
+def test_server_metadata_uses_stock_sdk_raw_response(
     reported: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     @same_signature(httpx.AsyncHTTPTransport.handle_async_request)
@@ -559,12 +559,21 @@ def test_server_metadata_survives_stock_sdk_parsing(
             return httpx.Response(200, json={})
         assert request.url.path == "/api/v1/get_server_capabilities"
         assert request.headers["X-API-Key"] == "tml-test-key"
+        assert request.headers["Modal-Key"] == "proxy-id"
+        assert request.headers["Modal-Secret"] == "proxy-secret"
         return httpx.Response(200, json={"supported_models": [], **reported})
 
     monkeypatch.setenv("TINKER_API_KEY", "tml-test-key")
     monkeypatch.setenv("TINKER_BASE_URL", "https://reference.invalid")
     monkeypatch.setenv("TINKER_TELEMETRY", "0")
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle)
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "proxy-id")
+    monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "proxy-secret")
+    monkeypatch.setattr(tinker.ServiceClient, "__init__", tinker.ServiceClient.__init__)
+    wrapper = runpy.run_path(
+        str(ROOT.parent / "examples/shared-server/with_proxy_auth.py")
+    )
+    wrapper["install"]()
     assert launcher.server_metadata() == {
         key: value if isinstance(value := reported.get(key), str) and value else None
         for key in ("spindle_commit", "spindle_version")
