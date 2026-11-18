@@ -87,6 +87,16 @@ def main() -> None:
                 + ")\n"
             )
         return
+    root = Path(__file__).resolve().parent
+    indexed = args.output.resolve().is_relative_to(root / "outputs")
+    validation = args.validation.resolve()
+    if indexed and (
+        validation.parent != root / "configs" or validation.suffix != ".toml"
+    ):
+        parser.error(
+            "Indexed outputs require a TOML definition in reference_runs/configs/; "
+            "use a scratch --output for other definitions"
+        )
     if any(
         arg.split("=", 1)[0] in {"--base-model", "--output", "--tokenizer"}
         for arg in definition.script_args
@@ -101,7 +111,7 @@ def main() -> None:
     )
     entry = ReferenceRun(
         id=args.output.stem,
-        validation=args.validation.stem,
+        validation=validation.stem,
         output=os.path.relpath(args.output.resolve(), args.index.resolve().parent),
         trainer_image=recipe.trainer_image,
         miles_commit=commit.group(1) if commit else "unknown",
@@ -118,9 +128,6 @@ def main() -> None:
             "remote runtime and hardware are not attested. "
             f"Configured sampler image: {recipe.inference_image}."
         ),
-    )
-    indexed = args.output.resolve().is_relative_to(
-        Path(__file__).resolve().parent / "outputs"
     )
     with record_run(args.index, entry, indexed=indexed) as output:
         if indexed:
@@ -175,6 +182,9 @@ def launch(
         sys.argv = arguments
         sys.path.insert(0, str(script.parent))
         runpy.run_path(str(script), run_name="__main__")
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            raise
     finally:
         sys.argv = previous_argv
         sys.path[:] = previous_path

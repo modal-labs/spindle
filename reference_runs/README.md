@@ -104,7 +104,9 @@ Successful `run.py --output ...` executions under this checkout's
 as `/tmp/run.jsonl`, stay uncatalogued, including with `--index`. Symlinks are
 resolved before deciding whether an output belongs to the catalog. The output
 filename without its extension becomes the run ID. `--index` selects another
-catalog for these outputs.
+catalog for these outputs. Indexed runs require a TOML definition directly in
+this checkout's `reference_runs/configs/` directory, so its catalog name identifies
+the definition. Temporary or external definitions can use scratch output paths.
 
 The launcher records the validation name, relative output path, SDK version, and
 server-reported `spindle_commit` and `spindle_version` from the stock Tinker SDK

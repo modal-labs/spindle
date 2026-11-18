@@ -36,6 +36,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - The reference launcher accepts workload arguments only through the TOML definition's `script_args`; extra command-line arguments are rejected.
 - Reference deployment overrides use explicit typed fields and reject undeclared settings.
+- Indexed reference runs require a TOML definition in `reference_runs/configs/`. Temporary definitions can use scratch output paths.
 - DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
 - Synthetic guess-number regressions select existing cookbook renderers for Qwen2.5-3B/7B-Instruct, Qwen3-4B and Qwen3.5-2B instead of skipping them when cookbook model metadata is missing.
 

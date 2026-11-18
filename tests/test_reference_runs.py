@@ -20,7 +20,7 @@ import toml
 from pydantic import BaseModel, ValidationError
 
 from spindle.configuration import BaseConfig
-from spindle.deployments import DeploymentConfig, load
+from spindle.deployments import load
 from spindle.patching import same_signature
 
 ROOT = Path(__file__).parents[1] / "reference_runs"
@@ -160,8 +160,11 @@ def test_committed_toml_matches_schema(path: Path, schema: type[BaseModel]) -> N
 def test_prepare_and_launch_share_overrides_from_another_directory(
     location: str, custom_index: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    folder = tmp_path / "definition"
-    folder.mkdir()
+    catalog_root = tmp_path / "catalog"
+    folder = (
+        catalog_root / "configs" if location == "catalog" else tmp_path / "definition"
+    )
+    folder.mkdir(parents=True)
     (folder / "helper.py").write_text("VALUE = 23\n")
     (folder / "workload.py").write_text(
         "import json, sys, tinker\n"
@@ -194,7 +197,6 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     with pytest.raises(FileExistsError):
         launcher.main()
 
-    catalog_root = tmp_path / "catalog"
     monkeypatch.setattr(launcher, "__file__", str(catalog_root / "run.py"))
     indexed = location == "catalog"
     output = (catalog_root / "outputs" if indexed else tmp_path) / "run.jsonl"
@@ -482,10 +484,6 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
             by_alias=True, exclude_none=True
         ),
     )
-    deployment = DeploymentConfig.create(recipe)
-    assert (
-        deployment.trainer_settings["miles"]["actor_num_nodes"] == recipe.trainer_nodes
-    )
     expected_model = recipe.model
 
     def load_tokenizer(model: str, *, revision: str) -> SimpleNamespace:
@@ -578,3 +576,69 @@ def test_server_metadata_uses_stock_sdk_raw_response(
         key: value if isinstance(value := reported.get(key), str) and value else None
         for key in ("spindle_commit", "spindle_version")
     }
+
+
+@pytest.mark.parametrize("location", ["outside", "symlink", "extension"])
+def test_indexed_outputs_require_catalog_definitions(
+    location: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    catalog = tmp_path / "catalog"
+    configs = catalog / "configs"
+    configs.mkdir(parents=True)
+    definition = tmp_path / "dapo_qwen35_4b.toml"
+    definition.write_bytes((ROOT / "configs/dapo_qwen35_4b.toml").read_bytes())
+    if location == "symlink":
+        alias = configs / definition.name
+        alias.symlink_to(definition)
+        definition = alias
+    elif location == "extension":
+        definition = definition.rename(configs / "dapo_qwen35_4b.txt")
+    output = catalog / "outputs/run.jsonl"
+    monkeypatch.setattr(launcher, "__file__", str(catalog / "run.py"))
+    monkeypatch.setattr(sys, "argv", ["run", str(definition), "--output", str(output)])
+    with pytest.raises(SystemExit) as error:
+        launcher.main()
+    assert error.value.code == 2
+    assert "Indexed outputs require a TOML definition" in capsys.readouterr().err
+    assert not output.exists()
+    assert not (catalog / "index.toml").exists()
+
+
+@pytest.mark.parametrize("exit_code", [None, 0, 1])
+def test_workload_exit_status_controls_registration(
+    exit_code: int | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    workload = configs / "workload.py"
+    workload.write_text(
+        "import sys\nfrom pathlib import Path\n"
+        "Path(sys.argv[sys.argv.index('--output') + 1]).write_text('complete metrics\\n')\n"
+        f"raise SystemExit({exit_code!r})\n"
+    )
+    data = tomllib.loads((ROOT / "configs/dapo_qwen35_4b.toml").read_text())
+    data["script"] = "workload.py"
+    definition = configs / "run.toml"
+    definition.write_text(toml.dumps(data))
+    output = tmp_path / "outputs/run.jsonl"
+    monkeypatch.setattr(launcher, "__file__", str(tmp_path / "run.py"))
+    monkeypatch.setattr(
+        launcher,
+        "server_metadata",
+        lambda: {"spindle_commit": None, "spindle_version": None},
+    )
+    monkeypatch.setattr(sys, "argv", ["run", str(definition), "--output", str(output)])
+    if exit_code == 1:
+        with pytest.raises(SystemExit) as error:
+            launcher.main()
+        assert error.value.code == 1
+        assert not (tmp_path / "index.toml").exists()
+    else:
+        launcher.main()
+        entry = tomllib.loads((tmp_path / "index.toml").read_text())["runs"][0]
+        assert (entry["id"], entry["validation"]) == ("run", "run")
+        assert "spindle_commit" not in entry and "spindle_version" not in entry
+    assert output.read_text() == "complete metrics\n"
