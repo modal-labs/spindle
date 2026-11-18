@@ -49,6 +49,12 @@ class CandidateLogProbs(torch.autograd.Function):
         return grad_logits, None, None
 
 
+def _context_parallel_size(args) -> int:
+    # Miles v0.2.0 keeps parallel sizes under args.backend.
+    size = getattr(args, "context_parallel_size", None)
+    return size if size is not None else args.backend.context_parallel_size
+
+
 def install_multi_target_hooks(tinker_losses, math_utils=None) -> None:
     original_target = tinker_losses._target_logprobs
     if math_utils is not None:
@@ -66,7 +72,7 @@ def install_multi_target_hooks(tinker_losses, math_utils=None) -> None:
             # A CP rank may own no rows of a short 1-D padding row; Miles hands back that
             # shard as 1-D and the v0.1.1 CP gather would all-reduce mismatched shapes.
             and (
-                args.context_parallel_size == 1
+                _context_parallel_size(args) == 1
                 or all(target.ndim == 2 for target in targets)
             )
             and not args.allgather_cp

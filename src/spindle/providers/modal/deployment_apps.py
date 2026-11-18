@@ -79,8 +79,6 @@ TRAINER_IMAGES = {
     "miles-v0.1.2-464efc9-glm53": miles_v012_image.glm53_image_01_464efc9,
     # https://github.com/modal-projects/miles/pull/43 Support per-adapter seeds in the v0.1.2 LoRA slot API
     "miles-v0.1.2-99e1ebe-glm53": miles_v012_image.glm53_image_02_99e1ebe,
-    # https://github.com/modal-projects/miles/pull/38 Replay Spindle trainer fixes onto Miles v0.2.0
-    "miles-v0.2.0-15afe21": miles_v020_image.image_01_15afe21,
     # https://github.com/modal-projects/miles/pull/44 Support per-adapter seeds in the v0.2.0 LoRA slot API (on top of #37, Beam LoRA)
     "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
     # https://github.com/modal-projects/miles/pull/49 Native canonical and routed-expert adapters, including Nemotron Nano
@@ -96,8 +94,6 @@ SAMPLER_IMAGES = {
     "sglang-v0.5.23-c4182b2": rollout_image.image_01_c4182b2,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks, with GLM-5.3 Flash sampler settings
     "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
-    # https://github.com/modal-projects/sglang/pull/99 Serve LoRA on all Qwen3.5 linear-attention projections
-    "sglang-v0.5.23-803bccb": rollout_image.image_02_803bccb,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {

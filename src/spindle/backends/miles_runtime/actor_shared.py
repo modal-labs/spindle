@@ -97,12 +97,12 @@ class ProfiledActor:
         )
         self._spindle_profiler.start()
 
-    def torch_profile_stop(self, output_dir: str, fork: bool = True) -> dict | None:
+    def torch_profile_stop(self, output_dir: str) -> dict | None:
         profiler = self._spindle_profiler
         if profiler is None:
             return None
         self._spindle_profiler = None
-        return profiler.stop(output_dir, f"rank{dist.get_rank()}", fork=fork)
+        return profiler.stop(output_dir, f"rank{dist.get_rank()}")
 
     def torch_profile_wait(self) -> None:
         RankProfiler.wait_for_writer()
