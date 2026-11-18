@@ -591,7 +591,10 @@ def test_launcher_sees_failure_only_when_the_worker_fails(
 def test_process_deadline_interrupts_blocking_startup() -> None:
     started = time.monotonic()
     code = beam.supervise(
-        [sys.executable, "-c", "import time; time.sleep(30)"],
+        lambda: subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            start_new_session=True,
+        ),
         0.1,
         termination_grace=0.1,
     )
@@ -615,7 +618,13 @@ def test_supervisor_kills_descendant_even_after_leader_exit(
         "\nwhile not path.exists(): time.sleep(.005)\n"
         + ("sys.exit(0)" if normal_exit else "time.sleep(30)")
     )
-    code = beam.supervise([sys.executable, "-c", leader], 0.8, termination_grace=0.2)
+    code = beam.supervise(
+        lambda: subprocess.Popen(
+            [sys.executable, "-c", leader], start_new_session=True
+        ),
+        0.8,
+        termination_grace=0.2,
+    )
     assert code == (0 if normal_exit else 124)
     pid = int(pid_file.read_text())
     for _ in range(100):
@@ -639,7 +648,9 @@ def test_supervisor_interruption_uses_grace_not_remaining_budget(
     )
     code = (
         f"import sys;sys.path.insert(0,{str(Path(beam.__file__).parent)!r});import beam_blog_repro as beam;"
-        f"beam.supervise([sys.executable,'-c',{worker!r}],3600,termination_grace=.1)"
+        "import subprocess;"
+        f"beam.supervise(lambda: subprocess.Popen([sys.executable,'-c',{worker!r}],"
+        "start_new_session=True),3600,termination_grace=.1)"
     )
     supervisor = subprocess.Popen([sys.executable, "-c", code], start_new_session=True)
     worker_pid = None

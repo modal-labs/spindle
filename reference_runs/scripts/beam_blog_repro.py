@@ -47,11 +47,13 @@ import statistics
 import subprocess
 import threading
 import time
+import traceback
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import FrameType
-from typing import IO, Any, NoReturn, Self
+from typing import IO, Any, NoReturn, Protocol, Self
 
 import numpy as np
 import tinker
@@ -957,7 +959,6 @@ def main() -> None:
         action="store_true",
         help="Summarize and plot existing partial/final output without remote calls",
     )
-    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     config = Config()
     if args.plan:
@@ -974,34 +975,77 @@ def main() -> None:
         args.replay_cache = work_directory(args.output) / "replay-cache"
     if args.stop_after is not None and not 1 <= args.stop_after <= config.updates:
         parser.error(f"--stop-after must be between 1 and {config.updates}")
-    if not args.worker:
-        identity = work_directory(args.output) / "identity.json"
-        started = (
-            json.loads(identity.read_text())["started"]
-            if identity.exists()
-            else time.time()
+    identity = work_directory(args.output) / "identity.json"
+    started = (
+        json.loads(identity.read_text())["started"]
+        if identity.exists()
+        else time.time()
+    )
+    seconds = started + 30 * 3600 - time.time()
+    if seconds <= 0:
+        parser.error("The original run's 30-hour budget is exhausted")
+    code = supervise(lambda: ForkedWorker(lambda: run(args, config)), seconds)
+    if code == 124:
+        print(
+            "Reference run reached its deadline; regenerate partial plots with --plot-only.",
+            file=sys.stderr,
         )
-        seconds = started + 30 * 3600 - time.time()
-        if seconds <= 0:
-            parser.error("The original run's 30-hour budget is exhausted")
-        code = supervise(
-            [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:], "--worker"],
-            seconds,
-        )
-        if code == 124:
-            print(
-                "Reference run reached its deadline; regenerate partial plots with --plot-only.",
-                file=sys.stderr,
+    if code:
+        raise SystemExit(code)
+
+
+class Worker(Protocol):
+    pid: int
+
+    def wait(self, timeout: float | None = None) -> int: ...
+
+
+class ForkedWorker:
+    """Run ``target`` in a forked session leader, keeping patches the parent installed."""
+
+    def __init__(self, target: Callable[[], None]) -> None:
+        self.returncode: int | None = None
+        # The child would otherwise repeat output still buffered in the parent.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        self.pid = os.fork()
+        if self.pid:
+            return
+        os.setsid()
+        code = 1
+        try:
+            target()
+            code = 0
+        except SystemExit as exit:
+            code = (
+                exit.code if isinstance(exit.code, int) else int(exit.code is not None)
             )
-        if code:
-            raise SystemExit(code)
-        return
-    run(args, config)
+        except BaseException:
+            traceback.print_exc()
+        finally:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(code)
+
+    def wait(self, timeout: float | None = None) -> int:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.returncode is None:
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            if pid:
+                self.returncode = os.waitstatus_to_exitcode(status)
+            elif deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired("beam_blog_repro worker", timeout or 0)
+            else:
+                time.sleep(0.1)
+        return self.returncode
 
 
-def supervise(command: list[str], seconds: float, termination_grace: float = 30) -> int:
+def supervise(
+    start: Callable[[], Worker], seconds: float, termination_grace: float = 30
+) -> int:
+    """Wait for a worker that leads its own session, killing its process group at the deadline."""
     deadline = time.monotonic() + seconds
-    process = subprocess.Popen(command, start_new_session=True)
+    process = start()
 
     def kill_group(signum: int) -> None:
         try:
