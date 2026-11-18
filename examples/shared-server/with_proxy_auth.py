@@ -12,6 +12,7 @@ import inspect
 import os
 import runpy
 import sys
+from pathlib import Path
 
 import tinker
 
@@ -53,6 +54,7 @@ def main():
         runpy.run_module(sys.argv[0], run_name="__main__", alter_sys=True)
     else:
         sys.argv = sys.argv[1:]
+        sys.path.insert(0, str(Path(sys.argv[0]).resolve().parent))
         runpy.run_path(sys.argv[0], run_name="__main__")
 
 

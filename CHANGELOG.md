@@ -6,6 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Reference runs automatically index successful executions under `reference_runs/outputs/`, recording server-reported Spindle commit and version. Process locks protect run IDs, output paths and index updates; scratch outputs remain uncatalogued.
 - `spindle usage --group-by` takes several label keys separated by commas, such as `team_id,run_id`, and prints one column per key.
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
 - Sampling supports the Tinker SDK's `prompt_logprobs_last_n`. It returns prompt logprobs for only the last N prompt tokens, so the rest of the prompt can come from the prefix cache.
@@ -33,6 +34,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- The reference launcher accepts workload arguments only through the TOML definition's `script_args`; extra command-line arguments are rejected.
+- Reference deployment overrides use explicit typed fields and reject undeclared settings.
+- Indexed reference runs require a TOML definition in `reference_runs/configs/`. Temporary definitions can use scratch output paths.
+- DAPO-Math reference definitions must specify a tokenizer model and pinned revision. Direct script callers must pass `--tokenizer MODEL REVISION`.
 - Synthetic guess-number regressions select existing cookbook renderers for Qwen2.5-3B/7B-Instruct, Qwen3-4B and Qwen3.5-2B instead of skipping them when cookbook model metadata is missing.
 
 - Single-node dense Qwen2.5, Qwen3, Qwen3.5, Qwen3.8 and Nemotron-3 Nano LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Nano uses FP32 expert reductions and deterministic kernels so repeated scores and optimizer replay agree. Older checkpoints require their original trainer image and adapter layout.
