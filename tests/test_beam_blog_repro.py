@@ -619,8 +619,10 @@ def test_supervisor_kills_descendant_even_after_leader_exit(
     assert code == (0 if normal_exit else 124)
     pid = int(pid_file.read_text())
     for _ in range(100):
-        status = Path(f"/proc/{pid}/stat")
-        if not status.exists() or status.read_text().split()[2] == "Z":
+        try:
+            if Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z":
+                break
+        except (FileNotFoundError, ProcessLookupError):
             break
         time.sleep(0.01)
     else:
