@@ -7,6 +7,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 ### Added
 
 - Reference runs automatically index successful executions under `reference_runs/outputs/`, recording server-reported Spindle commit and version. Process locks protect run IDs, output paths and index updates; scratch outputs remain uncatalogued.
+- A two-node Qwen3.8-27B DAPO-Math reference definition uses the shared Tinker workload.
 - `spindle usage --group-by` takes several label keys separated by commas, such as `team_id,run_id`, and prints one column per key.
 - Miles LoRA clients accept the stock Tinker SDK’s `create_lora_training_client(seed=...)` to reproduce adapter initialization without changing other clients’ random streams.
 - Sampling supports the Tinker SDK's `prompt_logprobs_last_n`. It returns prompt logprobs for only the last N prompt tokens, so the rest of the prompt can come from the prefix cache.
