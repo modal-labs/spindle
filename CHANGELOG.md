@@ -10,6 +10,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 - DAPO-Math references validate checkpoint restoration by replaying an Adam momentum step and sampling the restored adapter after the measured workload.
 - `glm53-flash-lora-256k`: GLM-5.3 Flash LoRA with 256K-token context on one 8×B300 node, with expert-routing replay. It trains on a new image, `miles-v0.1.2-99e1ebe-kpool-glm53`, which changes GLM's sparse-attention indexer so 256K sequences fit in GPU memory.
 - `deepseek-v41-flash-1017-lora-64k`: DeepSeek-V4.1-Flash-1017 LoRA with 64K context. Like `deepseek-v41-flash-lora-64k`, it trains on B300 or B200.
+- `kimi-k3-lora-32k` trains LoRA adapters on Moonshot AI Kimi K3 from the MXFP4 release weights, with a 2-node B300 trainer and a 1-node B300 sampler. Adapters train attention, the dense first layer and the shared experts; routed experts stay frozen.
 
 ### Changed
 
