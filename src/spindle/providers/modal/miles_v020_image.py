@@ -47,5 +47,5 @@ image_02_8c5de26 = image_at("8c5de2650a6876c2ca17ff221c7e0ba8a2d7b84a")
 # Native canonical and routed-expert adapters, including Nemotron Nano (#47, #49).
 image_03_e814245 = image_at("e8142459617f8220825ddbacf054b8b17cabdd82")
 
-# GLM output-head adapters and Nemotron Omni language-model layouts.
-image_04_82e2671 = image_at("82e2671307851ed994f36fc2e22832c82f6aaded")
+# GLM output-head adapters, Nemotron Omni layouts, and native expert routing validation.
+image_04_c82136c = image_at("c82136ce3ff646e6aae2d3a6213897f9239b1437")

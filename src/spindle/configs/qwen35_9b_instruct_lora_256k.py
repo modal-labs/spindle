@@ -5,7 +5,7 @@ from spindle.configs.qwen35_9b_instruct_lora_16k import Config as Parent
 
 class Config(Parent):
     name = "qwen35-9b-instruct-lora-256k"
-    trainer_image = "miles-v0.2.0-82e2671"
+    trainer_image = "miles-v0.2.0-c82136c"
     inference_image = "sglang-v0.5.23-e003cf9"
     max_context_length = 262144
     trainer_gpu = "B300"

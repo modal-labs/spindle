@@ -10,7 +10,7 @@ from spindle.configs.glm53_flash_lora_64k import Config as GLMConfig
 
 class Config(GLMConfig):
     name = "glm53-flash-lora-48k-b300"
-    trainer_image = "miles-v0.2.0-82e2671"
+    trainer_image = "miles-v0.2.0-c82136c"
     inference_image = "sglang-v0.5.23-c4182b2-glm53"
     max_context_length = 49152
     trainer_gpu = "B300"
@@ -21,6 +21,8 @@ class Config(GLMConfig):
         "miles_cfg.model_type": "glm5.3-flash",
         "miles_cfg.megatron_to_hf_mode": "raw",
         "miles_cfg.lora_type": "canonical_lora",
+        # Native expert slot routing needs the dispatcher's unfused permutation map.
+        "miles_cfg.cli_options.moe_permute_fusion": False,
         "miles_cfg.target_modules": [
             f"model.language_model.layers.*.{target.removeprefix('*.')}"
             for target in GLMConfig.miles_cfg["target_modules"]
