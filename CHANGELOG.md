@@ -16,6 +16,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
+- Scoped sampler activation resolves Modal helpers in the container runtime, avoiding a serialization error when a remote controller creates the deployment.
 - Long-sequence training requests with expert-routing replay no longer fail with intermittent 503 errors.
 
 ## 0.1.8 - 2026-11-18

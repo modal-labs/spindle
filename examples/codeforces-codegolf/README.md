@@ -38,7 +38,8 @@ dataset and step target. Metrics retain each minibatch's training response and
 report `streaming.group_wait_seconds`, `streaming.forward_backward_seconds`
 and the minibatch count. Group wait excludes time spent awaiting training.
 Extra training requests and smaller packed batches can offset the overlap;
-no GPU speedup has been measured for these variants.
+the [short-rollout GPU comparison](../../docs/codegolf-streaming-benchmark.md)
+did not demonstrate an end-to-end speedup.
 
 `benchmark_streaming.py` runs both variants in batch–stream–stream–batch order
 on one scoped deployment, with 8 H200 trainer GPUs and four H200 sampler
@@ -54,8 +55,10 @@ CODEGOLF_PROXY_SECRET=spindle-proxy uv run modal run --detach --env your-environ
   --proxy-secret spindle-proxy --steps 6 --warmup 2 --max-tokens 2048
 ```
 
-Each run starts from base weights. The report excludes the first two updates,
-includes publication time, and excludes evaluation and full checkpoint saves.
+Each run starts from base weights. The report excludes the first two updates
+and the final checkpoint update, includes publication time, and excludes
+evaluation and full checkpoint saves. Each final checkpoint was about 193 GiB
+in the recorded run, so allow storage and runtime for those saves.
 Sampling is stochastic; compare completion lengths and rewards as well as
 seconds per update. The 2,048-token cap measures a shorter workload than the
 default recipe. Full reports and per-step metrics remain on the benchmark Volume.

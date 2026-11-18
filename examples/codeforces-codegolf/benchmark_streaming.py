@@ -47,8 +47,8 @@ def benchmark(
 ):
     if not label or Path(label).name != label or label in {".", ".."}:
         raise ValueError("label must be a single directory name")
-    if not 0 <= warmup < steps:
-        raise ValueError("require 0 <= warmup < steps")
+    if not 0 <= warmup < steps - 1:
+        raise ValueError("require a measured update between warmup and the final save")
     logging.basicConfig(level=logging.INFO)
     root = Path("/runs") / label
     root.mkdir(exist_ok=False)
@@ -103,7 +103,7 @@ def benchmark(
                 json.loads(path.read_text())
                 for path in sorted((run_root / "metrics").glob("*.json"))
             ]
-            measured = [row for row in metrics if row["step"] > warmup]
+            measured = [row for row in metrics if warmup < row["step"] < steps]
             summary = {
                 "variant": variant,
                 "config": dataclasses.asdict(cfg),
@@ -116,7 +116,7 @@ def benchmark(
                 ),
                 "mean_reward": statistics.fmean(row["reward"] for row in measured),
                 "metrics": measured,
-                "recovery_events": len(list((run_root / "attempts").glob("*.json"))),
+                "trainer_attempts": len(list((run_root / "attempts").glob("*.json"))),
             }
             report["runs"].append(summary)
             (root / "result.json").write_text(json.dumps(report, indent=2))
