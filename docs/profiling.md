@@ -63,6 +63,8 @@ SPINDLE_TORCH_PROFILE_STEP=2 uv run spindle deploy deployment.py --refresh-train
 | `SPINDLE_TORCH_PROFILE_STEP` | unset (off) | Step to trace. Steps count prior `optim_step` calls from 0; avoid 0, which includes kernel compilation. |
 | `SPINDLE_TORCH_PROFILE_RANKS` | `0` | Ranks to trace, such as `0,4` or `all`. About 250 MB each. |
 | `SPINDLE_TORCH_PROFILE_DIR` | `/checkpoints/torch-profile/<config name>` | Output directory on the checkpoint volume. |
+| `SPINDLE_TORCH_PROFILE_SHAPES` | unset | `1` records tensor shapes. Makes the trace larger. |
+| `SPINDLE_TORCH_PROFILE_MEMORY` | unset | `1` records memory allocations. Makes the trace larger. |
 
 - A running trainer keeps its old settings until it idles out. To be sure the
   trace is taken, profile a [variant](deployment-configs.md#variants) with its
@@ -75,8 +77,9 @@ SPINDLE_TORCH_PROFILE_STEP=2 uv run spindle deploy deployment.py --refresh-train
   `spindle/optim_step` and `spindle/export_slot_peft`.
 - Files: `rank<N>.trace.json.gz` (timeline) and `rank<N>.key_averages.txt`
   (top 60 operators by GPU time).
-- Writing the trace takes minutes and delays the next update. Leave the profiled
-  step and the next one out of timing comparisons.
+- A separate process writes the files after the step, so the trainer keeps
+  serving. Each traced rank logs `"state": "written"` when its files are done.
+  Leave the profiled step and the next one out of timing comparisons.
 
 Download from the checkpoint volume (`platform.storage.checkpoints`, default
 `spindle-checkpoints`):
@@ -213,6 +216,54 @@ means the KV cache is the limit.
 | **Slowest trajectories** | Round lasts far longer than the p90 trajectory; sampler idle at the end. | Not a sampler setting. Start the next round early, or cap turns and output length. |
 | **Tools** | Tool calls take much of each trajectory. | Not a Spindle setting. Speed up or parallelize tools. |
 
+### Profile the sampler
+
+Writing a trace pauses a sampler replica for about a second, so profile a copy
+of your config, not the pool your training uses. Make a
+[variant](deployment-configs.md#variants) with its own name, one replica, and
+SGLang's trace directory on the checkpoint volume:
+
+```python
+class Config(Parent):
+    name = "my-config-profile"
+    inference_max_replicas = 1
+    inference_env = {"SGLANG_TORCH_PROFILER_DIR": "/checkpoints/torch-profile/my-config-profile"}
+```
+
+Deploy it and keep it busy with the [rollout benchmark](#rollout-benchmark).
+While a round runs, find the replica's container in `modal container list`
+(app `<frontend>-lora-<config name>`) and ask SGLang to record 20 forward
+passes:
+
+```bash
+uv run modal container exec <container id> -- curl -s -X POST http://127.0.0.1:8001/start_profile \
+  -H 'Content-Type: application/json' \
+  -d '{"num_steps": 20, "activities": ["CPU", "GPU"], "with_stack": false, "record_shapes": false}'
+```
+
+A forward pass is one SGLang batch: a prefill, or one decoded token for every
+running request. SGLang stops after `num_steps` on its own and writes one
+`.trace.json.gz` per GPU. The replica pauses while it writes: under a second for
+20 passes of Qwen3.5-2B on an H100, longer for more passes or with stacks and
+shapes on. Download the trace from your checkpoint volume
+(`platform.storage.checkpoints`, `spindle-checkpoints` by default):
+
+```bash
+uv run modal volume ls <checkpoint volume> /torch-profile/my-config-profile/
+uv run modal volume get <checkpoint volume> /torch-profile/my-config-profile/<file> .
+```
+
+Open the trace in Perfetto and search for:
+
+- `step[DECODE bs=N]` and `step[EXTEND ...]`: one per forward pass. The GPU row
+  shows the pass's kernels under the same label.
+- `scheduler.*`: CPU work between passes. Long idle GPU gaps there mean
+  overhead; see **Too little batching** and **Decode overhead** above.
+- `cudaGraphLaunch`: a CUDA graph replay. A decode pass with many
+  `cudaLaunchKernel` calls instead ran without one.
+- Kernels with `lora` in the name: the adapter's cost. For Qwen3.5-2B at rank 32
+  they were about a third of GPU time. A lower rank makes them cheaper.
+
 ## 5. Compare before and after
 
 - One change per named [variant](deployment-configs.md#variants).
@@ -222,16 +273,36 @@ means the KV cache is the limit.
   `H100` on an H200.
 - Repeat surprising results once; machines differ by 5–10%.
 - Check parity: per-token logprobs and loss on a fixed batch should match.
-- For RL with long steps, tune the sampler with a rollout-only benchmark: save
-  sampler weights once, replay the same prompts with fixed seeds, run one copy
-  per training run, and compare round time and seconds per 1k generated tokens.
-  Confirm with a few real steps.
+- For RL with long steps, tune the sampler with the
+  [rollout benchmark](#rollout-benchmark) instead of full steps, with one copy
+  per training run. Confirm with a few real steps.
 - To move a running job to a variant: `save_state`, then `load_state` in a
   training client created on the variant.
 - Stop when changes save less than a few percent, or what remains needs code.
 
 If your config beats a bundled recipe for a common workload, open a pull request
 updating the recipe with before and after step times.
+
+### Rollout benchmark
+
+`scripts/rollout_benchmark.py` uses only the stock Tinker SDK, so it runs against
+a Spindle URL or against Tinker (leave out `--base-url`). Save sampler weights
+once, then run:
+
+```bash
+uv run scripts/rollout_benchmark.py --base-url <Spindle URL> \
+  --model-path tinker://<run id>/sampler_weights/<name> --prompts prompts.jsonl \
+  --num-samples 4 --max-tokens 1024 --copies 2 --rounds 5
+```
+
+Each JSONL line is `{"tokens": [...]}` or `{"messages": [...]}`, which is
+rendered with the model's chat template. Each round sends every prompt
+`--copies` times at once with fixed seeds. It prints wall time, p50, p95 and
+max request latency, generated tokens and seconds per 1k generated tokens.
+Compare the median of rounds after the first, since the first includes cold
+starts. Later rounds reuse cached prompts, so they mostly time decoding.
+Requests are single-turn. For a multi-turn tool environment, replay each turn's
+recorded prompt tokens. That reproduces the sampler's work but not tool latency.
 
 ## Past tuning changes
 

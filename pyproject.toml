@@ -172,7 +172,6 @@ ignore = [
 "src/spindle/inference/sglang.py" = ["ANN"]
 "src/spindle/providers/modal/app.py" = ["ANN"]
 "src/spindle/providers/modal/checkpoint_storage.py" = ["ANN"]
-"src/spindle/providers/modal/deployment_apps.py" = ["ANN"]
 "src/spindle/providers/modal/deployment_configs.py" = ["ANN"]
 "src/spindle/providers/modal/fft_pool.py" = ["ANN"]
 "src/spindle/providers/modal/image_dependencies.py" = ["ANN"]

@@ -117,6 +117,9 @@ class FakeMilesRuntime:
         self.calls.append(("torch_profile_stop", output_dir))
         return [{"trace": f"{output_dir}/rank0.trace.json.gz"}]
 
+    def torch_profile_wait(self):
+        self.calls.append(("torch_profile_wait",))
+
     def close(self):
         self.closed = True
 

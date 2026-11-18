@@ -196,5 +196,12 @@
   "cleanup": {
     "deployment_stop_completed": true,
     "remaining_validation_containers": 0
+  },
+  "cpu_checks": {
+    "merged_main": "0d8f611",
+    "python": "3.12.16",
+    "passed": 1572,
+    "skipped": 11,
+    "pre_commit": "passed"
   }
 }

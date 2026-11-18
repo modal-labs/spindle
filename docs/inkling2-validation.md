@@ -60,7 +60,9 @@ Cold costs are substantial. Earlier runs took about 3,046 seconds to download th
 
 ## Other checks and limits
 
-The Spindle CPU suite passed 1,560 tests and skipped 11 on Python 3.12.16. All pre-commit checks passed. SDK compatibility CI passed with minimum, image-pinned, and latest SDK versions in [run 44211487616](https://github.com/modal-labs/spindle/actions/runs/44211487616).
+After the GPU run, main through `0d8f611` was merged to resolve a changelog conflict. Those later profiling, scoring, deployment typing, and usage changes have CPU coverage; the full-model run remains tied to `3e0139d`.
+
+The Spindle CPU suite passed 1,572 tests and skipped 11 on Python 3.12.16. All pre-commit checks passed. SDK compatibility CI passed with minimum, image-pinned, and latest SDK versions in [run 44211487616](https://github.com/modal-labs/spindle/actions/runs/44211487616).
 
 The merged Miles PR head `d23367105d09833dad3c91f490c90aefa18b80c2` separately passed 251 native-LoRA tests and 10 Inkling launcher snapshots in the matched image on B300. Full-model results apply to the frozen `e186d977` runtime, not that newer merged head. The full launcher suites had the same 23 failures and four errors on that head and its unchanged `e8142459` base, with no new failing cases (679 versus 669 passing cases). The full launcher suite is not green. Separate CUDA checks cover mixed-slot forward and gradient parity.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -500,6 +501,9 @@ class MilesCommandBackend(Backend):
         self._closed = True
         if self._profiling_active:
             self._stop_profiling()
+        if self._profile_step_done:
+            with contextlib.suppress(Exception):
+                self.runtime.torch_profile_wait()
         self.runtime.close()
 
     def _first(self, name: str, **fields: Any) -> None:
@@ -543,7 +547,6 @@ class MilesCommandBackend(Backend):
             for result in results or []:
                 if result:
                     files.extend(result.values())
-            _commit_volume(os.environ.get("SPINDLE_CHECKPOINT_VOLUME"))
         except Exception as exc:  # noqa: BLE001 - profiling must not kill training
             print(
                 json.dumps(

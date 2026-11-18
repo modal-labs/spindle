@@ -1,14 +1,15 @@
 # Profiling a step
 
-Miles LoRA trainer only; off by default. For what to measure first, how to classify a bottleneck (overhead, compute, memory, communication, slow rank), sampler signals, and which config fields to change, follow [docs/profiling.md](https://github.com/modal-labs/spindle/blob/main/docs/profiling.md). Prefer config changes; a backend change goes to a GitHub issue first.
+Trainer traces: Miles LoRA trainer only; off by default. Sampler traces: by hand on a one-replica variant (below). For what to measure first, how to classify a bottleneck (overhead, compute, memory, communication, slow rank), sampler signals, and which config fields to change, follow [docs/profiling.md](https://github.com/modal-labs/spindle/blob/main/docs/profiling.md). Prefer config changes; a backend change goes to a GitHub issue first.
 
 ## Capture
 
 - `SPINDLE_TORCH_PROFILE_STEP=2 uv run spindle deploy <config> --refresh-trainer <config name>`: traces the third training step (steps count `optim_step` calls from 0; use 1 or 2 so compile work is out). A running trainer keeps its old env until it idles out, so profile a variant with its own name to be sure. Redeploy without the variable (and `--refresh-trainer`) to disable.
 - `SPINDLE_TORCH_PROFILE_RANKS`: default `0` (rank 0); e.g. `0,4` or `all`. ~250 MB per trace.
+- `SPINDLE_TORCH_PROFILE_SHAPES=1` / `SPINDLE_TORCH_PROFILE_MEMORY=1`: record tensor shapes / memory (off by default; larger trace).
 - `SPINDLE_TORCH_PROFILE_DIR`: default `/checkpoints/torch-profile/<config name>`.
 
-Captures one whole training step per trainer process on the GPU ranks: all its `forward_backward` calls, `optim_step` and LoRA export (first `forward_backward` of the step until its sampler weights are published or the next step starts; on a shared trainer, the first client to reach it). Rank phases: `spindle/forward_backward`, `spindle/optim_step`, `spindle/forward_only`, `spindle/export_slot_peft`. Sampler-weight save and publish are not traced; read `timing/save_sampler_weights_s` and `timing/publish_weights_s`. `rank<N>.key_averages.txt` is a no-UI top-ops table. Writing the trace delays the next update; exclude both steps from timings.
+Captures one whole training step per trainer process on the GPU ranks: all its `forward_backward` calls, `optim_step` and LoRA export (first `forward_backward` of the step until its sampler weights are published or the next step starts; on a shared trainer, the first client to reach it). Rank phases: `spindle/forward_backward`, `spindle/optim_step`, `spindle/forward_only`, `spindle/export_slot_peft`. Sampler-weight save and publish are not traced; read `timing/save_sampler_weights_s` and `timing/publish_weights_s`. `rank<N>.key_averages.txt` is a no-UI top-ops table. A child process writes the files after the step while the trainer keeps serving; each rank logs `"state": "written"` when done. Exclude the profiled step and the next one from timings.
 
 Always-on timing without a trace: `optim_step` result metrics `timing/*_s` and `timing/*_calls`, and `spindle_step_timing` / `spindle_memory` lines in the trainer log.
 
@@ -19,6 +20,12 @@ uv run modal volume get <platform.storage.checkpoints, default spindle-checkpoin
 ```
 
 Open at https://ui.perfetto.dev (loads `.json.gz` directly). Search `spindle/` to jump between phases. Look for idle GPU streams inside `spindle/forward_backward` (CPU/comms stalls), long `ncclKernel_*`, and time outside labelled phases.
+
+## Sampler trace and rollout benchmark
+
+- Trace a one-replica variant (own name, `inference_max_replicas = 1`, `inference_env = {"SGLANG_TORCH_PROFILER_DIR": "/checkpoints/torch-profile/<variant>"}`), not the production pool. While the rollout benchmark keeps it busy: `modal container exec <container id> -- curl -s -X POST http://127.0.0.1:8001/start_profile -H 'Content-Type: application/json' -d '{"num_steps": 20, "activities": ["CPU", "GPU"], "with_stack": false, "record_shapes": false}'`. SGLang auto-stops after `num_steps` (no `/stop_profile`) and pauses the replica <1 s while writing `<id>-TP-<rank>.trace.json.gz`.
+- In the trace: `step[DECODE bs=N]` / `step[EXTEND ...]` per pass, `scheduler.*` CPU work, `cudaGraphLaunch` per graph replay, LoRA kernels named `*lora*`. For the DuckDB window queries below, use `e->>'name' LIKE 'step[DECODE%' AND e->>'cat' = 'gpu_user_annotation'`.
+- Drive it with `uv run scripts/rollout_benchmark.py --base-url <url> --model-path tinker://... --prompts p.jsonl --copies 2 --rounds 5` (stock Tinker SDK; omit `--base-url` for Tinker). JSONL lines are `{"tokens": [...]}` or `{"messages": [...]}`. Compare the median of rounds after the first.
 
 ## DuckDB queries
 
