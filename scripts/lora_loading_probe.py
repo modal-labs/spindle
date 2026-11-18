@@ -95,13 +95,22 @@ def patch_manager(cls: Any) -> None:
         try:
             result = original(self, lora_ref)
             prepared = time.perf_counter()
-            if lora_ref.lora_name.startswith("packed-"):
+            mode_file = os.environ.get("SPINDLE_LORA_BENCH_MODE_FILE")
+            mode = (
+                Path(mode_file).read_text().strip()
+                if mode_file
+                else lora_ref.lora_name.split("-", 1)[0]
+            )
+            if mode not in {"baseline", "pinned", "packed"}:
+                raise ValueError(f"Unknown adapter loading mode: {mode}")
+            if mode == "packed":
                 _pack(self, result[1])
-            elif lora_ref.lora_name.startswith("pinned-"):
+            elif mode == "pinned":
                 result[1].pin_weights_in_cpu()
             _emit(
                 {
                     "phase": "prepare",
+                    "mode": mode,
                     "name": lora_ref.lora_name,
                     "uid": lora_ref.lora_id,
                     "normal_prepare_s": prepared - started,

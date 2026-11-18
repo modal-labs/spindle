@@ -173,6 +173,11 @@ def test_packing_does_not_mutate_active_slots_and_upload_owns_cpu_data(
         ) -> tuple[None, SimpleNamespace]:
             return None, self.adapter
 
+        def install_prepared_lora_adapter(
+            self, lora_ref: object, prepared: object
+        ) -> None:
+            pass
+
     if installed:
         monkeypatch.setattr(lora_packing, "install_readiness", lambda: None)
         monkeypatch.setattr(lora_packing, "install_admission", lambda: None)
@@ -216,7 +221,15 @@ def test_packing_does_not_mutate_active_slots_and_upload_owns_cpu_data(
     if installed:
         manager.prepare_lora_adapter("test")
     else:
-        probe._pack(manager, adapter)
+        mode_file = tmp_path / "mode"
+        monkeypatch.setenv("SPINDLE_LORA_BENCH_MODE_FILE", str(mode_file))
+        mode_file.write_text("baseline")
+        probe.patch_manager(Manager)
+        reference = SimpleNamespace(lora_name="policy", lora_id="test")
+        manager.prepare_lora_adapter(reference)
+        assert not hasattr(adapter, "_spindle_upload_plan")
+        mode_file.write_text("packed")
+        manager.prepare_lora_adapter(reference)
     assert torch.all(pool.A_buffer["layer"][0] == 37)
     assert torch.all(pool.B_buffer["layer"][0] == 37)
     adapter.a.fill_(-1)
