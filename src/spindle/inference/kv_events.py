@@ -38,7 +38,6 @@ REPLAY_STALL_TIMEOUT_SECONDS = 2.0
 PREFIX_TOKENS = 64
 BLOCK_HASH_BYTES = 8
 BLOCK_HASH_ARRAY_CODE = "q"
-BITS_PER_BYTE = 8
 NARROW_REF_BYTES = 4
 WIDE_REF_BYTES = 8
 NARROW_REF_ARRAY_CODE = "I"
@@ -49,31 +48,23 @@ EMPTY_SLOT = 0
 LIVE_SLOT = 1
 TOMBSTONE_SLOT = 2
 INITIAL_INDEX_SLOTS = 1024
-INDEX_GROWTH_FACTOR = 2
-LOAD_FACTOR_DENOMINATOR = 10
-RESIZE_OCCUPIED_NUMERATOR = 7  # Resize at 70% occupied slots.
-GROW_LIVE_NUMERATOR = 5  # Grow at 50% live slots; otherwise drop tombstones.
+MAX_OCCUPIED_FRACTION = 0.7  # Rehash once this share of slots is live or tombstoned.
+MIN_LIVE_FRACTION_TO_GROW = (
+    0.5  # Below this, rehash at the same size to drop tombstones.
+)
 CHAIN_BLOCK_INDEX_BITS = 16
 BLOCKS_PER_CHAIN = 1 << CHAIN_BLOCK_INDEX_BITS
 CHAIN_BLOCK_INDEX_MASK = BLOCKS_PER_CHAIN - 1
-NARROW_CHAIN_ID_LIMIT = 1 << (NARROW_REF_BYTES * BITS_PER_BYTE - CHAIN_BLOCK_INDEX_BITS)
+NARROW_CHAIN_ID_LIMIT = 1 << (NARROW_REF_BYTES * 8 - CHAIN_BLOCK_INDEX_BITS)
 MMAP_THRESHOLD_BYTES = 4096  # Smaller chains avoid the cost of an mmap.
-ANONYMOUS_MMAP_FD = -1
-REPLAY_YIELD_MASK = 31  # Yield after every 32 replay batches.
+REPLAY_YIELD_BATCHES = 32  # Let the loop run between this many replayed batches.
 SEQUENCE_FRAME_BYTES = 8
-SEQUENCE_BYTE_ORDER = "big"
 REPLAY_END_SEQUENCE = -1  # Also denotes no sequence received yet.
-REPLAY_FRAMES_WITHOUT_TOPIC = 3
-REPLAY_FRAMES_WITH_TOPIC = 4
-EVENT_BATCH_INDEX = 1
-SOCKET_LINGER_MS = 0
 THREAD_START_TIMEOUT_SECONDS = 2
 THREAD_STOP_TIMEOUT_SECONDS = 2
 SUBSCRIBER_RETRY_SECONDS = 0.5
 SUBSCRIBER_POLL_SECONDS = 0.5
 REPLAY_REFRESH_SECONDS = 1.5
-UNASSIGNED_CHAIN_ID = -1
-ADAPTER_HASH_SEPARATOR = "\0"
 
 
 class KVEvent(TypedDict):
@@ -112,7 +103,7 @@ class _BlockIndex:
     def _allocate(self, size: int) -> None:
         width = WIDE_REF_BYTES if self.wide else NARROW_REF_BYTES
         self.storage = mmap.mmap(
-            ANONYMOUS_MMAP_FD, size * (BLOCK_HASH_BYTES + width + SLOT_STATE_BYTES)
+            -1, size * (BLOCK_HASH_BYTES + width + SLOT_STATE_BYTES)
         )
         view = memoryview(self.storage)
         self.keys = view[: size * BLOCK_HASH_BYTES].cast(BLOCK_HASH_ARRAY_CODE)
@@ -155,15 +146,10 @@ class _BlockIndex:
         self.count += 1
 
     def insert(self, key: int, ref: int) -> None:
-        if (self.occupied + 1) * LOAD_FACTOR_DENOMINATOR >= len(
-            self.states
-        ) * RESIZE_OCCUPIED_NUMERATOR:
-            self._resize(
-                len(self.states) * INDEX_GROWTH_FACTOR
-                if self.count * LOAD_FACTOR_DENOMINATOR
-                >= len(self.states) * GROW_LIVE_NUMERATOR
-                else len(self.states)
-            )
+        slots = len(self.states)
+        if self.occupied + 1 >= slots * MAX_OCCUPIED_FRACTION:
+            grow = self.count >= slots * MIN_LIVE_FRACTION_TO_GROW
+            self._resize(slots * 2 if grow else slots)
         self._insert(key, ref)
 
     def pop(self, key: int) -> int | None:
@@ -232,7 +218,7 @@ class _Chain:
         tokens: array,
         size: int,
     ) -> None:
-        self.id = UNASSIGNED_CHAIN_ID
+        self.id = -1
         self.parent = parent
         self.adapter = adapter
         self.length = length
@@ -242,7 +228,7 @@ class _Chain:
         self.count = len(keys)
         storage_size = (len(keys) + len(tokens) * self.store_tokens) * BLOCK_HASH_BYTES
         self.storage = (
-            mmap.mmap(ANONYMOUS_MMAP_FD, storage_size)
+            mmap.mmap(-1, storage_size)
             if storage_size >= MMAP_THRESHOLD_BYTES
             else bytearray(storage_size)
         )
@@ -270,7 +256,7 @@ class _Chain:
             return
         storage_size = count * (self.size * self.store_tokens + 1) * BLOCK_HASH_BYTES
         storage = (
-            mmap.mmap(ANONYMOUS_MMAP_FD, storage_size)
+            mmap.mmap(-1, storage_size)
             if storage_size >= MMAP_THRESHOLD_BYTES
             else bytearray(storage_size)
         )
@@ -509,7 +495,7 @@ class KVCache:
             group_keys = keys[start:stop]
             group_tokens = packed[start * size : stop * size]
             if ancestor is None:
-                digest = xxhash.xxh3_128((adapter + ADAPTER_HASH_SEPARATOR).encode())
+                digest = xxhash.xxh3_128((adapter + "\0").encode())
                 length = 0
             else:
                 digest = ancestor[0].digest_at(ancestor[1])
@@ -670,8 +656,8 @@ class KVEventSubscriber:
             return
         if sequence != self.sequence + 1:
             return False
-        batch = msgspec.msgpack.decode(payload)
-        for event in batch[EVENT_BATCH_INDEX]:
+        _timestamp, events, *_ = msgspec.msgpack.decode(payload)
+        for event in events:
             self.cache.apply(event)
         self.sequence = sequence
         self.anchor = payload
@@ -691,27 +677,27 @@ class KVEventSubscriber:
     async def replay(self, context: zmq.asyncio.Context) -> None:
         socket = context.socket(zmq.DEALER)
         try:
-            socket.setsockopt(zmq.LINGER, SOCKET_LINGER_MS)
+            socket.setsockopt(zmq.LINGER, 0)
             socket.connect(self.replay_endpoint)
 
             async def fetch(start: int) -> list[tuple[int, bytes]]:
                 await socket.send_multipart(
-                    [b"", start.to_bytes(SEQUENCE_FRAME_BYTES, SEQUENCE_BYTE_ORDER)]
+                    [b"", start.to_bytes(SEQUENCE_FRAME_BYTES, "big")]
                 )
                 batches: list[tuple[int, bytes]] = []
                 while True:
                     async with asyncio.timeout(REPLAY_STALL_TIMEOUT_SECONDS):
                         frames = await socket.recv_multipart()
                     topic = TOPIC
-                    if len(frames) == REPLAY_FRAMES_WITHOUT_TOPIC:
+                    if len(frames) == 3:
                         delimiter, seq, payload = frames
-                    elif len(frames) == REPLAY_FRAMES_WITH_TOPIC:
+                    elif len(frames) == 4:
                         delimiter, topic, seq, payload = frames
                     else:
                         raise ValueError("Invalid KV replay frame count")
                     if delimiter != b"" or len(seq) != SEQUENCE_FRAME_BYTES:
                         raise ValueError("Invalid KV replay frames")
-                    sequence = int.from_bytes(seq, SEQUENCE_BYTE_ORDER, signed=True)
+                    sequence = int.from_bytes(seq, "big", signed=True)
                     if sequence == REPLAY_END_SEQUENCE:
                         return batches
                     if topic != TOPIC:
@@ -741,7 +727,7 @@ class KVEventSubscriber:
                     self.cache.clear()
                     self.sequence = sequence - 1
                 self.apply(sequence, payload, publish=False)
-                if index & REPLAY_YIELD_MASK == REPLAY_YIELD_MASK:
+                if index % REPLAY_YIELD_BATCHES == REPLAY_YIELD_BATCHES - 1:
                     await asyncio.sleep(0)
             self.ready = True
             # A replay endpoint verifies continuity through its final batch.
@@ -754,14 +740,14 @@ class KVEventSubscriber:
                 )
                 self._rebuild_started_at = None
         finally:
-            socket.close(SOCKET_LINGER_MS)
+            socket.close(0)
 
     async def run(self) -> None:
         context = zmq.asyncio.Context()
         socket = None
         try:
             socket = context.socket(zmq.SUB)
-            socket.setsockopt(zmq.LINGER, SOCKET_LINGER_MS)
+            socket.setsockopt(zmq.LINGER, 0)
             socket.setsockopt(zmq.SUBSCRIBE, TOPIC)
             socket.setsockopt(zmq.RCVHWM, SUB_RECEIVE_HIGH_WATER_MARK)
             socket.connect(self.endpoint)
@@ -790,7 +776,7 @@ class KVEventSubscriber:
                         topic, seq, payload = await socket.recv_multipart()
                         if topic != TOPIC or len(seq) != SEQUENCE_FRAME_BYTES:
                             raise ValueError("Invalid KV publication frames")
-                        sequence = int.from_bytes(seq, SEQUENCE_BYTE_ORDER)
+                        sequence = int.from_bytes(seq, "big")
                         if not self.apply_publication(sequence, payload):
                             if not replay:
                                 next_replay = 0.0
@@ -817,5 +803,5 @@ class KVEventSubscriber:
             self.ready = False
             self.snapshot = KVSnapshot(False, 0.0, ())
             if socket is not None:
-                socket.close(SOCKET_LINGER_MS)
-            context.destroy(linger=SOCKET_LINGER_MS)
+                socket.close(0)
+            context.destroy(linger=0)

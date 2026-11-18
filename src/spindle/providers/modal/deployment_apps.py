@@ -184,7 +184,7 @@ def deployment_env(values):
     return dict(values)
 
 
-def sampler_env(recipe) -> dict[str, str]:
+def sampler_env(recipe) -> dict[str, str | None]:
     """Environment variables for a sampler container; Spindle's routing switch wins."""
     lora = recipe.parameterization == "lora"
     env = dict(SGLANG_ENV)
