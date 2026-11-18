@@ -515,7 +515,7 @@ def test_recipes_select_trainer_images(builders, monkeypatch):
     with pytest.raises(ValueError, match="unknown trainer image"):
         image_for("miles", "missing")
     with pytest.raises(ValueError, match="unknown sampler image"):
-        image_for("sglang", "miles-v0.1.1-fdd808c")
+        image_for("sglang", "miles-v0.1.1-52a7a99")
 
     trainer_image = object()
     monkeypatch.setitem(deployment_apps.TRAINER_IMAGES, "trainer-x", trainer_image)
@@ -540,6 +540,32 @@ def test_bundled_configs_pin_their_own_images(path, monkeypatch):
     monkeypatch.setattr(deployment_apps.modal, "is_local", lambda: True)
     deployment_apps.image_for(recipe.backend, recipe.trainer_image)
     deployment_apps.image_for("sglang", recipe.inference_image)
+
+
+UNUSED_IMAGE_WHITELIST = {
+    "miles-v0.2.0-8c5de26",  # Beam LoRA support is awaiting a bundled config.
+    # Restore Miles LoRA checkpoints saved by Spindle 0.1.7 and earlier.
+    "miles-v0.1.1-fdd808c",
+    "miles-v0.1.2-f2f8447",
+    "miles-v0.1.2-464efc9-glm53",
+    # DeepSeek-V4.1-Flash sampler image in Spindle 0.1.8 and earlier.
+    "sglang-v0.5.21-a3e0e17",
+}
+
+
+def test_named_images_are_used_by_bundled_configs():
+    registered = set(deployment_apps.TRAINER_IMAGES) | set(
+        deployment_apps.SAMPLER_IMAGES
+    )
+    used = set()
+    for path in config_path("qwen35-9b-lora-16k").parent.glob("[!_]*.py"):
+        recipe = load(path)
+        used.update((recipe.trainer_image, recipe.inference_image))
+    unused = registered - used
+    assert unused == UNUSED_IMAGE_WHITELIST, (
+        f"Unused images: {sorted(unused - UNUSED_IMAGE_WHITELIST)}; "
+        f"stale whitelist entries: {sorted(UNUSED_IMAGE_WHITELIST - unused)}"
+    )
 
 
 FORK_IMAGE_MODULES = (
@@ -587,9 +613,7 @@ def test_image_variables_build_the_commit_they_are_named_after(module):
         assert pins and all(pin.startswith(short) for pin in pins), variable
         series.setdefault(variable.removesuffix(f"{number}_{short}"), []).append(number)
     for prefix, numbers in series.items():
-        assert numbers == [f"{index:02}" for index in range(1, len(numbers) + 1)], (
-            prefix
-        )
+        assert numbers == sorted(set(numbers)), prefix
 
 
 @functools.cache
@@ -655,10 +679,7 @@ def test_image_names_match_the_fork_commit_they_install(name):
     if image is inkling2_image.image:
         assert inkling2_image.MILES_COMMIT[:7] in name.split("-")
         return
-    if (
-        image is inkling2_image.inference_image
-        or image is inkling2_image.head_lora_inference_image
-    ):
+    if image is inkling2_image.head_lora_inference_image:
         digest = inkling2_image.BASE_IMAGE.rsplit("sha256:", 1)[1]
         assert digest[:7] in name.split("-")
         return

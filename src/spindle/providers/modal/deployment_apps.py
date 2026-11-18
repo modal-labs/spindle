@@ -60,7 +60,6 @@ from .inkling2_image import image as inkling2_trainer_image
 from .inkling2_image import (
     head_lora_inference_image as inkling2_head_lora_sampler_image,
 )
-from .inkling2_image import inference_image as inkling2_sampler_image
 from .kv import shared_kv
 from .lora_pool import LoraPoolSpec
 from .lora_pool import deploy_pool as deploy_lora
@@ -86,8 +85,8 @@ TRAINER_IMAGES = {
     "miles-v0.1.2-464efc9-glm53": miles_v012_image.glm53_image_01_464efc9,
     # https://github.com/modal-projects/miles/pull/43 Support per-adapter seeds in the v0.1.2 LoRA slot API
     "miles-v0.1.2-99e1ebe-glm53": miles_v012_image.glm53_image_02_99e1ebe,
-    # https://github.com/modal-projects/miles/pull/38 Replay Spindle trainer fixes onto Miles v0.2.0
-    "miles-v0.2.0-15afe21": miles_v020_image.image_01_15afe21,
+    # https://github.com/modal-labs/spindle/pull/307 miles#43 image with the GLM indexer scored in query blocks
+    "miles-v0.1.2-99e1ebe-kpool-glm53": miles_v012_image.glm53_kpool_image_01_99e1ebe,
     # https://github.com/modal-projects/miles/pull/44 Support per-adapter seeds in the v0.2.0 LoRA slot API (on top of #37, Beam LoRA)
     "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
     # https://github.com/modal-projects/miles/pull/49 Native canonical and routed-expert adapters, including Nemotron Nano
@@ -97,7 +96,6 @@ TRAINER_IMAGES = {
 }
 SAMPLER_IMAGES = {
     "sglang-inkling2-a2e3c49-head": inkling2_head_lora_sampler_image,
-    "sglang-inkling2-a2e3c49": inkling2_sampler_image,
     "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
     # https://github.com/modal-projects/sglang/pull/81 Serve DeepSeek-V4 LoRA on quantized bases
     "sglang-v0.5.21-a3e0e17": deepseek_v41_image.image_01_a3e0e17,
@@ -105,8 +103,6 @@ SAMPLER_IMAGES = {
     "sglang-v0.5.23-c4182b2": rollout_image.image_01_c4182b2,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks, with GLM-5.3 Flash sampler settings
     "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
-    # https://github.com/modal-projects/sglang/pull/99 Serve LoRA on all Qwen3.5 linear-attention projections
-    "sglang-v0.5.23-803bccb": rollout_image.image_02_803bccb,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {

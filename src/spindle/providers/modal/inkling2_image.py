@@ -22,9 +22,6 @@ runtime_image = (
     .entrypoint([])
     .env({"SGLANG_RUST_BUILD_MODE": "auto"})
 )
-inference_image = runtime_image.pip_install(
-    *CORE_SAMPLER_PACKAGES, STITCH_PACKAGE, TINKER_PACKAGE
-).add_local_python_source("spindle", ignore=ignore_config_source)
 head_lora_inference_image = (
     runtime_image.add_local_file(
         Path(__file__).with_name("inkling2-lora-head.patch"),

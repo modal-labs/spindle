@@ -11,6 +11,7 @@ import json
 import math
 import os
 import statistics
+import tempfile
 import time
 from pathlib import Path
 
@@ -304,7 +305,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--steps", type=int, default=3)
     parser.add_argument("--group-size", type=int, default=8)
-    parser.add_argument("--output", type=Path, default=Path("inkling2-rl-results.json"))
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(tempfile.gettempdir()) / "inkling2-rl-results.json",
+    )
     args = parser.parse_args()
     if args.steps < 2 or args.group_size < 2:
         parser.error("use at least two updates and two samples per group")

@@ -207,7 +207,7 @@ class SaveWeightsForSamplerBody(BaseModel):
 
 def _training_envelope(
     body: bytes, content_type: str, encoding: str
-) -> tuple[bytes, dict]:
+) -> tuple[int, dict]:
     if encoding == "zstd":
         body = zstandard.ZstdDecompressor().decompress(body)
     if content_type.startswith("application/x-protobuf"):
@@ -217,7 +217,7 @@ def _training_envelope(
     else:
         parsed = json.loads(body)
         identity = {"model_id": parsed.get("model_id"), "seq_id": parsed.get("seq_id")}
-    return body, identity
+    return len(body), identity
 
 
 def _deployment_summary(definition: Routable) -> dict[str, object]:
@@ -792,16 +792,15 @@ def create_control_plane_app(
             encoding=request.headers.get("content-encoding", "identity"),
         )
         content_type = request.headers.get("content-type", "application/json")
-        body, identity = await asyncio.to_thread(
-            _training_envelope,
-            body,
-            content_type,
-            request.headers.get("content-encoding", "identity"),
+        encoding = request.headers.get("content-encoding", "identity")
+        decoded_bytes, identity = await asyncio.to_thread(
+            _training_envelope, body, content_type, encoding
         )
-        mark("cp.forward_backward.decompressed", bytes=len(body))
+        mark("cp.forward_backward.decompressed", bytes=decoded_bytes)
         model_id = identity["model_id"]
         engine = await control_plane.engine_for(model_id)
-        request_id = await engine.forward_backward(body, content_type)
+        # Forward compressed; decompressed replay batches reach hundreds of MB.
+        request_id = await engine.forward_backward(body, content_type, encoding)
         mark("cp.forward_backward.forwarded", request_id=request_id, model_id=model_id)
         return {"request_id": request_id, "model_id": model_id}
 

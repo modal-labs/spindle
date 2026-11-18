@@ -41,7 +41,6 @@ def image_at(miles_commit: str) -> modal.Image:
 
 
 # Fork commits in ancestry order, each a descendant of the one before. Append new commits; never edit an entry.
-image_01_15afe21 = image_at("15afe217019b2762290da27a31a92454051a0d34")
 # Merged modal-projects/miles#44 after Beam LoRA support (#37): per-adapter seeds through load_slot.
 image_02_8c5de26 = image_at("8c5de2650a6876c2ca17ff221c7e0ba8a2d7b84a")
 
