@@ -204,7 +204,7 @@ To change an image:
 2. Move configs to the new name one at a time. Record a reference run for each config you move.
 3. Once no bundled config, default or reference run uses the old name, remove it and the module that builds it.
 
-`miles-v0.2.0-8c5de26` supports single-node dense native adapters; `miles-v0.2.0-e814245` also supports routed expert adapters and Nemotron-3 Nano. On the built-in v0.2.0 images, use `raw` with `canonical_lora` or `bridge` with `lora`. Spindle rejects Bridge with `canonical_lora`, which has not been validated here. The older Miles images support the fused `lora` layout.
+`miles-v0.2.0-8c5de26` supports dense native adapters; `miles-v0.2.0-e814245` also supports routed expert adapters and Nemotron-3 Nano. On the built-in v0.2.0 images, use `raw` with `canonical_lora` or `bridge` with `lora`. Spindle rejects Bridge with `canonical_lora`, which has not been validated here. The older Miles images support the fused `lora` layout. Multi-node trainers gather captures through the shared checkpoint volume.
 
 A checkpoint restores only on a trainer with the same Miles revision and adapter layout as the one that saved it. Checkpoints without a recorded layout are treated as `lora`. Keep the original image and layout to restore older checkpoints after switching a recipe to native canonical adapters.
 

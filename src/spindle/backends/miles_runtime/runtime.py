@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -27,6 +28,7 @@ from . import nemotron_h_omni
 from .native_checkpoint import materialize_adapter
 from .out_of_memory import OUT_OF_MEMORY
 from .replay_data import install_bridge_replay, validate_routed_experts
+from .volumes import checkpoint_volume_path, sync_checkpoint_volume
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
 _runtime_import_error = None
@@ -182,6 +184,7 @@ class MilesRuntime:
                 self._bridge.save_slot(slot, path, include_optimizer=include_optimizer)
             )
             # Outside _run: a bad capture fails this request, not the shared trainer.
+            self._gather_capture(written, Path(path))
             materialize_adapter(written, Path(path), checkpoint=True)
             return
         if include_optimizer:
@@ -205,9 +208,23 @@ class MilesRuntime:
     ) -> None:
         written = self._run(self._bridge.export_slot(slot, rank, alpha, path))
         if self._v020 is not None:
+            self._gather_capture(written, Path(path))
             materialize_adapter(written, Path(path), checkpoint=False)
             return
         _materialize_capture(path)
+
+    def _gather_capture(self, written: Path, path: Path) -> None:
+        """Make every node's writes to a capture on the checkpoint volume visible here."""
+        if checkpoint_volume_path(path) is None:
+            return
+        try:
+            self._run_best_effort(
+                self._trainer._execute_slots("commit_checkpoint_volume")
+            )
+            sync_checkpoint_volume("reload")
+        except Exception:
+            shutil.rmtree(written, ignore_errors=True)
+            raise
 
     def torch_profile_start(self) -> None:
         self._run_best_effort(self._trainer._execute_slots("torch_profile_start"))
