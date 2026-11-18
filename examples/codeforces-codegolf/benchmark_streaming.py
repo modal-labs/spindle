@@ -33,6 +33,7 @@ image = control_image("transformers==5.16.1", "jinja2==3.1.6").add_local_python_
     image=image,
     volumes={"/runs": volume},
     secrets=[modal.Secret.from_name(PROXY_SECRET)],
+    nonpreemptible=True,
     timeout=7200,
     memory=8192,
 )
