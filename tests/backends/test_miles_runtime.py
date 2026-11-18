@@ -156,6 +156,41 @@ def test_upstream_error_result_invalidates_runtime():
         runtime._run(error())
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"error": "expert targets differ", "error_category": "user"},
+        [None, {"error": "expert targets differ", "error_category": "user"}],
+    ],
+)
+def test_refused_request_fails_only_itself(result):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+
+    async def refuse():
+        return result
+
+    with pytest.raises(ValueError, match="expert targets differ"):
+        runtime._run(refuse())
+    assert runtime._failure is None
+
+
+def test_refusal_mixed_with_a_crash_invalidates_runtime():
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+
+    async def mixed():
+        return [{"error": "refused", "error_category": "user"}, {"error": "crashed"}]
+
+    with pytest.raises(BackendFailed, match="refused"):
+        runtime._run(mixed())
+    assert runtime._failure is not None
+
+
 @pytest.mark.parametrize("commit_fails", [False, True])
 @pytest.mark.parametrize("operation", ["save_slot", "export_slot_peft"])
 def test_rejected_native_capture_fails_only_its_request(
