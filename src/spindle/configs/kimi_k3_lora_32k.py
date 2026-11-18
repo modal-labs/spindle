@@ -46,12 +46,9 @@ class Config(BaseConfig):
         "default_lora_alpha": 32,
         "cli_options": {
             "model_name": "kimi_k3",
-            # The adapter layout Kimi K3 LoRA requires, even with routed experts frozen.
+            # Must match the sampler's experts_shared_outer_loras.
             "experts_shared_outer_loras": True,
             "attention_backend": "auto",
-            "qkv_format": "thd",
-            # Multi-LoRA shared-expert collectives must not race expert dispatch.
-            "moe_shared_expert_overlap": False,
             "recompute_granularity": "full",
             "recompute_method": "uniform",
             "recompute_num_layers": 1,
@@ -72,7 +69,7 @@ class Config(BaseConfig):
     inference_cpu = 32
     inference_memory_mib = 1_048_576
     inference_disk_mib = 600_000
-    # A sampler takes over an hour to start, so one starts with the trainer
+    # A sampler takes 20-35 minutes to start, so one starts with the trainer
     # and stays up until the run ends.
     inference_min_replicas = 1
     inference_max_replicas = 2
@@ -93,7 +90,7 @@ class Config(BaseConfig):
         # Each running request keeps five linear-attention states.
         "max_mamba_cache_size": 160,
         "trust_remote_code": True,
-        # Serve text only. The tokenizer stays loaded so clients can stop on strings.
+        # Serve text only.
         "enable_multimodal": False,
         "mem_fraction_static": 0.85,
         "max_running_requests": 32,
