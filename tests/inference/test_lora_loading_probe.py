@@ -221,11 +221,16 @@ def test_packing_does_not_mutate_active_slots_and_upload_owns_cpu_data(
     if installed:
         manager.prepare_lora_adapter("test")
     else:
+        reference = SimpleNamespace(lora_name="policy", lora_id="test")
+        probe.patch_manager(Manager)
+        manager.prepare_lora_adapter(reference)
+        assert not hasattr(adapter, "_spindle_upload_plan")
         mode_file = tmp_path / "mode"
         monkeypatch.setenv("SPINDLE_LORA_BENCH_MODE_FILE", str(mode_file))
+        mode_file.write_text("invalid")
+        with pytest.raises(ValueError, match="Unknown adapter loading mode"):
+            manager.prepare_lora_adapter(reference)
         mode_file.write_text("baseline")
-        probe.patch_manager(Manager)
-        reference = SimpleNamespace(lora_name="policy", lora_id="test")
         manager.prepare_lora_adapter(reference)
         assert not hasattr(adapter, "_spindle_upload_plan")
         mode_file.write_text("packed")

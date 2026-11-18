@@ -102,7 +102,9 @@ def patch_manager(cls: Any) -> None:
                 else lora_ref.lora_name.split("-", 1)[0]
             )
             if mode not in {"baseline", "pinned", "packed"}:
-                raise ValueError(f"Unknown adapter loading mode: {mode}")
+                if mode_file:
+                    raise ValueError(f"Unknown adapter loading mode: {mode}")
+                mode = "baseline"
             if mode == "packed":
                 _pack(self, result[1])
             elif mode == "pinned":
