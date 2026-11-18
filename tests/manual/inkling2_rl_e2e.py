@@ -86,7 +86,7 @@ def main(steps: int, group_size: int, output: Path) -> None:
     with tinker.ServiceClient(
         base_url=os.environ["TINKER_BASE_URL"],
         api_key=os.environ["TINKER_API_KEY"],
-        default_headers=headers,
+        default_headers_overrides=headers,
     ) as service:
         training, control = [
             timed(
