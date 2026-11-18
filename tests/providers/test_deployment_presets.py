@@ -144,9 +144,11 @@ def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
         "nemotron3-super-120b-a12b-lora-64k",
         "nemotron35-lightning-30b-a3b-lora-64k",
         "nemotron3-ultra-550b-a55b-lora-64k",
+        "qwen35-397b-a17b-lora-64k",
+        "qwen35-397b-a17b-lora-256k",
     ],
 )
-def test_legacy_nemotron_does_not_inherit_native_nano_settings(preset):
+def test_legacy_recipes_do_not_inherit_native_backend_settings(preset):
     spec = load(config_path(preset))
     trainer = backend_config(spec)["miles"]
     assert trainer["megatron_to_hf_mode"] == "bridge"
