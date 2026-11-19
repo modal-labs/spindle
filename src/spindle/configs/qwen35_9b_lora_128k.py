@@ -6,7 +6,8 @@ class Config(Parent):
     trainer_image = "miles-v0.2.0-e814245"
     inference_image = "sglang-v0.5.23-e003cf9"
     max_context_length = 131_072
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
+    trainer_gpus_per_node = 4
     inference_gpu = "H200"
     trainer_max_clients_per_instance = 8
     inference_min_replicas = 8
