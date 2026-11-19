@@ -16,7 +16,10 @@ from miles.backends.megatron_utils import model as execution
 from miles.backends.training_utils.prefix_tree.megatron import (
     validate_megatron_tree_config,
 )
-from miles.backends.training_utils.prefix_tree.packed import prepare_packed_tree
+from miles.backends.training_utils.prefix_tree.packed import (
+    PackedTreePlan,
+    prepare_packed_tree,
+)
 from miles.backends.training_utils.prefix_tree.reduction import OrderedRowGather
 from spindle.backends.miles_runtime.actor_v020 import SpindleMilesTrainRayActor
 from spindle.patching import same_signature
@@ -124,6 +127,9 @@ class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
             share_prefix=True,
         )
         plan = transport.plan
+        if len(plan.tokens) >= len(transport.restore_rows):
+            self._record_prefix_rows(transport, len(sequences), start)
+            return args, kwargs
         device = kwargs["input_ids"].device
         packed = copy.copy(native)
         packed.cu_seqlens_q = torch.tensor(
@@ -157,17 +163,23 @@ class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
             loss_mask=None,
         )
         self.adapter_slots.route_tokens(transport.adapter_counts)
+        self._record_prefix_rows(transport, len(sequences), start)
+        return args, kwargs
+
+    def _record_prefix_rows(
+        self, transport: PackedTreePlan, samples: int, started: float
+    ) -> None:
+        plan = transport.plan
         row = dict(
             original_rows=len(transport.restore_rows),
-            compact_rows=len(plan.tokens),
-            samples=len(sequences),
+            compact_rows=min(len(plan.tokens), len(transport.restore_rows)),
+            samples=samples,
             segments=len(plan.segment_parents),
-            planning_s=time.perf_counter() - start,
+            planning_s=time.perf_counter() - started,
         )
         self.prefix_rows.append(row)
         if torch.distributed.get_rank() == 0:
             print("SHARED_PREFIX_BATCH " + json.dumps(row), flush=True, file=sys.stderr)
-        return args, kwargs
 
     def _restore_prefix(
         self, module: torch.nn.Module, args: tuple, kwargs: dict, output: torch.Tensor

@@ -47,7 +47,7 @@ def test_forward_checks_require_the_feature_and_a_boolean() -> None:
         _config(shared_prefix_training=True, shared_prefix_check_forward="true")
 
 
-def _actor_dispatch_classes() -> tuple[type, type]:
+def _actor_dispatch_classes(transport: object = None) -> tuple[type, type]:
     # Execute the production dispatch method against native-call fakes without
     # importing the actor's CUDA-only Miles/Megatron dependencies on CPU CI.
     source = (
@@ -63,7 +63,12 @@ def _actor_dispatch_classes() -> tuple[type, type]:
         for node in shared.body
         if isinstance(node, ast.Assign)
         or isinstance(node, ast.FunctionDef)
-        and node.name == "forward_backward"
+        and node.name
+        in (
+            {"forward_backward"}
+            if transport is None
+            else {"_prepare_prefix", "_record_prefix_rows", "_restore_prefix"}
+        )
     ]
 
     class NativeCalls:
@@ -89,7 +94,9 @@ def _actor_dispatch_classes() -> tuple[type, type]:
 
     namespace = {
         "SpindleMilesTrainRayActor": NativeCalls,
-        "torch": SimpleNamespace(
+        "torch": torch
+        if transport is not None
+        else SimpleNamespace(
             cuda=SimpleNamespace(synchronize=lambda: None),
             distributed=SimpleNamespace(get_rank=lambda: 0),
         ),
@@ -97,6 +104,8 @@ def _actor_dispatch_classes() -> tuple[type, type]:
         "sys": sys,
         "json": json,
         "check_forward_parity": check_forward_parity,
+        "prepare_packed_tree": lambda *args, **kwargs: transport,
+        "PackedTreePlan": object,
     }
     code = ast.fix_missing_locations(
         ast.Module(body=[shared, validating], type_ignores=[])
@@ -106,6 +115,38 @@ def _actor_dispatch_classes() -> tuple[type, type]:
         cast(type, namespace["SharedPrefixTrainRayActor"]),
         cast(type, namespace["ValidatingSharedPrefixTrainRayActor"]),
     )
+
+
+def test_zero_savings_keeps_native_inputs_and_vocabulary_buffer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+    transport = SimpleNamespace(
+        plan=SimpleNamespace(tokens=tuple(range(8)), segment_parents=(-1, -1)),
+        restore_rows=tuple(range(8)),
+    )
+    shared, _ = _actor_dispatch_classes(transport)
+    actor = shared()
+    actor.args = SimpleNamespace(backend=SimpleNamespace(tensor_model_parallel_size=2))
+    native = SimpleNamespace(
+        _prefix_source_batch={
+            "unconcat_tokens": [torch.arange(4), torch.arange(4, 8)],
+            "adapter_token_counts": [8],
+        }
+    )
+    kwargs = {
+        "input_ids": torch.arange(8).unsqueeze(0),
+        "position_ids": torch.arange(8).unsqueeze(0),
+        "packed_seq_params": native,
+        "loss_mask": torch.ones(1, 8),
+    }
+    args, actual = actor._prepare_prefix(None, (), kwargs)
+    assert args == ()
+    assert actual is kwargs
+    logits = torch.randn(1, 8, 5, requires_grad=True)
+    assert actor._restore_prefix(None, args, actual, logits) is logits
+    assert actor.prefix_rows[0]["original_rows"] == 8
+    assert actor.prefix_rows[0]["compact_rows"] == 8
 
 
 @pytest.mark.parametrize("checked", [False, True])
