@@ -629,6 +629,7 @@ def create_control_plane_app(
             base_model=selected.model if selected else body.base_model,
             model_path=body.model_path,
             engine_definition_id=selected.definition_id if selected else None,
+            definition_ids={d.definition_id for d in await routes.definitions()},
         )
         if not await supports_model(session.base_model):
             raise HTTPException(

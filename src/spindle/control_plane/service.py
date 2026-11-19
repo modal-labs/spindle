@@ -205,6 +205,10 @@ class ControlPlane:
         sampling_task_stores: SessionKeyValueStores | None = None,
         read_checkpoint_metadata: Callable[[str], Awaitable[Mapping[str, object]]]
         | None = None,
+        read_sampler_artifact: Callable[[str], Awaitable[SamplerArtifactRecord]]
+        | None = None,
+        write_sampler_artifact: Callable[[SamplerArtifactRecord], Awaitable[None]]
+        | None = None,
         reconcile_trainers: Callable[[str], Awaitable[bool | None]] | None = None,
         prepare_model: Callable[[ModelRecord], Awaitable[None]] | None = None,
         downloading_weights: Callable[[str], Awaitable[float | None]] | None = None,
@@ -226,6 +230,8 @@ class ControlPlane:
         self.ensure_sampling_pool = ensure_sampling_pool
         self.sampling_task_stores = sampling_task_stores
         self.read_checkpoint_metadata = read_checkpoint_metadata
+        self.read_sampler_artifact = read_sampler_artifact
+        self.write_sampler_artifact = write_sampler_artifact
         self.reconcile_trainers = reconcile_trainers
         self.prepare_model = prepare_model
         self.downloading_weights = downloading_weights
@@ -622,6 +628,7 @@ class ControlPlane:
         base_model: str | None = None,
         model_path: str | None = None,
         engine_definition_id: str | None = None,
+        definition_ids: Collection[str] | None = None,
     ) -> SamplingSessionRecord:
         await self._touch_session(session_id)
         mark = fingerprint(
@@ -674,6 +681,14 @@ class ControlPlane:
                 raise ValueError("engine_definition_id does not match model_path")
             base_model = artifact.base_model
             engine_definition_id = artifact.engine_definition_id or engine_definition_id
+            if (
+                definition_ids is not None
+                and engine_definition_id is not None
+                and engine_definition_id not in definition_ids
+            ):
+                raise ValueError(
+                    f"checkpoint definition {engine_definition_id} is not deployed"
+                )
             model_id = artifact.model_id
             publish_version = artifact.publish_version
             export_seq_id = artifact.export_seq_id
@@ -746,7 +761,17 @@ class ControlPlane:
         self,
         model_path: str,
     ) -> SamplerArtifactRecord:
-        value = await self.kv.get(sampler_artifact_key(model_path))
+        value = None
+        if self.read_sampler_artifact is not None:
+            try:
+                artifact = await self.read_sampler_artifact(model_path)
+            except FileNotFoundError:
+                pass
+            else:
+                value = artifact.model_dump(mode="json")
+        if value is None:
+            # Older exports and ephemeral latest paths may exist only in the Dict.
+            value = await self.kv.get(sampler_artifact_key(model_path))
         if value is None:
             raise RecordNotFound("sampler artifact", model_path)
         artifact = SamplerArtifactRecord.model_validate(value)
@@ -1009,6 +1034,8 @@ class ControlPlane:
                     and artifact.export_seq_id == export.seq_id
                 ):
                     self._check_expiry("sampler artifact", path, artifact.expires_at)
+                    if self.write_sampler_artifact is not None:
+                        await self.write_sampler_artifact(artifact)
                     return {"type": "save_weights_for_sampler", "path": path}
         else:
             assert export.sampling_session_seq_id is not None
@@ -1165,6 +1192,8 @@ class ControlPlane:
                 exclude={"telemetry_tags"}
             ) != artifact.model_dump(exclude={"telemetry_tags"}):
                 raise SequenceConflict(model.model_id, export.seq_id)
+            if self.write_sampler_artifact is not None:
+                await self.write_sampler_artifact(artifact)
             return {
                 "type": "save_weights_for_sampler",
                 "path": model_path,

@@ -162,6 +162,36 @@ checkpoint instead. The GLM recipe retains its parent's BF16 target weights and
 eight inference GPUs. Reference runs and benchmark artifacts are maintained
 separately from these deployment recipes.
 
+## Reopening a named sampling checkpoint on a fresh deployment
+
+Named exports saved with this version persist their metadata on
+`platform.storage.bulletin` (default: `spindle-snapshot-bulletin`). A path such as
+`tinker://<run>/sampler_weights/eval` resolves to
+`/bulletin/sampler_weights/<run>/eval/metadata.json`. This immutable metadata
+identifies the base model, engine definition, and exact snapshot version; the
+adapter weights remain in the existing bulletin snapshot directory.
+
+```python
+# Save once on the training deployment; wait for durable publication.
+checkpoint = trainer.save_weights_for_sampler("eval").result()
+
+# Later, connect to a fresh deployment using the same bulletin volume.
+service = tinker.ServiceClient(base_url=new_url, api_key=api_key)
+sampler = service.create_sampling_client(model_path=checkpoint.path)
+```
+
+The new deployment must use the same Modal workspace/environment and bulletin
+volume, have access to the base weights, and serve the checkpoint's engine
+definition. No original model session, trainer, or artifacts Dict entry is
+required for LoRA sampling. Expiration still applies when the export has a TTL.
+FFT publications retain their existing dependencies on the base and preceding
+delta snapshots. Ephemeral latest clients retain their existing lifecycle.
+
+Older exports without volume metadata continue to resolve through their original
+artifacts Dict; retrying the original named export with the updated server writes
+its durable metadata. A training checkpoint (`tinker://<run>/weights/<name>`,
+created by `save_state`) still needs to be restored and exported for sampling.
+
 ## Recommended configuration for eval jobs
 
 The defaults suit training loops. An eval sends one short batch, and any replica it starts takes a few minutes to load, so it arrives after the work is done and then sits idle. For eval-only configs:
