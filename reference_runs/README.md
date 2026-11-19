@@ -280,8 +280,9 @@ uv run python reference_runs/plot.py \
   reference_runs/outputs/my-run.jsonl dapo-qwen35-4b-miles-v011
 ```
 
-The chart shows held-out accuracy, training reward, response length and seconds
-between accepted updates. It supports partial files and writes
+The chart shows held-out accuracy, training reward, response length and update
+timing. It uses sampling-plus-training durations when every compared update
+records them, otherwise seconds between accepted updates. It supports partial files and writes
 `reference_runs/reference-runs.png`, which is ignored by Git. Compare the same
 workload settings and actual hardware, accounting for intentional deployment
 changes recorded in the index. Plots do not automatically establish regression
