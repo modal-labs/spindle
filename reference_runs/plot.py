@@ -4,12 +4,12 @@ uv run python reference_runs/plot.py RUN_ID_OR_JSONL [RUN_ID_OR_JSONL ...]
 """
 
 import argparse
-import json
+from math import nan
 import tomllib
 from pathlib import Path
 
 from matplotlib import pyplot
-from catalog import ReferenceRunIndex
+from catalog import ReferenceRunIndex, read_output
 
 
 PANELS = [
@@ -34,15 +34,12 @@ def main() -> None:
     index = {entry.id: entry for entry in catalog.runs}
     figure, axes = pyplot.subplots(2, 2, figsize=(11, 7), layout="constrained")
     for run in args.runs:
-        path = args.index.parent / index[run].output if run in index else Path(run)
-        # A run that was interrupted mid-write ends in a partial line.
-        lines = path.read_text().splitlines(keepends=True)
-        records = [json.loads(line) for line in lines if line.endswith("\n")]
+        entry = index.get(run)
+        path = args.index.parent / entry.output if entry else Path(run)
+        records = read_output(path, published=bool(entry and entry.source))
         for axis, (event, field, title) in zip(axes.flat, PANELS):
             points = [
-                (r["step"], r[field])
-                for r in records
-                if r["event"] == event and field in r
+                (r["step"], r.get(field, nan)) for r in records if r["event"] == event
             ]
             axis.plot(
                 *zip(*points),

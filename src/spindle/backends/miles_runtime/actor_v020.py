@@ -91,6 +91,9 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             **({"seed": seed} if seed is not None and source is None else {}),
         )
 
+    def commit_checkpoint_volume(self) -> None:
+        sync_checkpoint_volume("commit")
+
     def save_slot_weights(
         self, slot: int, root: str, name: str, parametrization_fields: dict[str, object]
     ) -> object:

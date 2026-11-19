@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from statistics import mean
 
+import numpy as np
 import tinker
 from huggingface_hub import hf_hub_download
 from tinker import types
@@ -106,6 +107,110 @@ def datum(
     )
 
 
+def validate_restore(
+    service: tinker.ServiceClient,
+    training: tinker.TrainingClient,
+    checkpoint: str,
+    batch: list[types.Datum],
+    config: Config,
+    adam: types.AdamParams,
+    prompt: list[int],
+) -> dict[str, float | int]:
+    """Replay an Adam momentum step, then return to the measured checkpoint."""
+    if not batch:
+        raise ValueError("Restore validation needs a sampled batch")
+    batch = [
+        types.Datum(
+            model_input=row.model_input,
+            loss_fn_inputs={
+                **row.loss_fn_inputs,
+                "advantages": types.TensorData(
+                    data=[float(p != 0) for p in row.loss_fn_inputs["logprobs"].data],
+                    dtype="float32",
+                    shape=row.loss_fn_inputs["logprobs"].shape,
+                ),
+            },
+        )
+        for row in batch
+    ]
+
+    def scores() -> np.ndarray:
+        result = training.forward(batch, config.loss).result()
+        values = np.concatenate(
+            [np.asarray(row["logprobs"].data) for row in result.loss_fn_outputs]
+        )
+        if not values.size or not np.isfinite(values).all():
+            raise ValueError("Restore validation returned empty or nonfinite scores")
+        return values
+
+    def update(data: list[types.Datum], *, momentum_only: bool = False) -> None:
+        training.forward_backward(data, config.loss).result()
+        metrics = training.optim_step(adam).result().metrics or {}
+        if metrics.get("update_successful:mean", 1.0) != 1.0:
+            raise ValueError(f"Restore validation update was rejected: {metrics}")
+        norm = metrics.get("grad_norm:mean")
+        if momentum_only and norm is not None and norm != 0:
+            raise ValueError(
+                f"Restore validation momentum step has nonzero gradients: {norm}"
+            )
+
+    measured = scores()
+    update(batch)
+    probe_checkpoint = training.save_state("restore-probe").result().path
+    zero_gradients = [
+        types.Datum(
+            model_input=row.model_input,
+            loss_fn_inputs={
+                **row.loss_fn_inputs,
+                "advantages": types.TensorData(
+                    data=[0.0] * len(row.loss_fn_inputs["advantages"].data),
+                    dtype="float32",
+                    shape=row.loss_fn_inputs["advantages"].shape,
+                ),
+            },
+        )
+        for row in batch
+    ]
+    before = scores()
+    update(zero_gradients, momentum_only=True)
+    expected = scores()
+    training.save_state("restore-expected").result()
+    training.load_state_with_optimizer(probe_checkpoint).result()
+    restored = scores()
+    np.testing.assert_allclose(restored, before, rtol=2e-4, atol=2e-4)
+    update(zero_gradients, momentum_only=True)
+    replayed = scores()
+    np.testing.assert_allclose(replayed, expected, rtol=2e-4, atol=2e-4)
+    change = float(np.max(np.abs(expected - before)))
+    if change == 0:
+        raise ValueError("Restore validation momentum step did not change probe scores")
+    training.save_state("restore-replayed").result()
+    training.load_state_with_optimizer(checkpoint).result()
+    measured_restored = scores()
+    np.testing.assert_allclose(measured_restored, measured, rtol=2e-4, atol=2e-4)
+    path = training.save_weights_for_sampler("restored-final").result().path
+    sampler = service.create_sampling_client(model_path=path)
+    sampled = sampler.sample(
+        types.ModelInput.from_ints(prompt),
+        1,
+        types.SamplingParams(max_tokens=16, temperature=0, seed=config.seed),
+    ).result()
+    if not sampled.sequences or not sampled.sequences[0].tokens:
+        raise ValueError("Restored sampler returned no tokens")
+    return {
+        "measured_restore_max_abs_error": float(
+            np.max(np.abs(measured_restored - measured))
+        ),
+        "restore_max_abs_error": float(np.max(np.abs(restored - before))),
+        "replay_max_abs_error": float(np.max(np.abs(replayed - expected))),
+        "update_max_abs_change": change,
+        "probe_tokens": int(before.size),
+        "sampled_tokens": len(sampled.sequences[0].tokens),
+        "rtol": 2e-4,
+        "atol": 2e-4,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument(
@@ -173,6 +278,7 @@ def main() -> None:
         recipe=args.base_model,
     )
     clock, previous = time.monotonic, None
+    restore_batch: list[types.Datum] = []
     for step in range(config.updates + 1):
         start = clock()
         path = training.save_weights_for_sampler(f"step-{step}").result().path
@@ -189,8 +295,26 @@ def main() -> None:
             )
         if last or step % config.checkpoint_interval == 0:
             start = clock()
-            training.save_state(f"step-{step}").result()
+            checkpoint = training.save_state(f"step-{step}").result().path
             record("checkpoint", step=step, seconds=clock() - start)
+            if last:
+                start = clock()
+                restored = validate_restore(
+                    service,
+                    training,
+                    checkpoint,
+                    restore_batch,
+                    config,
+                    adam,
+                    held_out[0][0],
+                )
+                record(
+                    "restore_validation",
+                    step=step,
+                    method="momentum_replay",
+                    **restored,
+                    seconds=clock() - start,
+                )
         if last:
             break
         start = clock()
@@ -203,6 +327,7 @@ def main() -> None:
             for prompt, sequences, rewards in sampled
             for sequence, reward in zip(sequences, rewards)
         ]
+        restore_batch = datums[:8]
         forward = training.forward_backward(datums, config.loss).result()
         forward_done = clock()
         optimizer = training.optim_step(adam).result()

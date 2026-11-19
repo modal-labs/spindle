@@ -236,7 +236,12 @@ def test_deepseek_v41_lora_32k_recipes_keep_tensor_parallelism(name, tp):
 
 
 @pytest.mark.parametrize(
-    "name", ["deepseek-v41-flash-lora-64k", "deepseek-v41-flash-lora-128k"]
+    "name",
+    [
+        "deepseek-v41-flash-lora-64k",
+        "deepseek-v41-flash-1017-lora-64k",
+        "deepseek-v41-flash-lora-128k",
+    ],
 )
 def test_deepseek_v41_long_context_recipes_train_one_row_per_micro_batch(name):
     miles = MilesBackendConfig(**resolved(recipe(name)).trainer_settings["miles"])
@@ -245,13 +250,21 @@ def test_deepseek_v41_long_context_recipes_train_one_row_per_micro_batch(name):
     assert miles.cli_options["qkv_format"] == "bshd"
 
 
-@pytest.mark.parametrize("context, tp", [("8k", 1), ("32k", 4)])
+@pytest.mark.parametrize("context, tp", [("8k", 1), ("32k", 4), ("64k", 8)])
 def test_deepseek_v41_1017_recipes_load_the_1017_release(context, tp):
     row = resolved(recipe(f"deepseek-v41-flash-1017-lora-{context}"))
     miles = MilesBackendConfig(**row.trainer_settings["miles"])
     assert miles.tensor_model_parallel_size == tp
     assert row.asset_path == "/assets/deepseek-ai/DeepSeek-V4.1-Flash-1017"
     assert row.recipe.weights_revision == "1bae0e1088993b9b82de08f59de5be5a34e42170"
+
+
+def test_kimi_k3_recipe_keeps_routed_experts_and_unembedding_frozen():
+    miles = MilesBackendConfig(
+        **resolved(recipe("kimi-k3-lora-32k")).trainer_settings["miles"]
+    )
+    assert lora_target_flags(miles.target_modules) == (True, True, False)
+    assert not any(".experts." in target for target in miles.target_modules)
 
 
 def test_asset_paths_follow_the_model():
@@ -800,7 +813,6 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
             },
             "requires megatron_to_hf_mode raw",
         ),
-        ({"trainer_nodes": 2}, "single-node"),
     ],
 )
 @pytest.mark.parametrize("image", ["miles-v0.2.0-8c5de26", "miles-v0.2.0-e814245"])

@@ -780,6 +780,48 @@ def test_sampler_snapshots_persist_concurrently_without_crossing_adapters(
     assert not backend._sampler_captures
 
 
+@pytest.mark.parametrize("captures_on_volume", [True, False])
+def test_volume_captures_wait_for_checkpoint_persistence(
+    tmp_path, monkeypatch, captures_on_volume
+) -> None:
+    volume = tmp_path / "volume"
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "checkpoint-volume")
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(volume))
+    runtime = FakeMilesRuntime()
+    runtime.checkpoint_format = "miles_adapter_state"
+    backend = MilesCommandBackend(
+        _config(),
+        checkpoint_dir=volume / "checkpoints",
+        capture_dir=(volume if captures_on_volume else tmp_path) / "captures",
+        base_model="Qwen/Qwen3-4B",
+        runtime=runtime,
+    )
+    backend.accept_model("model-a", _spec())
+    backend.capture_checkpoint(
+        "model-a", "capture-a", destination="step-1", include_optimizer=True
+    )
+    persisting, release = threading.Event(), threading.Event()
+
+    def commit(name):
+        persisting.set()
+        assert release.wait(timeout=5)
+
+    monkeypatch.setattr(miles_lora, "_commit_volume", commit)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        persist = workers.submit(backend.persist_checkpoint, "capture-a", "step-1")
+        assert persisting.wait(timeout=5)
+        export = workers.submit(backend.capture_sampler_snapshot, "model-a", "s-1", 1)
+        if captures_on_volume:
+            # A volume reload during the persistence copy would fail on its open files.
+            with pytest.raises(TimeoutError):
+                export.result(timeout=0.5)
+        else:
+            export.result(timeout=5)
+        release.set()
+        persist.result(timeout=5)
+        export.result(timeout=5)
+
+
 @pytest.mark.parametrize("seed", [None, 0, 7])
 def test_backend_accepts_per_model_seed(tmp_path, seed) -> None:
     runtime = FakeMilesRuntime()
@@ -867,7 +909,7 @@ def test_weights_only_capture_excludes_optimizer(tmp_path):
         backend.load_checkpoint("model-a", str(uri), restore_optimizer=True)
 
 
-def test_checkpoint_rejects_different_resolved_main_commit(tmp_path):
+def test_checkpoint_restores_across_miles_revisions_with_a_warning(tmp_path, capsys):
     runtime = FakeMilesRuntime()
     backend = _backend(tmp_path, runtime)
     backend.accept_model("model-a", _spec())
@@ -876,10 +918,9 @@ def test_checkpoint_rejects_different_resolved_main_commit(tmp_path):
     )
     uri = backend.persist_checkpoint("capture-a", "step-1")
     runtime.revision = "b" * 40
-    calls = list(runtime.calls)
-    with pytest.raises(ValueError, match="Miles revision does not match"):
-        backend.load_checkpoint("model-a", uri, restore_optimizer=True)
-    assert runtime.calls == calls
+    backend.load_checkpoint("model-a", uri, restore_optimizer=True)
+    assert runtime.calls[-1][0] == "load_slot" and runtime.calls[-1][4]
+    assert "spindle_checkpoint_revision_mismatch" in capsys.readouterr().out
 
 
 def test_miles_checkpoint_storage_lifecycle_uses_control_plane_layout(tmp_path):
