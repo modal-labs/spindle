@@ -2,7 +2,9 @@
 
 Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [semantic versioning](https://semver.org/). Before 1.0, a minor release (0.x.0) can change config defaults or deployment behavior; a patch release (0.x.y) only fixes bugs. Each release is tagged `vX.Y.Z` and published as a GitHub Release.
 
-## Unreleased
+## 0.1.9 - 2026-11-19
+
+New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context and DeepSeek-V4.1-Flash-1017 at 64K context. Miles LoRA training states now restore after a trainer image update that keeps the same checkpoint format, and removing a config stops its sampler pools.
 
 ### Added
 
@@ -17,6 +19,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- `qwen35-9b-instruct-lora-16k` trains on one B200 instead of eight H100s, and samples on B200 only, with the `modal-labs/Qwen3.5-9B-DFlash` drafter. It no longer falls back to H200 samplers. Older checkpoints also need the old eight-H100 layout; see "Older Qwen3.5-9B instruct 16K checkpoints" in docs/deployment-configs.md.
 - `qwen38-27b-lora-256k` uses `miles-v0.2.0-8c5de26` and local trainer compiler caches to avoid corrupt generated modules observed with shared caches. Checkpoints saved with the previous `miles-v0.1.1-52a7a99` default cannot restore with the new image. Set `trainer_image` back to `miles-v0.1.1-52a7a99` to restore those checkpoints.
 - Miles LoRA checkpoints restore on a trainer running a different Miles commit, as long as the checkpoint format, adapter layout, base model and LoRA settings match. Before, any commit change rejected the restore, so moving a config to a newer image stranded its saved training states. Training states saved with 0.1.7 or earlier now restore on the current v0.1.x images without setting `trainer_image`. Checkpoints saved on `miles-v0.1.x` images still don't restore on `miles-v0.2.0` images, which use a different checkpoint format.
 - A checkpoint that a Miles v0.2.0 trainer refuses to load, for example because its expert adapters don't match, now fails only that request. Before, it stopped the trainer and every model on it.
@@ -24,6 +27,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
+- Removing a config with `spindle remove` or `DELETE /api/v1/spindle/deployments/{name}` also stops its LoRA and full fine-tuning sampler pools. Before, they kept running, and billing for warm replicas, until stopped by hand.
 - Miles v0.2.0 trainers can gather checkpoint and sampler captures across nodes without racing checkpoint persistence.
 - Reference plots leave gaps for missing measurements instead of joining timing points across a restart.
 - Long-sequence training requests with expert-routing replay no longer fail with intermittent 503 errors.
@@ -45,7 +49,6 @@ Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen a
 
 ### Changed
 
-- `qwen35-9b-instruct-lora-16k` trains on one B200 instead of eight H100s, and samples on B200 only, with the `modal-labs/Qwen3.5-9B-DFlash` drafter. It no longer falls back to H200 samplers. Older checkpoints also need the old eight-H100 layout; see "Older Qwen3.5-9B instruct 16K checkpoints" in docs/deployment-configs.md.
 - The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers, which make up three of every four layers. Checkpoints these recipes saved before this change can't be loaded into them. To keep using one, load it into a variant with the old targets, as described in [Older Qwen3.5 LoRA checkpoints](docs/deployment-configs.md#older-qwen35-lora-checkpoints).
 - Single-node dense Qwen2.5, Qwen3, Qwen3.5, Qwen3.8 and Nemotron-3 Nano LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Nano uses FP32 expert reductions and deterministic kernels so repeated scores and optimizer replay agree. Older checkpoints require their original trainer image and adapter layout.
 - Miles multi-target scoring shares one vocabulary softmax across mixed candidate counts in supported scoring modes, preserving each datum's output shape and batch order.
