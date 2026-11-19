@@ -9,6 +9,7 @@ from .image_dependencies import (
     STITCH_PACKAGE,
     ignore_config_source,
 )
+from .miles_image_common import miles_base_image
 
 MILES_RELEASE_COMMIT = "8e419cc739fb09b5f21085aeacc7f6fd951084e1"
 MILES_REPOSITORY = "https://github.com/modal-projects/miles.git"
@@ -35,6 +36,38 @@ def image_at(miles_commit: str) -> modal.Image:
             f"git -C /root/miles fetch --depth=1 {MILES_REPOSITORY} {miles_commit}"
             f" && git -C /root/miles checkout -B {MILES_BRANCH} FETCH_HEAD",
             MEGATRON_RUNTIME_CHECK,
+        )
+        .add_local_python_source("spindle", ignore=ignore_config_source)
+    )
+
+
+def grouped_gemm_image_at(miles_commit: str) -> modal.Image:
+    """Enable TE's existing fused grouped backend and its required cuBLAS runtime."""
+    library = "/opt/cublas-13.3/nvidia/cu13/lib"
+    return (
+        miles_base_image(
+            BASE_IMAGE,
+            {
+                "LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH",
+                "PYTHONPATH": "/root/Megatron-LM:$PYTHONPATH",
+                "CUDA_DEVICE_MAX_CONNECTIONS": "1",
+                "SPINDLE_MILES_API": "0.2",
+            },
+        )
+        .pip_install(*MEGATRON_RUNTIME_PACKAGES)
+        .run_commands(
+            f'test "$(git -C /root/miles rev-parse HEAD)" = "{MILES_RELEASE_COMMIT}"',
+            f"git -C /root/miles fetch --depth=1 {MILES_REPOSITORY} {miles_commit}"
+            f" && git -C /root/miles checkout -B {MILES_BRANCH} FETCH_HEAD",
+            MEGATRON_RUNTIME_CHECK,
+            "uv pip install --python /opt/sglang/bin/python --no-deps"
+            " --target /opt/cublas-13.3 nvidia-cublas==13.3.0.5",
+        )
+        .env(
+            {
+                "NVTE_GROUPED_LINEAR_USE_FUSED_GROUPED_GEMM": "1",
+                "LD_PRELOAD": f"{library}/libcublasLt.so.13:{library}/libcublas.so.13",
+            }
         )
         .add_local_python_source("spindle", ignore=ignore_config_source)
     )
