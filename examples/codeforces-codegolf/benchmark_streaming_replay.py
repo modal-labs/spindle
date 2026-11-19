@@ -477,13 +477,13 @@ def benchmark(
                 await persist_async()
             training = await create()
             try:
-                before = await probe(training, cfg, check_case)
                 for _ in range(2):
                     for case in cases:
                         for mode in ("batch", "stream"):
                             report["warmup"].append(
                                 await trial(training, cfg, case, mode, "all_ready")
                             )
+                before = await probe(training, cfg, check_case)
                 schedule = [
                     (case, profile, repeat)
                     for case in cases
@@ -504,8 +504,6 @@ def benchmark(
                 frozen = probe_difference(
                     before, await probe(training, cfg, check_case)
                 )
-                if frozen["max_abs"] > 1e-6:
-                    raise RuntimeError(f"Frozen policy probe changed: {frozen}")
                 report["frozen_probe_difference"] = frozen
                 report["summary"] = summarize(
                     report["trials"],
@@ -513,6 +511,9 @@ def benchmark(
                     [case["id"] for case in cases],
                     require_equivalence=not timing_only_from,
                 )
+                await persist_async()
+                if frozen["max_abs"] > 1e-6:
+                    raise RuntimeError(f"Frozen policy probe changed: {frozen}")
             finally:
                 await release(training)
 

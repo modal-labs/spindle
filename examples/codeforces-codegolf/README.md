@@ -39,7 +39,10 @@ report `streaming.group_wait_seconds`, `streaming.forward_backward_seconds`
 and the minibatch count. Group wait excludes time spent awaiting training.
 Extra training requests and smaller packed batches can offset the overlap;
 the [short-rollout GPU comparison](../../docs/codegolf-streaming-benchmark.md)
-did not demonstrate an end-to-end speedup.
+did not demonstrate an end-to-end speedup. A later
+[matched replay](../../docs/codegolf-streaming-benchmark.md#controlled-replay)
+measured a small conditional timing saving and failed its numerical checks.
+`benchmark_streaming_replay.py` retains both the timings and failed checks.
 
 `benchmark_streaming.py` runs both variants in batch–stream–stream–batch order
 on one scoped deployment, with 8 H200 trainer GPUs and four H200 sampler
