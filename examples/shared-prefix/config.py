@@ -21,19 +21,19 @@ class Config(Parent):
     }
     inference_gpu = "B300"
     inference_memory_mib = 786432
-    max_context_length = 32768
+    max_context_length = 65552
     miles_cfg = {
         "shared_prefix_training": True,
         # Set shared_prefix_check_forward=True for full validation/debug comparisons.
         "model_type": "glm5.3-flash",
         "megatron_to_hf_mode": "raw",
         "lora_type": "canonical_lora",
-        "tensor_model_parallel_size": 2,
+        "tensor_model_parallel_size": 4,
         "expert_model_parallel_size": 8,
         "expert_tensor_parallel_size": 1,
         "max_lora_slots": 1,
         "max_lora_rank": 32,
-        "max_tokens_per_gpu": 49152,
+        "max_tokens_per_gpu": 131072,
         "target_modules": [
             "model.language_model.layers.*.q_proj",
             "model.language_model.layers.*.k_proj",
@@ -54,6 +54,7 @@ class Config(Parent):
         ],
         "cli_options": {
             "lora_kernel_policy": "native",
+            "make_vocab_size_divisible_by": 16,
             "deterministic_mode": True,
             "use_rollout_routing_replay": False,
             "enable_mtp_training": False,
