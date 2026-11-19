@@ -183,7 +183,9 @@ sampler = service.create_sampling_client(model_path=checkpoint.path)
 The new deployment must use the same Modal workspace/environment and bulletin
 volume, have access to the base weights, and serve the checkpoint's engine
 definition. No original model session, trainer, or artifacts Dict entry is
-required for LoRA sampling. Expiration still applies when the export has a TTL.
+required for LoRA sampling. New named exports write their metadata only to the
+volume, and export retries read it there too. Expiration still applies when the
+export has a TTL.
 FFT publications retain their existing dependencies on the base and preceding
 delta snapshots. Ephemeral latest clients retain their existing lifecycle.
 
@@ -191,6 +193,8 @@ Older exports without volume metadata continue to resolve through their original
 artifacts Dict; retrying the original named export with the updated server writes
 its durable metadata. A training checkpoint (`tinker://<run>/weights/<name>`,
 created by `save_state`) still needs to be restored and exported for sampling.
+The Tinker SDK interface is unchanged. Servers predating this storage format
+cannot reopen new named exports after a server downgrade.
 
 ## Recommended configuration for eval jobs
 

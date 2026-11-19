@@ -761,6 +761,15 @@ class ControlPlane:
         self,
         model_path: str,
     ) -> SamplerArtifactRecord:
+        artifact = await self._find_sampler_artifact(model_path)
+        if artifact is None:
+            raise RecordNotFound("sampler artifact", model_path)
+        self._check_expiry("sampler artifact", model_path, artifact.expires_at)
+        return artifact
+
+    async def _find_sampler_artifact(
+        self, model_path: str
+    ) -> SamplerArtifactRecord | None:
         value = None
         if self.read_sampler_artifact is not None:
             try:
@@ -773,11 +782,10 @@ class ControlPlane:
             # Older exports and ephemeral latest paths may exist only in the Dict.
             value = await self.kv.get(sampler_artifact_key(model_path))
         if value is None:
-            raise RecordNotFound("sampler artifact", model_path)
+            return None
         artifact = SamplerArtifactRecord.model_validate(value)
         if artifact.model_path != model_path:
             raise RecordNotFound("sampler artifact", model_path)
-        self._check_expiry("sampler artifact", model_path, artifact.expires_at)
         return artifact
 
     def _check_expiry(self, kind: str, key: str, expires_at: float | None) -> None:
@@ -1025,9 +1033,8 @@ class ControlPlane:
     ) -> dict[str, str] | None:
         if export.name is not None:
             path = self._sampler_model_path(export.model_id, export.name)
-            value = await self.kv.get(sampler_artifact_key(path))
-            if value is not None:
-                artifact = SamplerArtifactRecord.model_validate(value)
+            artifact = await self._find_sampler_artifact(path)
+            if artifact is not None:
                 if (
                     artifact.model_path == path
                     and artifact.model_id == export.model_id
@@ -1184,13 +1191,20 @@ class ControlPlane:
                 created_at=completed_at,
                 expires_at=expires_at,
             )
-            inserted = await self.kv.put_if_absent(
-                sampler_artifact_key(model_path),
-                artifact.model_dump(mode="json"),
-            )
-            if SamplerArtifactRecord.model_validate(inserted.value).model_dump(
+            key = sampler_artifact_key(model_path)
+            if self.write_sampler_artifact is None:
+                inserted = await self.kv.put_if_absent(
+                    key, artifact.model_dump(mode="json")
+                )
+                value = inserted.value
+            else:
+                # Legacy Dict entries still reserve their immutable names.
+                value = await self.kv.get(key)
+            if value is not None and SamplerArtifactRecord.model_validate(
+                value
+            ).model_dump(exclude={"telemetry_tags"}) != artifact.model_dump(
                 exclude={"telemetry_tags"}
-            ) != artifact.model_dump(exclude={"telemetry_tags"}):
+            ):
                 raise SequenceConflict(model.model_id, export.seq_id)
             if self.write_sampler_artifact is not None:
                 await self.write_sampler_artifact(artifact)

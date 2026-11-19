@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
-- Named sampling checkpoints persist their metadata on the configured bulletin volume. A fresh deployment using that volume can open their Tinker paths without the original artifacts Dict or trainer session.
+- Named sampling checkpoints persist their metadata only on the configured bulletin volume, rather than duplicating it in the artifacts Dict. A fresh deployment using that volume can open their Tinker paths without the original artifacts Dict or trainer session.
 
 ## 0.1.9 - 2026-11-19
 
