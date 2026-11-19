@@ -231,7 +231,7 @@ def test_example_gate_survives_full_deployment_serialization(
     assert backend.cli_options["lora_kernel_policy"] == "native"
     assert backend.cli_options["moe_aux_loss_coeff"] == [0.0]
     assert backend.extra_args == ("--seq-length", "65552")
-    assert backend.tensor_model_parallel_size == 4
+    assert backend.tensor_model_parallel_size == 2
     assert backend.max_lora_slots == 1
     assert any(
         fnmatchcase("model.language_model.layers.3.mlp.experts.gate_up_proj", target)

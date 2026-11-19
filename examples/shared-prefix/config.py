@@ -28,7 +28,7 @@ class Config(Parent):
         "model_type": "glm5.3-flash",
         "megatron_to_hf_mode": "raw",
         "lora_type": "canonical_lora",
-        "tensor_model_parallel_size": 4,
+        "tensor_model_parallel_size": 2,
         "expert_model_parallel_size": 8,
         "expert_tensor_parallel_size": 1,
         "max_lora_slots": 1,
