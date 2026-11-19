@@ -14,6 +14,7 @@ class Config(Parent):
     overrides = {
         "miles_cfg.megatron_to_hf_mode": "raw",
         "miles_cfg.lora_type": "canonical_lora",
+        "miles_cfg.tensor_model_parallel_size": 4,
         "miles_cfg.max_tokens_per_gpu": 131_072,
         "miles_cfg.max_lora_slots": 8,
         "sglang_cfg.max_running_requests": 32,
