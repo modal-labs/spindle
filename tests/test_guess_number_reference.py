@@ -128,9 +128,11 @@ def test_launcher_checkpoint_lifecycle(
             self.calls = 0
             self.saved: dict[str, tuple[float, float]] = {}
             self.publications: list[str] = []
+            self.published_weights: dict[str, float] = {}
 
         def save_weights_for_sampler(self, name: str) -> Future[Any]:
             self.publications.append(name)
+            self.published_weights[name] = self.weight
             return future(SimpleNamespace(path=name))
 
         def save_state(self, name: str) -> Future[Any]:
@@ -142,22 +144,6 @@ def test_launcher_checkpoint_lifecycle(
             if mode != "broken_restore":
                 self.weight, self.moment = self.saved[path]
             return future(None)
-
-        def forward(self, batch: list[tinker.Datum], loss: str) -> Future[Any]:
-            return future(
-                SimpleNamespace(
-                    loss_fn_outputs=[
-                        {
-                            "logprobs": tinker.types.TensorData(
-                                data=[100.0 + self.weight, -1.0 + self.weight],
-                                dtype="float32",
-                                shape=[2],
-                            )
-                        }
-                        for _ in batch
-                    ]
-                )
-            )
 
         def forward_backward(self, batch: list[tinker.Datum], loss: str) -> Future[Any]:
             assert loss == "importance_sampling"
@@ -190,9 +176,19 @@ def test_launcher_checkpoint_lifecycle(
             )
 
     training = Training()
+
+    class Sampler:
+        def __init__(self, model_path: str) -> None:
+            self.weight = training.published_weights[model_path]
+
+        def compute_logprobs(
+            self, prompt: tinker.types.ModelInput
+        ) -> Future[list[float | None]]:
+            return future([None, -1.0 + self.weight])
+
     service = SimpleNamespace(
         create_lora_training_client=lambda *args: training,
-        create_sampling_client=lambda **kwargs: None,
+        create_sampling_client=lambda model_path: Sampler(model_path),
     )
     monkeypatch.setattr(tinker, "ServiceClient", lambda: service)
 

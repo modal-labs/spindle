@@ -162,11 +162,9 @@ def summarize(groups: list[list[Episode]]) -> dict[str, float | int]:
     }
 
 
-def scores(training: tinker.TrainingClient, batch: list[types.Datum]) -> np.ndarray:
-    result = training.forward(batch, "importance_sampling").result()
-    values = np.concatenate(
-        [np.asarray(row["logprobs"].data) for row in result.loss_fn_outputs]
-    )
+def scores(sampler: tinker.SamplingClient, prompt: types.ModelInput) -> np.ndarray:
+    result = sampler.compute_logprobs(prompt).result()
+    values = np.asarray([value for value in result if value is not None])
     if not values.size or not np.isfinite(values).all():
         raise ValueError("Checkpoint probe returned empty or nonfinite scores")
     return values
@@ -228,9 +226,11 @@ def main() -> None:
     previous = None
     step = attempt = 0
     restored = False
+    changed = 0.0
     checkpoint: str | None = None
     saved_scores: np.ndarray | None = None
-    saved_batch: list[types.Datum] = []
+    probe: types.ModelInput | None = None
+    restore_started: float | None = None
     last_batch: list[types.Datum] = []
     while True:
         start = time.monotonic()
@@ -243,33 +243,37 @@ def main() -> None:
         record(
             "publication", step=step, attempt=attempt, seconds=time.monotonic() - start
         )
+        if restore_started is not None:
+            assert probe is not None and saved_scores is not None
+            loaded = scores(sampler, probe)
+            np.testing.assert_allclose(loaded, saved_scores, rtol=2e-4, atol=2e-4)
+            record(
+                "restore_validation",
+                step=step,
+                from_step=config.restore_step,
+                path=checkpoint,
+                attempt=attempt,
+                max_abs_error=float(np.max(np.abs(loaded - saved_scores))),
+                discarded_score_change=changed,
+                seconds=time.monotonic() - restore_started,
+            )
+            restore_started = None
         if step == config.save_step and not restored:
-            saved_batch = last_batch[:8]
-            saved_scores = scores(training, saved_batch)
+            probe = last_batch[0].model_input
+            saved_scores = scores(sampler, probe)
             checkpoint = training.save_state(f"step-{step}").result().path
             record("checkpoint", step=step, path=checkpoint)
         if step == config.restore_step and not restored:
             assert checkpoint is not None and saved_scores is not None
-            start = time.monotonic()
-            before_restore = scores(training, saved_batch)
+            restore_started = time.monotonic()
+            assert probe is not None
+            before_restore = scores(sampler, probe)
             changed = float(np.max(np.abs(before_restore - saved_scores)))
             if np.allclose(before_restore, saved_scores, rtol=2e-4, atol=2e-4):
                 raise ValueError(
                     "Training did not change probe scores beyond restore tolerance"
                 )
             training.load_state_with_optimizer(checkpoint).result()
-            loaded = scores(training, saved_batch)
-            np.testing.assert_allclose(loaded, saved_scores, rtol=2e-4, atol=2e-4)
-            record(
-                "restore_validation",
-                step=config.save_step,
-                from_step=step,
-                path=checkpoint,
-                attempt=attempt,
-                max_abs_error=float(np.max(np.abs(loaded - saved_scores))),
-                discarded_score_change=changed,
-                seconds=time.monotonic() - start,
-            )
             restored = True
             step = config.save_step
             previous = None

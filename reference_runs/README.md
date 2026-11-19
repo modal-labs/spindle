@@ -132,8 +132,10 @@ restore_step = 4
 
 The script saves weights and optimizer state after step 2, trains through step 4,
 loads step 2 with `load_state_with_optimizer`, then trains steps 3 through 6.
-It runs eight optimizer updates in total, retaining six. A fixed batch's token
-scores must change before restore and match the saved scores afterward.
+It runs eight optimizer updates in total, retaining six. A fixed prompt's token
+scores on published sampler snapshots must change before restore and match
+the saved scores afterward. Training-forward scores are not used because
+the training backend can return different scores without a weight change.
 This checks restored weights; optimizer state is loaded through the SDK's
 optimizer-restore API. The final checkpoint includes the continued optimizer state.
 The schedule requires `0 < save_step < restore_step < total_steps`.
