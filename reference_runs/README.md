@@ -8,7 +8,9 @@ reference_runs/
   configs/dapo_qwen35_4b.toml   # Immutable validation definition
   configs/dapo_qwen38_27b_multinode.toml
   configs/beam_blog_repro.toml
+  configs/guess_number_gpt_oss_20b.toml
   scripts/dapo_math.py         # Dataset, grading and training settings
+  scripts/guess_number.py      # Multi-turn number guessing through Tinker
   scripts/beam_blog_repro.py    # Beam LoRA training with AIME25 evaluation
   run.py                      # Prepare config or launch the script
   index.toml                  # Execution provenance and output paths
@@ -92,7 +94,9 @@ selection; record the images used for each execution in the index.
 
 `configs/guess_number_gpt_oss_20b.toml` runs `scripts/guess_number.py` on
 `gpt-oss-20b-lora-32k`. It uses the recipe's selected images, including the
-older Miles v0.1.1 trainer. Image versions belong to each execution's index entry.
+older Miles v0.1.1 trainer. It requests one H200 trainer instead of the
+recipe's eight data-parallel replicas and limits sampling to one four-H200
+replica. Image versions belong to each execution's index entry.
 
 The task follows tinker-cookbook 0.6.1's multi-turn guess-number game: a hidden
 integer from 0 through 1023, at most ten guesses, higher/lower feedback, reward

@@ -13,7 +13,7 @@ from catalog import ReferenceRunIndex, read_output
 
 
 PANELS = [
-    ("evaluation", "reward", "Held-out accuracy"),
+    ("evaluation", "reward", "Held-out reward"),
     ("update", "reward", "Training reward"),
     ("update", "response_tokens_mean", "Training response tokens (mean)"),
     ("update", "seconds_since_previous_update", "Seconds between accepted updates"),
