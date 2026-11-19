@@ -234,28 +234,6 @@ To change an image:
 
 A checkpoint restores only on a trainer with the same Miles revision and adapter layout as the one that saved it. Checkpoints without a recorded layout are treated as `lora`. Keep the original image and layout to restore older checkpoints after switching a recipe to native canonical adapters.
 
-### Inkling-2-Small LoRA
-
-`inkling2-small-lora-8k-b300` is an experimental 8K recipe with two adapter slots on one eight-B300 trainer and a separate eight-B300 sampler. It uses `miles-v0.2.0-e186d97-inkling2-attn` and `sglang-inkling2-a2e3c49-head`. The checkpoint and base container are pinned by revision and digest.
-
-The sampler image maps the checkpoint's `model.llm.unembed` adapter target to SGLang's `lm_head` during compatibility checks. Adapter tensors and checkpoints keep their original HF names.
-
-The recipe trains the six attention projections and the unembedding, with an independent `lora_A` for each projection. Routed experts and attention sinks stay frozen. Create clients with the stock Tinker SDK:
-
-```python
-client = service_client.create_lora_training_client(
-    base_model="thinkingmachines/Inkling-2-Small",
-    rank=32,
-    train_attn=True,
-    train_mlp=False,
-    train_unembed=True,
-)
-```
-
-Training uses TP=CP=PP=1 and EP=8. The sampler keeps multiple adapters loaded but batches one adapter at a time. Native Miles adapter checkpoints retain each slot's optimizer state; they do not restore into the older bridge images.
-
-Load the checkpoint's tokenizer with `transformers.AutoTokenizer.from_pretrained`, using the recipe's `weights_revision`, or use the public `tml-renderers` Inkling2 renderer. The stock SDK's `get_tokenizer()` does not support Thinking Machines models. The stock cookbook can resume an attention-only checkpoint with `load_checkpoint_path` and `renderer_name=tml_v0`; its default fresh-client MLP targets are unsupported. The renderer requires client Torch 2.11 or newer.
-
 ## Prepare and launch
 
 ~~~text
@@ -322,7 +300,7 @@ class Config(Parent):
 config = Config()
 ```
 
-Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Set `inference_rdma=True` to apply the same exclusion to a sampler on a full GPU node. Modal accepts the option only on clustered allocations; other trainers and inference pools are unaffected.
+Set `"platform.modal.exclude_reserved_capacity": True` to keep multi-node trainers, and trainers with `trainer_rdma`, off GPUs reserved for your workspace. This leaves the reservation free for other jobs. Modal accepts the option only on clustered functions, so other trainers and inference pools are unaffected.
 
 The frontend's URL is `https://<workspace>-<environment>--<frontend>-server.modal.run`. To choose the part after `--`, set `"platform.url_label"`; for example `"prod"` gives `https://<workspace>-<environment>--prod.modal.run`. Changing the label changes the URL clients use.
 
