@@ -33,8 +33,8 @@ def miles():
     lora = SimpleNamespace()
     lora.get_data_iterator = lambda *args: ([object()], [1])
 
-    def run(args, batch_id, model, data, **kwargs):
-        lora.get_data_iterator(args, model, data)
+    def run(args, batch_id, model, rollout_data, **kwargs):
+        lora.get_data_iterator(args, model, rollout_data)
         events.append((manager.enabled, len(manager.replays[0])))
         if kwargs.get("fail"):
             raise RuntimeError("forward failed")
@@ -137,3 +137,47 @@ def test_mask_fields_forwarded_and_temperature_is_request_local(miles):
 def test_missing_miles_sharding_api_fails_at_install():
     with pytest.raises(RuntimeError, match="requires _package_shards"):
         install_distribution_sharding(SimpleNamespace())
+
+
+@pytest.mark.parametrize("version", ["v0.1.1", "v0.2.0"])
+@pytest.mark.parametrize("by_keyword", [False, True])
+def test_router_replay_finds_rollout_data_in_each_miles_signature(
+    miles, version, by_keyword
+):
+    def replayed(rollout_data):
+        miles.lora.get_data_iterator(None, [], rollout_data)
+        assert miles.manager.replays == [["routes"]]
+        assert miles.manager.stage == "replay_backward"
+        return "native-result"
+
+    def v011_run(args, batch_id, model, rollout_data, *, forward_only=False):
+        return replayed(rollout_data)
+
+    def v020_run(
+        args, batch_id, model, adapter_slots, rollout_data, *, forward_only=False
+    ):
+        assert adapter_slots == "slots"
+        return replayed(rollout_data)
+
+    miles.lora.run_forward_backward = v011_run if version == "v0.1.1" else v020_run
+    install_replay_hooks(**miles.dependencies)
+    args = (None, 0, []) if version == "v0.1.1" else (None, 0, [], "slots")
+    data = {"rollout_routed_experts": "routes"}
+    result = (
+        miles.lora.run_forward_backward(*args, rollout_data=data)
+        if by_keyword
+        else miles.lora.run_forward_backward(*args, data)
+    )
+    assert result == "native-result"
+    assert miles.manager.replays == [[]]
+    assert miles.manager.stage == "fallthrough"
+
+
+def test_replay_install_rejects_miles_without_rollout_data(miles):
+    def renamed(args, batch_id, model, batch, *, forward_only=False):
+        return "native-result"
+
+    miles.lora.run_forward_backward = renamed
+    with pytest.raises(RuntimeError, match="rollout_data"):
+        install_replay_hooks(**miles.dependencies)
+    assert miles.lora.run_forward_backward is renamed

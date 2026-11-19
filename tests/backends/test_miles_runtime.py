@@ -13,6 +13,7 @@ from spindle.backends.miles_runtime.runtime import (
     _array_bridge,
     _configure_actor_spec,
     _materialize_capture,
+    _refusal,
     _require_cluster_nodes,
     _worker_env,
 )
@@ -156,13 +157,85 @@ def test_upstream_error_result_invalidates_runtime():
         runtime._run(error())
 
 
+@pytest.mark.parametrize(
+    ("result", "refusal"),
+    [
+        ({"error": "refused", "error_category": "user"}, "refused"),
+        ([None, {"error": "refused", "error_category": "user"}], "refused"),
+        ([{"error": "refused", "error_category": "user"}, {"error": "crashed"}], None),
+        ({"error": "crashed"}, None),
+        ({"out_of_memory": True, "error": "CUDA out of memory"}, None),
+        ([None, {"loss": 1.0}], None),
+        (None, None),
+    ],
+    ids=[
+        "single-rank",
+        "one-rank-of-many",
+        "mixed-with-crash",
+        "crash",
+        "out-of-memory",
+        "success",
+        "none",
+    ],
+)
+def test_refusal_accepts_only_user_errors(result, refusal):
+    assert _refusal(result) == refusal
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"error": "expert targets differ", "error_category": "user"},
+        [None, {"error": "expert targets differ", "error_category": "user"}],
+    ],
+)
+def test_refused_request_fails_only_itself(result):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+
+    async def refuse():
+        return result
+
+    with pytest.raises(ValueError, match="expert targets differ"):
+        runtime._run(refuse())
+    assert runtime._failure is None
+
+
+def test_refusal_mixed_with_a_crash_invalidates_runtime():
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+
+    async def mixed():
+        return [{"error": "refused", "error_category": "user"}, {"error": "crashed"}]
+
+    with pytest.raises(BackendFailed, match="refused"):
+        runtime._run(mixed())
+    assert runtime._failure is not None
+
+
+@pytest.mark.parametrize("commit_fails", [False, True])
 @pytest.mark.parametrize("operation", ["save_slot", "export_slot_peft"])
-def test_rejected_native_capture_fails_only_its_request(tmp_path, operation):
+def test_rejected_native_capture_fails_only_its_request(
+    tmp_path, monkeypatch, operation, commit_fails
+):
     runtime = MilesRuntime.__new__(MilesRuntime)
     runtime._closed = False
     runtime._failure = None
     runtime._call = asyncio.run
     runtime._v020 = SimpleNamespace()
+    if commit_fails:
+        monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "checkpoints")
+        monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(tmp_path))
+
+        async def execute(method, **kwargs):
+            assert method == "commit_checkpoint_volume"
+            raise RuntimeError("checkpoint volume commit failed on 1 node(s)")
+
+        runtime._trainer = SimpleNamespace(_execute_slots=execute)
     capture = tmp_path / "capture"
     incomplete = tmp_path / ".capture.1234"
     incomplete.mkdir()
@@ -184,11 +257,66 @@ def test_rejected_native_capture_fails_only_its_request(tmp_path, operation):
             lora_dropout=0.0,
         )
 
-    with pytest.raises((ValueError, FileNotFoundError)):
+    with pytest.raises((ValueError, FileNotFoundError, RuntimeError)):
         call()
     assert runtime._failure is None
     assert not capture.exists()
     assert not incomplete.exists()
+
+
+@pytest.mark.parametrize("location", ["volume", "outside", "unset"])
+def test_native_export_materializes_committed_node_files(
+    tmp_path, monkeypatch, location
+):
+    volume = tmp_path / "volume"
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_ROOT", str(volume))
+    monkeypatch.setenv("SPINDLE_CHECKPOINT_VOLUME", "checkpoints")
+    if location == "unset":
+        monkeypatch.delenv("SPINDLE_CHECKPOINT_VOLUME")
+    root = tmp_path if location == "outside" else volume
+    source = root / ".capture.1234"
+    source.mkdir(parents=True)
+    committed = False
+
+    def remote_files():
+        (source / "adapter_config.json").write_text("{}")
+        (source / "adapter_model.safetensors").write_bytes(b"peer weights")
+
+    async def execute(method):
+        nonlocal committed
+        assert method == "commit_checkpoint_volume"
+        committed = True
+
+    def reload_volume(action):
+        assert action == "reload" and committed
+        remote_files()
+
+    async def export(*args):
+        if location != "volume":
+            remote_files()
+        return source
+
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    runtime._v020 = SimpleNamespace()
+    runtime._bridge = SimpleNamespace(export_slot=export)
+    runtime._trainer = SimpleNamespace(_execute_slots=execute)
+    monkeypatch.setattr(miles_runtime, "sync_checkpoint_volume", reload_volume)
+    capture = root / "capture"
+    runtime.export_slot_peft(
+        slot=0,
+        path=str(capture),
+        rank=8,
+        alpha=16.0,
+        base_model="m",
+        target_modules=(),
+        lora_dropout=0.0,
+    )
+    assert (capture / "adapter_model.safetensors").read_bytes() == b"peer weights"
+    assert committed == (location == "volume")
+    assert not source.exists()
 
 
 @pytest.mark.parametrize("failed_rank", [0, 1])

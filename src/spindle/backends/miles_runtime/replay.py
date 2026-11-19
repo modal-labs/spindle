@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from functools import wraps
+from inspect import signature
 
 import torch
 
@@ -66,6 +67,11 @@ def install_replay_hooks(
     global _replayed_run
     if lora_model.run_forward_backward is _replayed_run:
         return
+    run_signature = signature(lora_model.run_forward_backward)
+    if "rollout_data" not in run_signature.parameters:
+        raise RuntimeError(
+            "router replay requires Miles run_forward_backward to take rollout_data"
+        )
 
     original_mask = logit_processors.build_local_sampling_mask
 
@@ -162,8 +168,8 @@ def install_replay_hooks(
     original_run = lora_model.run_forward_backward
 
     @wraps(original_run)
-    def run(args, batch_id, model, *batch_args, **kwargs):
-        rollout_data = batch_args[-1]
+    def run(*args, **kwargs):
+        rollout_data = run_signature.bind(*args, **kwargs).arguments["rollout_data"]
         replay = manager.data_key in rollout_data
         enabled, stage = manager.enabled, manager.stage
         if replay and (not enabled or not manager.replays):
@@ -176,7 +182,7 @@ def install_replay_hooks(
             # Miles switches to replay_forward around each forward; recompute
             # consumes the separate backward cursor after that stage restores.
             manager.stage = "replay_backward"
-            return original_run(args, batch_id, model, *batch_args, **kwargs)
+            return original_run(*args, **kwargs)
         finally:
             manager.clear_all()
             manager.enabled, manager.stage = enabled, stage

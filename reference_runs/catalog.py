@@ -9,9 +9,9 @@ import tempfile
 import tomllib
 from collections.abc import Generator
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ReferenceRun(BaseModel):
@@ -22,12 +22,38 @@ class ReferenceRun(BaseModel):
     output: str
     spindle_commit: str | None = None
     spindle_version: str | None = None
-    trainer_image: str
-    miles_commit: str
-    tinker_sdk: str
-    hardware: str
+    trainer_image: str | None = None
+    miles_commit: str | None = None
+    tinker_sdk: str | None = None
+    hardware: str | None = None
+    source: str | None = None
     region: str | None = None
     notes: str = ""
+
+    @model_validator(mode="after")
+    def spindle_or_external(self) -> Self:
+        """A Spindle execution records its runtime; an external one only its source.
+
+        spindle_commit and spindle_version stay unset when the server does not report them.
+        """
+        runtime = {
+            "trainer_image": self.trainer_image,
+            "miles_commit": self.miles_commit,
+            "tinker_sdk": self.tinker_sdk,
+            "hardware": self.hardware,
+        }
+        if self.source is None:
+            missing = [name for name, value in runtime.items() if value is None]
+            if missing:
+                raise ValueError(f"Spindle execution is missing {', '.join(missing)}")
+        elif any(
+            value is not None
+            for value in (self.spindle_commit, self.spindle_version, *runtime.values())
+        ):
+            raise ValueError(
+                "external execution records source, not Spindle provenance"
+            )
+        return self
 
 
 class ReferenceRunIndex(BaseModel):
@@ -40,6 +66,67 @@ class ReferenceRunIndex(BaseModel):
         if len({run.id for run in self.runs}) != len(self.runs):
             raise ValueError("duplicate run IDs in index")
         return self
+
+
+class Record(BaseModel):
+    """One line of a Spindle execution's output. Scripts may add any other fields."""
+
+    model_config = ConfigDict(extra="allow")
+
+    event: str
+    time: float
+
+
+class Measurement(BaseModel):
+    """Fields every evaluation and update line carries."""
+
+    model_config = ConfigDict(extra="allow")
+
+    time: float
+    step: int = Field(ge=0)
+    responses: int = Field(gt=0)
+    reward: float
+    response_tokens_mean: float
+    truncated_fraction: float = Field(ge=0, le=1)
+
+
+class Evaluation(Measurement):
+    """Held-out sampling with the policy after ``step`` accepted updates."""
+
+    event: Literal["evaluation"]
+
+
+class Update(Measurement):
+    """The batch that produced accepted optimizer update ``step``."""
+
+    event: Literal["update"]
+    seconds_since_previous_update: float | None = None
+
+
+class PublishedEvaluation(BaseModel):
+    """A point read from an external execution's published chart."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event: Literal["evaluation"]
+    step: int = Field(ge=0)
+    reward: float | None = None
+    response_tokens_mean: float | None = None
+
+
+SCHEMAS: dict[str, type[BaseModel]] = {"evaluation": Evaluation, "update": Update}
+
+
+def read_output(path: Path, *, published: bool = False) -> list[dict]:
+    """Validate an output's complete lines; a run interrupted mid-write ends in a partial one."""
+    lines = path.read_text().splitlines(keepends=True)
+    records = [json.loads(line) for line in lines if line.endswith("\n")]
+    for record in records:
+        if published:
+            PublishedEvaluation.model_validate(record)
+        else:
+            SCHEMAS.get(record.get("event"), Record).model_validate(record)
+    return records
 
 
 @contextlib.contextmanager

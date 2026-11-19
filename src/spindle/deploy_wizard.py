@@ -33,6 +33,7 @@ PROVIDER_ORDER = (
     "deepseek-ai",
     "zai-org",
     "moonshotai",
+    "reflection",
     "thinkingmachines",
 )
 MODE_LABELS = {"lora": "LoRA", "full": "Full fine-tune"}
