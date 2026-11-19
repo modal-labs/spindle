@@ -105,7 +105,10 @@ stock Tinker SDK and a pinned tokenizer's chat template, without the cookbook
 training loop. It uses low reasoning effort for GPT-OSS. These measurements
 are a separate workload from the cookbook regression, not interchangeable baselines.
 
-Three GRPO updates use eight hidden numbers and four independent trajectories
+The original definition uses three GRPO updates.
+`configs/guess_number_gpt_oss_20b_6steps.toml` doubles that to six with
+`script_args = ["--updates", "6"]`, keeping the original definition immutable.
+Each update uses eight hidden numbers and four independent trajectories
 per number, rank-32 LoRA, a 64-token response cap and learning rate 3e-5.
 Each trajectory's total reward is centered within its group and applied to
 its sampled tokens. Prior conversation tokens receive zero advantage.
@@ -118,7 +121,7 @@ cumulative game reward, `response_tokens_mean` is per assistant turn, and
 `success_fraction` and `turns_mean` describe completed games.
 `kl_sample_train_v2` is the mean squared sample/train logprob difference divided
 by two, measured on all sampled tokens before the optimizer update.
-A successful run confirms the API path works; three updates do not establish learning.
+A successful run confirms the API path works; these short runs do not establish learning.
 
 Prepare and deploy this definition as below, then launch it with:
 

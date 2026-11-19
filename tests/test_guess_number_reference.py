@@ -88,10 +88,11 @@ def test_multiturn_history_and_format_penalty(invalid_scores: bool) -> None:
 
 
 @pytest.mark.parametrize("accepted", [True, False])
+@pytest.mark.parametrize("updates", [3, 6])
 def test_launcher_indexes_only_completed_guess_number(
-    accepted: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    accepted: bool, updates: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    output = ROOT / "outputs" / f"test-guess-number-{accepted}.jsonl"
+    output = ROOT / "outputs" / f"test-guess-number-{updates}-{accepted}.jsonl"
     index = tmp_path / "index.toml"
     monkeypatch.setattr(
         launcher,
@@ -145,9 +146,10 @@ def test_launcher_indexes_only_completed_guess_number(
         create_sampling_client=lambda **kwargs: None,
     )
     monkeypatch.setattr(tinker, "ServiceClient", lambda: service)
+    definition = "guess_number_gpt_oss_20b" + ("_6steps" if updates == 6 else "")
     argv = [
         "run.py",
-        str(ROOT / "configs/guess_number_gpt_oss_20b.toml"),
+        str(ROOT / "configs" / f"{definition}.toml"),
         "--output",
         str(output),
         "--index",
@@ -168,6 +170,8 @@ def test_launcher_indexes_only_completed_guess_number(
                 "--tokenizer",
                 "openai/gpt-oss-20b",
                 "a" * 40,
+                "--updates",
+                str(updates),
             ],
         )
         workload.main()
@@ -183,20 +187,20 @@ def test_launcher_indexes_only_completed_guess_number(
         catalog = launcher.ReferenceRun.model_validate(
             tomllib.loads(index.read_text())["runs"][0]
         )
-        assert catalog.validation == "guess_number_gpt_oss_20b"
+        assert catalog.validation == definition
         assert catalog.trainer_image == "miles-v0.1.1-52a7a99"
         assert "1 x 1 H200" in catalog.hardware
         assert "0-1 x 1 H200" in catalog.hardware
         assert catalog.spindle_commit == "a" * 40
         records = importlib.import_module("catalog").read_output(output)
         assert records[0]["adam"]["eps"] == 1e-8
-        updates = [row for row in records if row["event"] == "update"]
-        assert [row["step"] for row in updates] == [1, 2, 3]
-        assert all(row["kl_sample_train_v2"] == 0.125 for row in updates)
-        assert "seconds_since_previous_update" in updates[-1]
+        measured = [row for row in records if row["event"] == "update"]
+        assert [row["step"] for row in measured] == list(range(1, updates + 1))
+        assert all(row["kl_sample_train_v2"] == 0.125 for row in measured)
+        assert "seconds_since_previous_update" in measured[-1]
         assert [row["step"] for row in records if row["event"] == "evaluation"] == [
             0,
-            3,
+            updates,
         ]
         assert records[-1]["event"] == "checkpoint"
     finally:

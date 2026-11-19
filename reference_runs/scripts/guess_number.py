@@ -166,8 +166,16 @@ def main() -> None:
     parser.add_argument(
         "--tokenizer", required=True, nargs=2, metavar=("MODEL", "REVISION")
     )
+    parser.add_argument("--updates", type=int, default=Config.updates)
     args = parser.parse_args()
-    config = Config(model=args.tokenizer[0], tokenizer_revision=args.tokenizer[1])
+    config = Config(
+        model=args.tokenizer[0],
+        tokenizer_revision=args.tokenizer[1],
+        updates=args.updates,
+    )
+    max_updates = int(1024 * 0.9) // config.groups
+    if not 1 <= config.updates <= max_updates:
+        parser.error(f"--updates must be between 1 and {max_updates}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.touch(exist_ok=False)
 
