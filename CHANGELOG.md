@@ -2,6 +2,12 @@
 
 Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [semantic versioning](https://semver.org/). Before 1.0, a minor release (0.x.0) can change config defaults or deployment behavior; a patch release (0.x.y) only fixes bugs. Each release is tagged `vX.Y.Z` and published as a GitHub Release.
 
+## Unreleased
+
+### Added
+
+- Megatron full-parameter training accepts `[T, K]` candidate targets and weights, including mixed candidate counts in one batch, for scoring and custom losses. Candidate scores share one vocabulary softmax in both the chunked output head and tensor-parallel path.
+
 ## 0.1.9 - 2026-11-19
 
 New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context and DeepSeek-V4.1-Flash-1017 at 64K context. Miles LoRA training states now restore after a trainer image update that keeps the same checkpoint format, and removing a config stops its sampler pools.
