@@ -27,6 +27,8 @@ from .prefix_checks import check_forward_parity
 
 
 class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
+    validate_prefix_forward = False
+
     def init(self, args: TrainerConfig, role: str, **kwargs: object) -> int | None:
         backend = args.backend
         if args.megatron_to_hf_mode != "raw" or args.lora_type != "canonical_lora":
@@ -187,21 +189,20 @@ class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
         return restore.gather(output[0]).unsqueeze(0)
 
     def forward_backward(self, *args: object, **kwargs: object) -> dict:
-        # Keep this gate mandatory while gradient/optimizer equivalence remains
-        # experimental. Both arms use the same installed numerical policy.
-        self.prefix_enabled = False
-        try:
-            native = super().forward_only(*args, **kwargs)
-        finally:
-            self.prefix_enabled = True
-        shared = super().forward_only(*args, **kwargs)
-        report = check_forward_parity(native, shared)
-        if torch.distributed.get_rank() == 0:
-            print(
-                "SHARED_PREFIX_PREFLIGHT " + json.dumps(report),
-                flush=True,
-                file=sys.stderr,
-            )
+        if self.validate_prefix_forward:
+            self.prefix_enabled = False
+            try:
+                native = super().forward_only(*args, **kwargs)
+            finally:
+                self.prefix_enabled = True
+            shared = super().forward_only(*args, **kwargs)
+            report = check_forward_parity(native, shared)
+            if torch.distributed.get_rank() == 0:
+                print(
+                    "SHARED_PREFIX_PREFLIGHT " + json.dumps(report),
+                    flush=True,
+                    file=sys.stderr,
+                )
         self.prefix_rows = []
         torch.cuda.synchronize()
         started = time.perf_counter()
@@ -236,3 +237,9 @@ class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
                 file=sys.stderr,
             )
         return result
+
+
+class ValidatingSharedPrefixTrainRayActor(SharedPrefixTrainRayActor):
+    """Add full native/shared forward comparisons for validation and debugging."""
+
+    validate_prefix_forward = True

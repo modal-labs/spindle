@@ -24,6 +24,7 @@ class Config(Parent):
     max_context_length = 32768
     miles_cfg = {
         "shared_prefix_training": True,
+        # Set shared_prefix_check_forward=True for full validation/debug comparisons.
         "model_type": "glm5.3-flash",
         "megatron_to_hf_mode": "raw",
         "lora_type": "canonical_lora",

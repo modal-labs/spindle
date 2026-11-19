@@ -140,6 +140,7 @@ class MilesBackendConfig(BaseModel):
     max_tokens_per_gpu: PositiveInteger = 8192
     dynamic_batch_size: bool = True
     shared_prefix_training: bool = Field(default=False, strict=True)
+    shared_prefix_check_forward: bool = Field(default=False, strict=True)
     align_sequences_to_parallel_layout: bool = False
     extra_args: tuple[str, ...] = ()
     cli_options: dict[str, Any] = Field(default_factory=dict)
@@ -213,6 +214,10 @@ class MilesBackendConfig(BaseModel):
                 "actor_num_gpus_per_node on each node"
             )
 
+        if self.shared_prefix_check_forward and not self.shared_prefix_training:
+            raise ValueError(
+                "shared_prefix_check_forward requires shared_prefix_training"
+            )
         if self.shared_prefix_training:
             self._validate_shared_prefix()
         return self

@@ -130,5 +130,17 @@ def test_native_actor_gate_keeps_other_workers_and_can_be_disabled(
         "prefix_actor.SharedPrefixTrainRayActor"
     )
     assert Spec.create("full-trainer").worker_class == "full-trainer"
+    api.configure_actor(shared_prefix=True, check_prefix_forward=True)
+    checked = Spec.create.__func__
+    api.configure_actor(shared_prefix=True, check_prefix_forward=True)
+    assert Spec.create.__func__ is checked
+    assert Spec.create(worker).worker_class.endswith(
+        "prefix_actor.ValidatingSharedPrefixTrainRayActor"
+    )
+    assert Spec.create("full-trainer").worker_class == "full-trainer"
+    api.configure_actor(shared_prefix=True)
+    assert Spec.create(worker).worker_class.endswith(
+        "prefix_actor.SharedPrefixTrainRayActor"
+    )
     api.configure_actor(shared_prefix=False)
     assert Spec.create(worker).worker_class == api.ACTOR_CLASS

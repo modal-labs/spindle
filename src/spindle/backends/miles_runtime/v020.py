@@ -27,12 +27,24 @@ CHECKPOINT_FORMAT = "miles_adapter_state"
 ACTOR_CLASS = "spindle.backends.miles_runtime.actor_v020.SpindleMilesTrainRayActor"
 
 
-def configure_actor(*, shared_prefix: bool = False) -> None:
+def configure_actor(
+    *, shared_prefix: bool = False, check_prefix_forward: bool = False
+) -> None:
+    if check_prefix_forward and not shared_prefix:
+        raise ValueError("Prefix forward checks require shared-prefix training")
     original = TrainerSpec.create.__func__
     if getattr(original, "_spindle_actor_spec", False):
-        if original._shared_prefix == shared_prefix:
+        if (
+            original._shared_prefix == shared_prefix
+            and original._check_prefix_forward == check_prefix_forward
+        ):
             return
         original = original._native_create
+    prefix_class = (
+        "spindle.backends.miles_runtime.prefix_actor.ValidatingSharedPrefixTrainRayActor"
+        if check_prefix_forward
+        else "spindle.backends.miles_runtime.prefix_actor.SharedPrefixTrainRayActor"
+    )
 
     def create(cls: type[TrainerSpec], config: TrainerConfig) -> TrainerSpec:
         spec = original(cls, config)
@@ -41,16 +53,13 @@ def configure_actor(*, shared_prefix: bool = False) -> None:
             == "miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor"
         ):
             return spec.model_copy(
-                update={
-                    "worker_class": "spindle.backends.miles_runtime.prefix_actor.SharedPrefixTrainRayActor"
-                    if shared_prefix
-                    else ACTOR_CLASS
-                }
+                update={"worker_class": prefix_class if shared_prefix else ACTOR_CLASS}
             )
         return spec
 
     create._spindle_actor_spec = True
     create._shared_prefix = shared_prefix
+    create._check_prefix_forward = check_prefix_forward
     create._native_create = original
     TrainerSpec.create = classmethod(create)
 

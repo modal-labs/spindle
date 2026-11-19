@@ -310,7 +310,10 @@ class MilesRuntime:
         install_bridge_replay(tinker_runtime)
         nemotron_h_omni.install(self.config.hf_checkpoint)
         if self._v020 is not None:
-            self._v020.configure_actor(shared_prefix=self.config.shared_prefix_training)
+            self._v020.configure_actor(
+                shared_prefix=self.config.shared_prefix_training,
+                check_prefix_forward=self.config.shared_prefix_check_forward,
+            )
         else:
             _configure_actor_spec(train_specs)
         if create_trainer_handles is None:
