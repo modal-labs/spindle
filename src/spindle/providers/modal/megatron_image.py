@@ -18,7 +18,7 @@ MEGATRON_BRIDGE_REPOSITORY = "https://github.com/cnnradams/Megatron-Bridge.git"
 MEGATRON_BRIDGE_REVISION = "6aa2ba1e36013179492abda123f395873b30a3c7"
 MEGATRON_BRIDGE_PATH = "/root/Megatron-Bridge"
 
-image = (
+runtime_image = (
     modal.Image.from_registry(BASE_IMAGE)
     .entrypoint([])
     .env({"LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"})
@@ -45,5 +45,16 @@ image = (
     .pip_install(*CORE_PACKAGES, STITCH_PACKAGE)
     .pip_install(*MEGATRON_RUNTIME_PACKAGES)
     .run_commands(MEGATRON_RUNTIME_CHECK)
+)
+image = runtime_image.add_local_python_source("spindle", ignore=ignore_config_source)
+
+fla_image = (
+    runtime_image.pip_install("fla-core==0.6.0", "flash-linear-attention==0.6.0")
+    # Megatron's gated_delta_net imports; fail at build, not at trainer start.
+    .run_commands(
+        'python -c "from fla.modules.convolution import causal_conv1d;'
+        " from fla.modules.l2norm import l2norm;"
+        ' from fla.ops.gated_delta_rule import chunk_gated_delta_rule"'
+    )
     .add_local_python_source("spindle", ignore=ignore_config_source)
 )

@@ -2,6 +2,12 @@
 
 Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [semantic versioning](https://semver.org/). Before 1.0, a minor release (0.x.0) can change config defaults or deployment behavior; a patch release (0.x.y) only fixes bugs. Each release is tagged `vX.Y.Z` and published as a GitHub Release.
 
+## Unreleased
+
+### Changed
+
+- `qwen35-4b-fft-64k` trains on the new `megatron-2d1fa8d-fla06` image, which is `megatron-2d1fa8d` with flash-linear-attention 0.6.0 instead of 0.4.2. Losses are unchanged, and steps take the same time or slightly less. The other Megatron configs and the Megatron default stay on `megatron-2d1fa8d`.
+
 ## 0.1.9 - 2026-11-19
 
 New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context and DeepSeek-V4.1-Flash-1017 at 64K context. Miles LoRA training states now restore after a trainer image update that keeps the same checkpoint format, and removing a config stops its sampler pools.
