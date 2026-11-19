@@ -53,6 +53,8 @@ class Config(Parent):
             "model.language_model.layers.*.down_proj",
         ],
         "cli_options": {
+            "prefix_tree_max_tokens_per_gpu": 86016,
+            "log_probs_backend": "fused",
             "lora_kernel_policy": "native",
             "make_vocab_size_divisible_by": 16,
             "deterministic_mode": True,
