@@ -33,6 +33,8 @@ New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context an
 
 ### Fixed
 
+- DeepSeek-V4.1 Flash 32K DSPARK samplers use `sglang-v0.5.23-3db151a`, which preserves normalized replay masks when sampling shares a speculative batch with unrestricted prompt scoring. Cutoff ties no longer silently truncate the captured distribution.
+
 - `qwen35-9b-lora-64k` and `qwen35-9b-lora-128k` start again. They split the model across four GPUs (tensor parallel size 4) instead of eight, because the Miles native adapters they use since 0.1.8 reject eight for Qwen3.5-9B. `qwen35-9b-lora-128k` and the shared-server recipe built on it train on four B200s instead of eight H200s.
 - Removing a config with `spindle remove` or `DELETE /api/v1/spindle/deployments/{name}` also stops its LoRA and full fine-tuning sampler pools. Before, they kept running, and billing for warm replicas, until stopped by hand.
 - Miles v0.2.0 trainers can gather checkpoint and sampler captures across nodes without racing checkpoint persistence.
