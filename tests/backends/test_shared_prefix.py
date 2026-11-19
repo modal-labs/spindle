@@ -92,6 +92,11 @@ def _actor_dispatch_classes(transport: object = None) -> tuple[type, type]:
             self.prefix_rows.append({"original_rows": 8, "compact_rows": 5})
             return {"metrics": {}}
 
+    def prepare(*args: object, **kwargs: object) -> object:
+        if callable(transport):
+            return transport(*args, **kwargs)
+        return transport
+
     namespace = {
         "SpindleMilesTrainRayActor": NativeCalls,
         "torch": torch
@@ -104,7 +109,7 @@ def _actor_dispatch_classes(transport: object = None) -> tuple[type, type]:
         "sys": sys,
         "json": json,
         "check_forward_parity": check_forward_parity,
-        "prepare_packed_tree": lambda *args, **kwargs: transport,
+        "prepare_packed_tree": prepare,
         "PackedTreePlan": object,
     }
     code = ast.fix_missing_locations(
@@ -125,9 +130,17 @@ def test_zero_savings_keeps_native_inputs_and_vocabulary_buffer(
         plan=SimpleNamespace(tokens=tuple(range(8)), segment_parents=(-1, -1)),
         restore_rows=tuple(range(8)),
     )
-    shared, _ = _actor_dispatch_classes(transport)
+
+    def aligned_transport(*args: object, **kwargs: object) -> object:
+        assert kwargs["alignment"] == 256
+        return transport
+
+    shared, _ = _actor_dispatch_classes(aligned_transport)
     actor = shared()
-    actor.args = SimpleNamespace(backend=SimpleNamespace(tensor_model_parallel_size=2))
+    actor.args = SimpleNamespace(
+        backend=SimpleNamespace(tensor_model_parallel_size=2),
+        data_pad_size_multiplier=128,
+    )
     native = SimpleNamespace(
         _prefix_source_batch={
             "unconcat_tokens": [torch.arange(4), torch.arange(4, 8)],

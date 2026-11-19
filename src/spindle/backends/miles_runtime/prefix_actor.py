@@ -122,7 +122,10 @@ class SharedPrefixTrainRayActor(SpindleMilesTrainRayActor):
             sequences,
             slots,
             padded_rows=kwargs["input_ids"].numel(),
-            alignment=self.args.backend.tensor_model_parallel_size,
+            alignment=(
+                self.args.backend.tensor_model_parallel_size
+                * self.args.data_pad_size_multiplier
+            ),
             num_adapters=n_adapters,
             share_prefix=True,
         )
