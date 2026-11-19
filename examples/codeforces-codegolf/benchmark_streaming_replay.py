@@ -186,7 +186,7 @@ def probe_difference(first, second):
     return {"max_abs": max(differences), "mean_abs": statistics.fmean(differences)}
 
 
-def summarize(rows, pairs_per_case, case_ids):
+def summarize(rows, pairs_per_case, case_ids, *, require_equivalence=True):
     summaries = {}
     for profile in ("all_ready", "recorded"):
         paired = {}
@@ -208,7 +208,7 @@ def summarize(rows, pairs_per_case, case_ids):
                 for key in ("case", "datums_sha256", "schedule_sha256")
             ):
                 raise ValueError("Replay pair inputs or readiness schedules differ")
-            if not math.isclose(
+            if require_equivalence and not math.isclose(
                 batch["grad_norm"], stream["grad_norm"], rel_tol=5e-4, abs_tol=1e-6
             ):
                 raise ValueError("Paired GPU gradient norms differ")
@@ -257,7 +257,12 @@ def summarize(rows, pairs_per_case, case_ids):
     memory=8192,
 )
 def benchmark(
-    label: str, commit: str, proxy_secret: str, pairs: int = 4, seed: int = 42
+    label: str,
+    commit: str,
+    proxy_secret: str,
+    pairs: int = 4,
+    seed: int = 42,
+    timing_only_from: str = "",
 ):
     if not label or Path(label).name != label or label in {".", ".."}:
         raise ValueError("label must be a single directory name")
@@ -337,84 +342,130 @@ def benchmark(
                 return await create_full_training_client_async(service, cfg.model)
 
             check_case = cases[1]
-            updates, probes, changes, initial_probes = {}, {}, {}, {}
-            for mode in ("batch", "stream"):
-                training = await create()
-                try:
-                    if mode == "batch":
-                        packed = await probe(training, cfg, check_case, all_rows=True)
-                        repeated = await probe(training, cfg, check_case, all_rows=True)
-                        grouped = await probe(
-                            training, cfg, check_case, all_rows=True, groupwise=True
+            if timing_only_from:
+                if Path(
+                    timing_only_from
+                ).name != timing_only_from or timing_only_from in {".", ".."}:
+                    raise ValueError("timing_only_from must name a prior check run")
+                prior = json.loads(
+                    (Path("/runs") / timing_only_from / "result.json").read_text()
+                )
+                for key in (
+                    "model_revision",
+                    "config",
+                    "engine_training",
+                    "trainer_gpu",
+                    "backend_env",
+                    "cases",
+                ):
+                    if digest(prior[key]) != digest(report[key]):
+                        raise ValueError(f"Prior check inputs differ: {key}")
+                if "reset_difference" not in prior["gpu_update_check"]:
+                    raise ValueError("Prior GPU checks did not complete")
+                report.update(
+                    {
+                        "timing_only_from": timing_only_from,
+                        "check_commit": prior["commit"],
+                        "numerical_equivalence_established": False,
+                        "frozen_layout_check": prior["frozen_layout_check"],
+                        "gpu_update_check": prior["gpu_update_check"],
+                    }
+                )
+                persist()
+            else:
+                updates, probes, changes, initial_probes = {}, {}, {}, {}
+                for mode in ("batch", "stream"):
+                    training = await create()
+                    try:
+                        if mode == "batch":
+                            packed = await probe(
+                                training, cfg, check_case, all_rows=True
+                            )
+                            repeated = await probe(
+                                training, cfg, check_case, all_rows=True
+                            )
+                            grouped = await probe(
+                                training, cfg, check_case, all_rows=True, groupwise=True
+                            )
+                            report["frozen_layout_check"] = {
+                                "repeat_difference": probe_difference(packed, repeated),
+                                "grouping_difference": probe_difference(
+                                    packed, grouped
+                                ),
+                            }
+                            print(
+                                "FROZEN_LAYOUT_CHECK "
+                                + json.dumps(report["frozen_layout_check"]),
+                                flush=True,
+                            )
+                            persist()
+                        initial = await probe(training, cfg, check_case)
+                        initial_probes[mode] = initial
+                        updates[mode] = await trial(
+                            training,
+                            cfg,
+                            check_case,
+                            mode,
+                            "all_ready",
+                            learning_rate=1e-5,
                         )
-                        report["frozen_layout_check"] = {
-                            "repeat_difference": probe_difference(packed, repeated),
-                            "grouping_difference": probe_difference(packed, grouped),
+                        probes[mode] = await probe(training, cfg, check_case)
+                        changes[mode] = probe_difference(initial, probes[mode])
+                        report["gpu_update_check"] = {
+                            "learning_rate": 1e-5,
+                            "updates": updates,
+                            "policy_changes": changes,
                         }
                         print(
-                            "FROZEN_LAYOUT_CHECK "
-                            + json.dumps(report["frozen_layout_check"]),
+                            "GPU_UPDATE_PROGRESS "
+                            + json.dumps(report["gpu_update_check"]),
                             flush=True,
                         )
                         persist()
-                    initial = await probe(training, cfg, check_case)
-                    initial_probes[mode] = initial
-                    updates[mode] = await trial(
-                        training, cfg, check_case, mode, "all_ready", learning_rate=1e-5
-                    )
-                    probes[mode] = await probe(training, cfg, check_case)
-                    changes[mode] = probe_difference(initial, probes[mode])
-                    report["gpu_update_check"] = {
-                        "learning_rate": 1e-5,
-                        "updates": updates,
-                        "policy_changes": changes,
+                        if (
+                            changes[mode]["max_abs"] <= 1e-6
+                            or updates[mode]["grad_norm"] <= 0
+                        ):
+                            raise RuntimeError(
+                                "GPU correctness check must change the policy"
+                            )
+                    finally:
+                        await release(training)
+                difference = probe_difference(probes["batch"], probes["stream"])
+                baseline_difference = probe_difference(
+                    initial_probes["batch"], initial_probes["stream"]
+                )
+                report["gpu_update_check"].update(
+                    {
+                        "probe_difference": difference,
+                        "reset_difference": baseline_difference,
                     }
-                    print(
-                        "GPU_UPDATE_PROGRESS " + json.dumps(report["gpu_update_check"]),
-                        flush=True,
+                )
+                persist()
+                if baseline_difference["max_abs"] > 1e-6:
+                    raise RuntimeError(
+                        f"Base policy reset differs: {baseline_difference}"
                     )
-                    persist()
-                    if (
-                        changes[mode]["max_abs"] <= 1e-6
-                        or updates[mode]["grad_norm"] <= 0
-                    ):
-                        raise RuntimeError(
-                            "GPU correctness check must change the policy"
-                        )
-                finally:
-                    await release(training)
-            difference = probe_difference(probes["batch"], probes["stream"])
-            baseline_difference = probe_difference(
-                initial_probes["batch"], initial_probes["stream"]
-            )
-            report["gpu_update_check"].update(
-                {
+                if difference["max_abs"] > 1e-3 or difference["mean_abs"] > 1e-4:
+                    raise RuntimeError(f"Post-update GPU probes differ: {difference}")
+                if not math.isclose(
+                    updates["batch"]["grad_norm"],
+                    updates["stream"]["grad_norm"],
+                    rel_tol=5e-4,
+                    abs_tol=1e-6,
+                ):
+                    raise RuntimeError("Nonzero-update GPU gradient norms differ")
+                report["gpu_update_check"] = {
+                    "learning_rate": 1e-5,
+                    "updates": updates,
                     "probe_difference": difference,
-                    "reset_difference": baseline_difference,
+                    "policy_changes": changes,
                 }
-            )
-            persist()
-            if baseline_difference["max_abs"] > 1e-6:
-                raise RuntimeError(f"Base policy reset differs: {baseline_difference}")
-            if difference["max_abs"] > 1e-3 or difference["mean_abs"] > 1e-4:
-                raise RuntimeError(f"Post-update GPU probes differ: {difference}")
-            if not math.isclose(
-                updates["batch"]["grad_norm"],
-                updates["stream"]["grad_norm"],
-                rel_tol=5e-4,
-                abs_tol=1e-6,
-            ):
-                raise RuntimeError("Nonzero-update GPU gradient norms differ")
-            report["gpu_update_check"] = {
-                "learning_rate": 1e-5,
-                "updates": updates,
-                "probe_difference": difference,
-                "policy_changes": changes,
-            }
-            print(
-                "GPU_UPDATE_CHECK " + json.dumps(report["gpu_update_check"]), flush=True
-            )
-            persist()
+                print(
+                    "GPU_UPDATE_CHECK " + json.dumps(report["gpu_update_check"]),
+                    flush=True,
+                )
+                persist()
             training = await create()
             try:
                 before = await probe(training, cfg, check_case)
@@ -448,7 +499,10 @@ def benchmark(
                     raise RuntimeError(f"Frozen policy probe changed: {frozen}")
                 report["frozen_probe_difference"] = frozen
                 report["summary"] = summarize(
-                    report["trials"], pairs, [case["id"] for case in cases]
+                    report["trials"],
+                    pairs,
+                    [case["id"] for case in cases],
+                    require_equivalence=not timing_only_from,
                 )
             finally:
                 await release(training)
