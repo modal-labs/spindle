@@ -21,6 +21,7 @@ from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.local import InMemoryKeyValueStore
 from tests.support import RoutedTestStore
 from spindle.providers.modal import (
+    deepseek_v41_dspark_image,
     deepseek_v41_image,
     deployment_apps,
     deployment_configs,
@@ -572,6 +573,7 @@ FORK_IMAGE_MODULES = (
     miles_v020_image,
     rollout_image,
     deepseek_v41_image,
+    deepseek_v41_dspark_image,
     glm53_image,
 )
 IMAGE_VARIABLE = re.compile(r"\w*image_(\d{2})_([0-9a-f]{7})")
