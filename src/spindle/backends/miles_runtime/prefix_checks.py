@@ -55,6 +55,18 @@ def check_forward_parity(native: object, shared: object) -> dict[str, float]:
         and torch.isfinite(b).all()
         and torch.allclose(a, b, atol=1e-4, rtol=1e-4)
     )
+    local_valid = valid
+    comparable = bool(a.numel() and a.shape == b.shape)
+    delta = b - a if comparable else torch.empty(0, dtype=torch.float64)
+    report = {
+        "values": a.numel(),
+        "max_abs": float(delta.abs().max()) if comparable else float("nan"),
+        "relative_l2": (
+            float(delta.norm() / a.norm().clamp_min(1e-30))
+            if comparable
+            else float("nan")
+        ),
+    }
     # Coordinate failure before any rank enters backward. A single local raise
     # would leave successful peers blocked in their next training collective.
     if dist.is_initialized():
@@ -64,11 +76,9 @@ def check_forward_parity(native: object, shared: object) -> dict[str, float]:
         valid = bool(accepted.item())
     if not valid:
         raise ValueError(
-            "Native/shared forward values failed the numerical preflight on a trainer rank"
+            "Native/shared forward values failed the numerical preflight on a trainer rank; "
+            f"local_passed={local_valid}, native_values={a.numel()}, "
+            f"shared_values={b.numel()}, max_abs={report['max_abs']:.9g}, "
+            f"relative_l2={report['relative_l2']:.9g}"
         )
-    delta = b - a
-    return {
-        "values": a.numel(),
-        "max_abs": float(delta.abs().max()),
-        "relative_l2": float(delta.norm() / a.norm().clamp_min(1e-30)),
-    }
+    return report

@@ -179,6 +179,14 @@ def test_bad_or_mismatched_forward_values_abort(actual: list[float]) -> None:
         check_forward_parity({"per_datum": [-1.0]}, {"per_datum": actual})
 
 
+def test_failed_forward_gate_retains_error_magnitudes() -> None:
+    with pytest.raises(ValueError) as error:
+        check_forward_parity({"per_datum": [-2.0]}, {"per_datum": [-2.25]})
+    assert "local_passed=False" in str(error.value)
+    assert "native_values=1, shared_values=1" in str(error.value)
+    assert "max_abs=0.25, relative_l2=0.125" in str(error.value)
+
+
 def test_other_rank_failure_aborts_locally_passing_rank(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -191,7 +199,9 @@ def test_other_rank_failure_aborts_locally_passing_rank(
         tensor.zero_()
 
     monkeypatch.setattr(prefix_checks.dist, "all_reduce", failed_peer)
-    with pytest.raises(ValueError, match="trainer rank"):
+    with pytest.raises(
+        ValueError, match=r"local_passed=True.*max_abs=0, relative_l2=0"
+    ):
         check_forward_parity({"per_datum": [-1.0]}, {"per_datum": [-1.0]})
 
 
