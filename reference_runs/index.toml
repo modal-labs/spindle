@@ -123,19 +123,6 @@ accuracy and 2,197 mean response tokens.
 '''
 
 [[runs]]
-id = "guess-number-gpt-oss-20b-miles-v011-restore-20261119"
-validation = "guess_number_gpt_oss_20b_restore"
-output = "outputs/guess-number-gpt-oss-20b-miles-v011-restore-20261119.jsonl"
-spindle_commit = "1a451fe54eae423a9c9152f1efaa18912c2a246d"
-spindle_version = "0.1.8"
-trainer_image = "miles-v0.1.1-52a7a99"
-miles_commit = "52a7a99"
-tinker_sdk = "0.26.0"
-hardware = "Configured trainers: 1 x 1 H200; samplers: 0-1 x 1 H200."
-region = "us-west"
-notes = "Server commit from get_server_capabilities; image pins from the resolved recipe. One H200 each for training and sampling, in us-west, with NCCL_NVLS_ENABLE=0. Saved at step 2, trained through step 4, loaded step 2 with optimizer state, and continued through step 6. Eight nonzero-gradient updates were executed; the first pass through steps 3 and 4 is marked discarded. Fixed sampler logprobs changed by 1.6177921295166016 before restore and matched the saved values exactly afterward (max_abs_error=0). Training-forward scores vary without weight changes on this backend, so the probe uses published sampler snapshots. The initial training-forward probe attempt and diagnostic runs are not indexed. The warm trainer was reused after diagnostics; script phase timings describe this execution and backend counters include earlier activity. Held-out success changed from 0/8 to 1/8 and mean cumulative reward from -2.625 to -1.125. This short run validates checkpoint continuation within one trainer; it does not establish sustained learning or restart recovery."
-
-[[runs]]
 id = "guess-number-gpt-oss-20b-miles-v011-restore-timing-20261119"
 validation = "guess_number_gpt_oss_20b_restore"
 output = "outputs/guess-number-gpt-oss-20b-miles-v011-restore-timing-20261119.jsonl"
