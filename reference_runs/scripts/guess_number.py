@@ -13,6 +13,7 @@ from pathlib import Path
 from statistics import mean
 from typing import cast
 
+import numpy as np
 import tinker
 from tinker import types
 from transformers import PreTrainedTokenizerFast
@@ -35,7 +36,9 @@ class Config:
     model: str
     tokenizer_revision: str
     seed: int = 0
-    updates: int = 3
+    total_steps: int = 3
+    save_step: int | None = None
+    restore_step: int | None = None
     groups: int = 8
     samples_per_group: int = 4
     max_turns: int = 10
@@ -159,6 +162,16 @@ def summarize(groups: list[list[Episode]]) -> dict[str, float | int]:
     }
 
 
+def scores(training: tinker.TrainingClient, batch: list[types.Datum]) -> np.ndarray:
+    result = training.forward(batch, "importance_sampling").result()
+    values = np.concatenate(
+        [np.asarray(row["logprobs"].data) for row in result.loss_fn_outputs]
+    )
+    if not values.size or not np.isfinite(values).all():
+        raise ValueError("Checkpoint probe returned empty or nonfinite scores")
+    return values
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--base-model", required=True)
@@ -166,16 +179,28 @@ def main() -> None:
     parser.add_argument(
         "--tokenizer", required=True, nargs=2, metavar=("MODEL", "REVISION")
     )
-    parser.add_argument("--updates", type=int, default=Config.updates)
+    parser.add_argument("--total-steps", type=int, default=Config.total_steps)
+    parser.add_argument("--save-step", type=int)
+    parser.add_argument("--restore-step", type=int)
     args = parser.parse_args()
     config = Config(
         model=args.tokenizer[0],
         tokenizer_revision=args.tokenizer[1],
-        updates=args.updates,
+        total_steps=args.total_steps,
+        save_step=args.save_step,
+        restore_step=args.restore_step,
     )
-    max_updates = int(1024 * 0.9) // config.groups
-    if not 1 <= config.updates <= max_updates:
-        parser.error(f"--updates must be between 1 and {max_updates}")
+    max_steps = int(1024 * 0.9) // config.groups
+    if not 1 <= config.total_steps <= max_steps:
+        parser.error(f"--total-steps must be between 1 and {max_steps}")
+    if (config.save_step is not None or config.restore_step is not None) and not (
+        config.save_step is not None
+        and config.restore_step is not None
+        and 0 < config.save_step < config.restore_step < config.total_steps
+    ):
+        parser.error(
+            "Checkpoint schedule requires 0 < save_step < restore_step < total_steps"
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.touch(exist_ok=False)
 
@@ -201,15 +226,58 @@ def main() -> None:
         recipe=args.base_model,
     )
     previous = None
-    for step in range(config.updates + 1):
+    step = attempt = 0
+    restored = False
+    checkpoint: str | None = None
+    saved_scores: np.ndarray | None = None
+    saved_batch: list[types.Datum] = []
+    last_batch: list[types.Datum] = []
+    while True:
         start = time.monotonic()
-        path = training.save_weights_for_sampler(f"step-{step}").result().path
+        path = (
+            training.save_weights_for_sampler(f"step-{step}-attempt-{attempt}")
+            .result()
+            .path
+        )
         sampler = service.create_sampling_client(model_path=path)
-        record("publication", step=step, seconds=time.monotonic() - start)
-        if step in (0, config.updates):
+        record(
+            "publication", step=step, attempt=attempt, seconds=time.monotonic() - start
+        )
+        if step == config.save_step and not restored:
+            saved_batch = last_batch[:8]
+            saved_scores = scores(training, saved_batch)
+            checkpoint = training.save_state(f"step-{step}").result().path
+            record("checkpoint", step=step, path=checkpoint)
+        if step == config.restore_step and not restored:
+            assert checkpoint is not None and saved_scores is not None
+            start = time.monotonic()
+            before_restore = scores(training, saved_batch)
+            changed = float(np.max(np.abs(before_restore - saved_scores)))
+            if np.allclose(before_restore, saved_scores, rtol=2e-4, atol=2e-4):
+                raise ValueError(
+                    "Training did not change probe scores beyond restore tolerance"
+                )
+            training.load_state_with_optimizer(checkpoint).result()
+            loaded = scores(training, saved_batch)
+            np.testing.assert_allclose(loaded, saved_scores, rtol=2e-4, atol=2e-4)
+            record(
+                "restore_validation",
+                step=config.save_step,
+                from_step=step,
+                path=checkpoint,
+                attempt=attempt,
+                max_abs_error=float(np.max(np.abs(loaded - saved_scores))),
+                discarded_score_change=changed,
+                seconds=time.monotonic() - start,
+            )
+            restored = True
+            step = config.save_step
+            previous = None
+            continue
+        if step in (0, config.total_steps):
             evaluated = sample(sampler, tokenizer, held_out, 1, config.seed, config)
             record("evaluation", step=step, **summarize(evaluated))
-        if step == config.updates:
+        if step == config.total_steps:
             checkpoint = training.save_state("final").result().path
             record("checkpoint", step=step, path=checkpoint)
             break
@@ -229,6 +297,7 @@ def main() -> None:
             for episode in group
             for prompt, sequence in episode.turns
         ]
+        last_batch = batch
         forward = training.forward_backward(batch, "importance_sampling").result()
         trained = time.monotonic()
         turns = [
@@ -258,9 +327,15 @@ def main() -> None:
             else {"seconds_since_previous_update": now - previous}
         )
         previous = now
+        step += 1
+        attempt += 1
         record(
             "update",
-            step=step + 1,
+            step=step,
+            attempt=attempt,
+            discarded=not restored
+            and config.save_step is not None
+            and step > config.save_step,
             **summarize(groups),
             **timing,
             sampling_seconds=sampled - start,

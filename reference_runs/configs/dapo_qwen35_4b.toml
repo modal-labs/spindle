@@ -1,9 +1,9 @@
 config = "qwen35-4b-lora-32k"
 script = "../scripts/dapo_math.py"
 
-[tokenizer]
-model = "Qwen/Qwen3.5-4B"
-revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+[workload]
+tokenizer_model = "Qwen/Qwen3.5-4B"
+tokenizer_revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
 
 [config_overrides]
 name = "dapo-math-qwen35-4b-h100"

@@ -39,7 +39,9 @@ def main() -> None:
         records = read_output(path, published=bool(entry and entry.source))
         for axis, (event, field, title) in zip(axes.flat, PANELS):
             points = [
-                (r["step"], r.get(field, nan)) for r in records if r["event"] == event
+                (r["step"], r.get(field, nan))
+                for r in records
+                if r["event"] == event and not r.get("discarded", False)
             ]
             axis.plot(
                 *zip(*points),

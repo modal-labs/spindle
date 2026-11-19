@@ -9,12 +9,12 @@ import runpy
 import sys
 import tomllib
 from pathlib import Path
-from typing import cast
+from typing import Self, cast
 
 import tinker
 from tinker._constants import RAW_RESPONSE_HEADER
 from tinker.lib.client_connection_pool_type import ClientConnectionPoolType
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from catalog import ReferenceRun, record_run
 
@@ -22,11 +22,29 @@ from spindle.configuration import BaseConfig
 from spindle.deployments import config_path, load
 
 
-class TokenizerConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class WorkloadConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    model: str = Field(min_length=1)
-    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    tokenizer_model: str = Field(min_length=1)
+    tokenizer_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    total_steps: int | None = Field(default=None, ge=1)
+    save_step: int | None = Field(default=None, ge=1)
+    restore_step: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def checkpoint_schedule(self) -> Self:
+        if self.save_step is None and self.restore_step is None:
+            return self
+        if (
+            self.total_steps is None
+            or self.save_step is None
+            or self.restore_step is None
+            or not self.save_step < self.restore_step < self.total_steps
+        ):
+            raise ValueError(
+                "Checkpoint schedule requires 0 < save_step < restore_step < total_steps"
+            )
+        return self
 
 
 class ConfigOverrides(BaseModel):
@@ -53,7 +71,7 @@ class ValidationRunConfig(BaseModel):
 
     config: str
     script: str
-    tokenizer: TokenizerConfig
+    workload: WorkloadConfig
     config_overrides: ConfigOverrides = Field(default_factory=ConfigOverrides)
     script_args: list[str] = Field(default_factory=list)
 
@@ -99,11 +117,19 @@ def main() -> None:
             "use a scratch --output for other definitions"
         )
     if any(
-        arg.split("=", 1)[0] in {"--base-model", "--output", "--tokenizer"}
+        arg.split("=", 1)[0]
+        in {
+            "--base-model",
+            "--output",
+            "--tokenizer",
+            "--total-steps",
+            "--save-step",
+            "--restore-step",
+        }
         for arg in definition.script_args
     ):
         parser.error(
-            "--base-model, --output and --tokenizer are supplied by the launcher"
+            "--base-model, --output, --tokenizer and workload step flags are supplied by the launcher"
         )
     commit = (
         re.search(r"-([0-9a-f]{7,40})(?:-|$)", recipe.trainer_image)
@@ -174,10 +200,14 @@ def launch(
         "--output",
         str(output),
         "--tokenizer",
-        definition.tokenizer.model,
-        definition.tokenizer.revision,
-        *definition.script_args,
+        definition.workload.tokenizer_model,
+        definition.workload.tokenizer_revision,
     ]
+    for field in ("total_steps", "save_step", "restore_step"):
+        value = getattr(definition.workload, field)
+        if value is not None:
+            arguments.extend(["--" + field.replace("_", "-"), str(value)])
+    arguments.extend(definition.script_args)
     previous_argv, previous_path = sys.argv, sys.path[:]
     try:
         sys.argv = arguments

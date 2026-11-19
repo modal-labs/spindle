@@ -27,9 +27,9 @@ is relative to the TOML file.
 config = "qwen35-4b-lora-32k"
 script = "../scripts/dapo_math.py"
 
-[tokenizer]
-model = "Qwen/Qwen3.5-4B"
-revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+[workload]
+tokenizer_model = "Qwen/Qwen3.5-4B"
+tokenizer_revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
 ```
 
 The existing H100 reference pins its hardware and client capacity in
@@ -42,11 +42,15 @@ Use `inference_gpu = "H100!"` to select exact H100 hardware,
 `script_args = []` contains the workload's literal CLI arguments. The launcher
 does not forward extra arguments from its own command line. Dataset, grading,
 learning rate, batch size and seed stay in the Tinker script. Every definition
-requires a typed `tokenizer` with its Hugging Face model ID and full commit revision.
+requires a typed `workload` block with `tokenizer_model` and a full
+`tokenizer_revision`. It also accepts typed `total_steps`, `save_step` and
+`restore_step` fields, forwarded as workload flags when present.
+Existing `[tokenizer]` blocks migrate to `[workload]` with the fields renamed
+to `tokenizer_model` and `tokenizer_revision`.
 The launcher supplies `--tokenizer MODEL REVISION`, the output path, and
 `--base-model` with the resolved deployment name. Scripts use that deployment
 name in `create_lora_training_client` to select the exact recipe.
-Script arguments cannot override these values. Direct callers of
+Script arguments cannot override these values or the typed step flags. Direct callers of
 `dapo_math.py` must also pass `--tokenizer MODEL REVISION`; it has no default.
 
 `dapo_qwen38_27b_multinode.toml` uses the same workload with a pinned Qwen3.8-27B
@@ -107,13 +111,41 @@ are a separate workload from the cookbook regression, not interchangeable baseli
 
 The original definition uses three GRPO updates.
 `configs/guess_number_gpt_oss_20b_6steps.toml` doubles that to six with
-`script_args = ["--updates", "6"]`, keeping the original definition immutable.
+`total_steps = 6` in the `[workload]` block.
 Each update uses eight hidden numbers and four independent trajectories
 per number, rank-32 LoRA, a 64-token response cap and learning rate 3e-5.
 Each trajectory's total reward is centered within its group and applied to
 its sampled tokens. Prior conversation tokens receive zero advantage.
 Eight held-out numbers are evaluated before training and after the last update.
-The run publishes each policy and saves a final checkpoint; it does not test restoration.
+The original definitions publish each policy and save a final checkpoint.
+
+`configs/guess_number_gpt_oss_20b_restore.toml` tests checkpoint continuation:
+
+```toml
+[workload]
+tokenizer_model = "openai/gpt-oss-20b"
+tokenizer_revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
+total_steps = 6
+save_step = 2
+restore_step = 4
+```
+
+The script saves weights and optimizer state after step 2, trains through step 4,
+loads step 2 with `load_state_with_optimizer`, then trains steps 3 through 6.
+It runs eight optimizer updates in total, retaining six. A fixed batch's token
+scores must change before restore and match the saved scores afterward.
+This checks restored weights; optimizer state is loaded through the SDK's
+optimizer-restore API. The final checkpoint includes the continued optimizer state.
+The schedule requires `0 < save_step < restore_step < total_steps`.
+Direct callers use `--total-steps`, `--save-step` and `--restore-step`.
+
+Discarded updates remain in JSONL with `discarded = true`. `attempt` counts all
+optimizer updates; `step` is the policy's logical step and rewinds on restore.
+`restore_validation` records the rewind and score comparison. Plots omit the
+discarded branch and leave a timing gap at the first resumed update. Sampler
+publication names stay unique across both passes. A restore failure fails the
+run and prevents index registration. The original definitions keep their prior
+save-only behavior when the restore schedule is absent.
 
 In evaluation and update records, `responses` counts games, `reward` is mean
 cumulative game reward, `response_tokens_mean` is per assistant turn, and

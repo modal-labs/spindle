@@ -178,7 +178,7 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     definition.write_text(
         'config = "qwen35-4b-lora-32k"\nscript = "workload.py"\n'
         'script_args = ["--literal", "a value with spaces"]\n'
-        f'tokenizer = {{ model = "test/tokenizer", revision = "{revision}" }}\n'
+        f'workload = {{ tokenizer_model = "test/tokenizer", tokenizer_revision = "{revision}", total_steps = 6, save_step = 2, restore_step = 4 }}\n'
         '[config_overrides]\nname = "reference-test"\ntrainer_gpu = "H100!"\n'
         '"miles_cfg.max_lora_slots" = 2\n'
     )
@@ -231,6 +231,12 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         "--tokenizer",
         "test/tokenizer",
         revision,
+        "--total-steps",
+        "6",
+        "--save-step",
+        "2",
+        "--restore-step",
+        "4",
         "--literal",
         "a value with spaces",
     ]
@@ -269,6 +275,9 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         ["--output=other.jsonl"],
         ["--tokenizer", "wrong", "a" * 40],
         ["--tokenizer=wrong"],
+        ["--total-steps", "99"],
+        ["--save-step=1"],
+        ["--restore-step", "2"],
     ],
 )
 def test_script_arguments_cannot_replace_selected_config_values(
@@ -325,9 +334,9 @@ def test_launcher_rejects_extra_cli_arguments(
     "tokenizer",
     [
         None,
-        {"model": "model"},
-        {"model": "model", "revision": "main"},
-        {"model": "model", "revision": "a" * 40, "typo": True},
+        {"tokenizer_model": "model"},
+        {"tokenizer_model": "model", "tokenizer_revision": "main"},
+        {"tokenizer_model": "model", "tokenizer_revision": "a" * 40, "typo": True},
     ],
 )
 def test_reference_requires_pinned_tokenizer(tokenizer: dict | None) -> None:
@@ -336,8 +345,8 @@ def test_reference_requires_pinned_tokenizer(tokenizer: dict | None) -> None:
         "script": "workload.py",
     }
     if tokenizer is not None:
-        data["tokenizer"] = tokenizer
-    with pytest.raises(ValidationError, match="tokenizer"):
+        data["workload"] = tokenizer
+    with pytest.raises(ValidationError, match="workload"):
         launcher.ValidationRunConfig.model_validate(data)
 
 
@@ -601,8 +610,8 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     expected_model = recipe.model
 
     def load_tokenizer(model: str, *, revision: str) -> SimpleNamespace:
-        assert model == expected_model == definition.tokenizer.model
-        assert revision == definition.tokenizer.revision
+        assert model == expected_model == definition.workload.tokenizer_model
+        assert revision == definition.workload.tokenizer_revision
         return tokenizer
 
     monkeypatch.setattr(
@@ -649,7 +658,10 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     launcher.main()
     records = plotter["read_output"](output)
     assert records[0]["config"]["model"] == expected_model
-    assert records[0]["config"]["tokenizer_revision"] == definition.tokenizer.revision
+    assert (
+        records[0]["config"]["tokenizer_revision"]
+        == definition.workload.tokenizer_revision
+    )
     assert records[0]["config"]["updates"] == 2
     assert records[0]["recipe"] == definition.config_overrides.name
     assert [r["step"] for r in records if r["event"] == "update"] == [1, 2]

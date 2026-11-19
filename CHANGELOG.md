@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- A guess-the-number reference workload trains through the stock Tinker SDK and records game reward, success rate, timings and sampling/training KL.
+- A guess-the-number reference workload trains through the stock Tinker SDK and records game reward, success rate, timings and sampling/training KL. Its typed workload settings include the tokenizer pins and total steps. An optional save/train-ahead/restore schedule tests checkpoint continuation with optimizer state.
 
 - A two-node Qwen3.8-27B DAPO-Math reference definition uses the shared Tinker workload.
 - DAPO-Math references validate checkpoint restoration by replaying an Adam momentum step and sampling the restored adapter after the measured workload.

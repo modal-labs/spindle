@@ -1,10 +1,10 @@
 config = "gpt-oss-20b-lora-32k"
 script = "../scripts/guess_number.py"
-script_args = ["--updates", "6"]
 
-[tokenizer]
-model = "openai/gpt-oss-20b"
-revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
+[workload]
+tokenizer_model = "openai/gpt-oss-20b"
+tokenizer_revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
+total_steps = 6
 
 [config_overrides]
 trainer_gpus_per_node = 1

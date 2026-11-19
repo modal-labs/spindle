@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 import pytest
 import tinker
+from pydantic import ValidationError
 
 ROOT = Path(__file__).parents[1] / "reference_runs"
 sys.path[:0] = [str(ROOT), str(ROOT / "scripts")]
@@ -87,12 +88,20 @@ def test_multiturn_history_and_format_penalty(invalid_scores: bool) -> None:
     )
 
 
-@pytest.mark.parametrize("accepted", [True, False])
-@pytest.mark.parametrize("updates", [3, 6])
-def test_launcher_indexes_only_completed_guess_number(
-    accepted: bool, updates: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "mode", ["three", "six", "restore", "broken_restore", "rejected"]
+)
+def test_launcher_checkpoint_lifecycle(
+    mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    output = ROOT / "outputs" / f"test-guess-number-{updates}-{accepted}.jsonl"
+    definition = "guess_number_gpt_oss_20b" + (
+        "_restore" if "restore" in mode else "_6steps" if mode == "six" else ""
+    )
+    parameters = tomllib.loads((ROOT / "configs" / f"{definition}.toml").read_text())[
+        "workload"
+    ]
+    total = parameters["total_steps"]
+    output = ROOT / "outputs" / f"test-guess-number-{mode}.jsonl"
     index = tmp_path / "index.toml"
     monkeypatch.setattr(
         launcher,
@@ -113,73 +122,116 @@ def test_launcher_indexes_only_completed_guess_number(
 
     monkeypatch.setattr(workload, "sample", sample)
 
-    def forward(batch: list[tinker.Datum], loss: str) -> Future[Any]:
-        assert loss == "importance_sampling"
-        assert [row.loss_fn_inputs["advantages"].data for row in batch] == [
-            [0.0, 0.5],
-            [0.0, -0.5],
-        ]
-        return future(
-            SimpleNamespace(
-                metrics={},
-                loss_fn_outputs=[
-                    {
-                        "logprobs": tinker.types.TensorData(
-                            data=[100.0, -0.5], dtype="float32", shape=[2]
-                        )
-                    }
-                    for _ in batch
-                ],
-            )
-        )
+    class Training:
+        def __init__(self) -> None:
+            self.weight = self.moment = 0.0
+            self.calls = 0
+            self.saved: dict[str, tuple[float, float]] = {}
+            self.publications: list[str] = []
 
-    training = SimpleNamespace(
-        save_weights_for_sampler=lambda name: future(SimpleNamespace(path=name)),
-        forward_backward=forward,
-        optim_step=lambda adam: future(
-            SimpleNamespace(metrics={"update_successful:mean": float(accepted)})
-        ),
-        save_state=lambda name: future(SimpleNamespace(path="test://final")),
-    )
+        def save_weights_for_sampler(self, name: str) -> Future[Any]:
+            self.publications.append(name)
+            return future(SimpleNamespace(path=name))
+
+        def save_state(self, name: str) -> Future[Any]:
+            path = f"test://{name}"
+            self.saved[path] = self.weight, self.moment
+            return future(SimpleNamespace(path=path))
+
+        def load_state_with_optimizer(self, path: str) -> Future[None]:
+            if mode != "broken_restore":
+                self.weight, self.moment = self.saved[path]
+            return future(None)
+
+        def forward(self, batch: list[tinker.Datum], loss: str) -> Future[Any]:
+            return future(
+                SimpleNamespace(
+                    loss_fn_outputs=[
+                        {
+                            "logprobs": tinker.types.TensorData(
+                                data=[100.0 + self.weight, -1.0 + self.weight],
+                                dtype="float32",
+                                shape=[2],
+                            )
+                        }
+                        for _ in batch
+                    ]
+                )
+            )
+
+        def forward_backward(self, batch: list[tinker.Datum], loss: str) -> Future[Any]:
+            assert loss == "importance_sampling"
+            assert [row.loss_fn_inputs["advantages"].data for row in batch] == [
+                [0.0, 0.5],
+                [0.0, -0.5],
+            ]
+            return future(
+                SimpleNamespace(
+                    metrics={},
+                    loss_fn_outputs=[
+                        {
+                            "logprobs": tinker.types.TensorData(
+                                data=[100.0, -0.5], dtype="float32", shape=[2]
+                            )
+                        }
+                        for _ in batch
+                    ],
+                )
+            )
+
+        def optim_step(self, adam: tinker.types.AdamParams) -> Future[Any]:
+            self.calls += 1
+            self.moment = 0.9 * self.moment + 1
+            self.weight += 0.01 * self.moment
+            return future(
+                SimpleNamespace(
+                    metrics={"update_successful:mean": float(mode != "rejected")}
+                )
+            )
+
+    training = Training()
     service = SimpleNamespace(
         create_lora_training_client=lambda *args: training,
         create_sampling_client=lambda **kwargs: None,
     )
     monkeypatch.setattr(tinker, "ServiceClient", lambda: service)
-    definition = "guess_number_gpt_oss_20b" + ("_6steps" if updates == 6 else "")
-    argv = [
-        "run.py",
-        str(ROOT / "configs" / f"{definition}.toml"),
-        "--output",
-        str(output),
-        "--index",
-        str(index),
-    ]
-    monkeypatch.setattr(sys, "argv", argv)
 
     def launch(*args: object) -> None:
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "guess_number.py",
-                "--base-model",
-                "gpt-oss-20b-lora-32k",
-                "--output",
-                str(output),
-                "--tokenizer",
-                "openai/gpt-oss-20b",
-                "a" * 40,
-                "--updates",
-                str(updates),
-            ],
-        )
+        argv = [
+            "guess_number.py",
+            "--base-model",
+            "gpt-oss-20b-lora-32k",
+            "--output",
+            str(output),
+            "--tokenizer",
+            "openai/gpt-oss-20b",
+            "a" * 40,
+        ]
+        for field in ("total_steps", "save_step", "restore_step"):
+            if field in parameters:
+                argv.extend(["--" + field.replace("_", "-"), str(parameters[field])])
+        monkeypatch.setattr(sys, "argv", argv)
         workload.main()
 
     monkeypatch.setattr(launcher, "launch", launch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            str(ROOT / "configs" / f"{definition}.toml"),
+            "--output",
+            str(output),
+            "--index",
+            str(index),
+        ],
+    )
     try:
-        if not accepted:
-            with pytest.raises(ValueError, match="was rejected"):
+        if mode in ("rejected", "broken_restore"):
+            error = ValueError if mode == "rejected" else AssertionError
+            with pytest.raises(
+                error, match="was rejected" if mode == "rejected" else "Not equal"
+            ):
                 launcher.main()
             assert not index.exists()
             return
@@ -189,19 +241,70 @@ def test_launcher_indexes_only_completed_guess_number(
         )
         assert catalog.validation == definition
         assert catalog.trainer_image == "miles-v0.1.1-52a7a99"
-        assert "1 x 1 H200" in catalog.hardware
         assert "0-1 x 1 H200" in catalog.hardware
         assert catalog.spindle_commit == "a" * 40
         records = importlib.import_module("catalog").read_output(output)
         assert records[0]["adam"]["eps"] == 1e-8
-        measured = [row for row in records if row["event"] == "update"]
-        assert [row["step"] for row in measured] == list(range(1, updates + 1))
-        assert all(row["kl_sample_train_v2"] == 0.125 for row in measured)
-        assert "seconds_since_previous_update" in measured[-1]
-        assert [row["step"] for row in records if row["event"] == "evaluation"] == [
-            0,
-            updates,
-        ]
+        updates = [r for r in records if r["event"] == "update"]
+        retained = [r for r in updates if not r["discarded"]]
+        assert [r["step"] for r in retained] == list(range(1, total + 1))
+        assert [r["attempt"] for r in updates] == list(range(1, len(updates) + 1))
+        assert all(r["kl_sample_train_v2"] == 0.125 for r in updates)
+        assert [r["step"] for r in records if r["event"] == "evaluation"] == [0, total]
         assert records[-1]["event"] == "checkpoint"
+        assert len(set(training.publications)) == len(training.publications)
+        weight = moment = 0.0
+        for _ in range(total):
+            moment = 0.9 * moment + 1
+            weight += 0.01 * moment
+        assert (training.weight, training.moment) == pytest.approx((weight, moment))
+        if mode == "restore":
+            assert [r["step"] for r in updates] == [1, 2, 3, 4, 3, 4, 5, 6]
+            assert [r["step"] for r in updates if r["discarded"]] == [3, 4]
+            assert "seconds_since_previous_update" not in retained[2]
+            restore = next(r for r in records if r["event"] == "restore_validation")
+            assert (
+                restore["step"],
+                restore["from_step"],
+                restore["max_abs_error"],
+            ) == (2, 4, 0)
+            assert restore["discarded_score_change"] > 0
+            assert training.calls == 8
+            plot = importlib.import_module("plot")
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                [
+                    "plot.py",
+                    catalog.id,
+                    "--index",
+                    str(index),
+                    "--output",
+                    str(tmp_path / "plot.png"),
+                ],
+            )
+            plot.main()
+            axes = plot.pyplot.gcf().axes
+            assert list(axes[1].lines[0].get_xdata()) == list(range(1, 7))
+            assert np.isnan(axes[3].lines[0].get_ydata()[2])
+            plot.pyplot.close("all")
     finally:
         output.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"total_steps": "6"},
+        {"total_steps": 0},
+        {"total_steps": True},
+        {"total_steps": 6, "save_step": 2},
+        {"total_steps": 6, "save_step": 4, "restore_step": 2},
+        {"total_steps": 6, "save_step": 2, "restore_step": 6},
+    ],
+)
+def test_invalid_workload_parameters(parameters: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        launcher.WorkloadConfig.model_validate(
+            {"tokenizer_model": "model", "tokenizer_revision": "a" * 40, **parameters}
+        )
