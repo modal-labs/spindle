@@ -121,3 +121,16 @@ invocation, hardware and orchestration are unavailable. The overlay is descripti
 do not infer matched learning speed or parity. The published endpoint is 64.2%
 accuracy and 2,197 mean response tokens.
 '''
+
+[[runs]]
+id = "guess-number-gpt-oss-20b-miles-v011-20261119"
+validation = "guess_number_gpt_oss_20b"
+output = "outputs/guess-number-gpt-oss-20b-miles-v011-20261119.jsonl"
+spindle_commit = "1a50d1e3a2a079675298a47eee72b4725b2dbe66"
+spindle_version = "0.1.8"
+trainer_image = "miles-v0.1.1-52a7a99"
+miles_commit = "52a7a99"
+tinker_sdk = "0.26.0"
+hardware = "Configured trainers: 1 x 1 H200; samplers: 0-1 x 1 H200."
+region = "us-west"
+notes = "Server commit from get_server_capabilities; image pins from the resolved recipe. Startup logs confirmed one H200 each for training and sampling. The deployment used us-west and NCCL_NVLS_ENABLE=0 after an earlier eight-GPU attempt failed during NVLS multicast binding. Container checks reported Miles 52a7a99d9f9e6188ece91a0583ef417093601025, trainer torch 2.13.0+cu130 and transformers 5.12.1; sampler SGLang 0.5.23, torch 2.14.1+cu130 and transformers 5.19.0; both used server Tinker 0.33.1. Three nonzero-gradient updates completed. Held-out success was 2/8 initially and 0/8 finally; this short run does not establish learning. The 64-token cap truncated 16.9% and 23.8% of held-out turns. The warm trainer was reused; backend timing counters include earlier warmup, while script phase timings describe this execution. Unsuccessful attempts are not indexed."
