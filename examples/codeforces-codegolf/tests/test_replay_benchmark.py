@@ -103,6 +103,16 @@ def test_paired_summary_retains_every_case_and_reports_signed_seconds():
         assert result["per_case_mean_saving_seconds"] == {"a": 2.0, "b": 2.0, "c": 2.0}
 
 
+def test_timing_only_summary_still_requires_identical_inputs():
+    rows = paired_rows()
+    rows[0]["grad_norm"] *= 2
+    summary = summarize(rows, 2, ["a", "b", "c"], require_equivalence=False)
+    assert summary["recorded"]["pairs"] == summary["all_ready"]["pairs"] == 6
+    rows[0]["datums_sha256"] = "different"
+    with pytest.raises(ValueError, match="inputs or readiness schedules differ"):
+        summarize(rows, 2, ["a", "b", "c"], require_equivalence=False)
+
+
 @pytest.mark.parametrize(
     "failure",
     ["duplicate", "missing_mode", "missing_case", "inputs", "schedule", "gradient"],

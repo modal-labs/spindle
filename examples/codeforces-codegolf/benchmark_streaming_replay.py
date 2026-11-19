@@ -313,9 +313,16 @@ def benchmark(
         "scope_closed": False,
     }
 
-    def persist():
+    def write_report():
         (root / "result.json").write_text(json.dumps(report, indent=2))
+
+    def persist():
+        write_report()
         volume.commit()
+
+    async def persist_async():
+        write_report()
+        await volume.commit.aio()
 
     with spindle.run(
         engine=engine,
@@ -371,7 +378,7 @@ def benchmark(
                         "gpu_update_check": prior["gpu_update_check"],
                     }
                 )
-                persist()
+                await persist_async()
             else:
                 updates, probes, changes, initial_probes = {}, {}, {}, {}
                 for mode in ("batch", "stream"):
@@ -398,7 +405,7 @@ def benchmark(
                                 + json.dumps(report["frozen_layout_check"]),
                                 flush=True,
                             )
-                            persist()
+                            await persist_async()
                         initial = await probe(training, cfg, check_case)
                         initial_probes[mode] = initial
                         updates[mode] = await trial(
@@ -421,7 +428,7 @@ def benchmark(
                             + json.dumps(report["gpu_update_check"]),
                             flush=True,
                         )
-                        persist()
+                        await persist_async()
                         if (
                             changes[mode]["max_abs"] <= 1e-6
                             or updates[mode]["grad_norm"] <= 0
@@ -441,7 +448,7 @@ def benchmark(
                         "reset_difference": baseline_difference,
                     }
                 )
-                persist()
+                await persist_async()
                 if baseline_difference["max_abs"] > 1e-6:
                     raise RuntimeError(
                         f"Base policy reset differs: {baseline_difference}"
@@ -455,17 +462,19 @@ def benchmark(
                     abs_tol=1e-6,
                 ):
                     raise RuntimeError("Nonzero-update GPU gradient norms differ")
-                report["gpu_update_check"] = {
-                    "learning_rate": 1e-5,
-                    "updates": updates,
-                    "probe_difference": difference,
-                    "policy_changes": changes,
-                }
+                report["gpu_update_check"].update(
+                    {
+                        "learning_rate": 1e-5,
+                        "updates": updates,
+                        "probe_difference": difference,
+                        "policy_changes": changes,
+                    }
+                )
                 print(
                     "GPU_UPDATE_CHECK " + json.dumps(report["gpu_update_check"]),
                     flush=True,
                 )
-                persist()
+                await persist_async()
             training = await create()
             try:
                 before = await probe(training, cfg, check_case)
@@ -491,7 +500,7 @@ def benchmark(
                         row["pair_id"] = f"{case['id']}:{profile}:{repeat}"
                         report["trials"].append(row)
                         print("REPLAY_TRIAL " + json.dumps(row), flush=True)
-                    persist()
+                    await persist_async()
                 frozen = probe_difference(
                     before, await probe(training, cfg, check_case)
                 )
