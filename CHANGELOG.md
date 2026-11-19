@@ -27,6 +27,7 @@ New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context an
 
 ### Fixed
 
+- `qwen35-9b-lora-64k` and `qwen35-9b-lora-128k` split the model across four GPUs (tensor parallel size 4) instead of eight. The Miles native adapters these recipes use since 0.1.8 don't work at size 8.
 - Removing a config with `spindle remove` or `DELETE /api/v1/spindle/deployments/{name}` also stops its LoRA and full fine-tuning sampler pools. Before, they kept running, and billing for warm replicas, until stopped by hand.
 - Miles v0.2.0 trainers can gather checkpoint and sampler captures across nodes without racing checkpoint persistence.
 - Reference plots leave gaps for missing measurements instead of joining timing points across a restart.
