@@ -236,7 +236,7 @@ def test_launcher_checkpoint_lifecycle(
             tomllib.loads(index.read_text())["runs"][0]
         )
         assert catalog.validation == definition
-        assert catalog.trainer_image == "miles-v0.1.1-52a7a99"
+        assert catalog.trainer_image == "miles-v0.2.0-e814245"
         assert "0-1 x 1 H200" in catalog.hardware
         assert catalog.spindle_commit == "a" * 40
         records = importlib.import_module("catalog").read_output(output)
