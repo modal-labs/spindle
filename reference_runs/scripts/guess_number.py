@@ -231,6 +231,7 @@ def main() -> None:
     saved_scores: np.ndarray | None = None
     probe: types.ModelInput | None = None
     restore_started: float | None = None
+    load_seconds = 0.0
     last_batch: list[types.Datum] = []
     while True:
         start = time.monotonic()
@@ -256,13 +257,20 @@ def main() -> None:
                 max_abs_error=float(np.max(np.abs(loaded - saved_scores))),
                 discarded_score_change=changed,
                 seconds=time.monotonic() - restore_started,
+                load_seconds=load_seconds,
             )
             restore_started = None
         if step == config.save_step and not restored:
             probe = last_batch[0].model_input
             saved_scores = scores(sampler, probe)
+            start = time.monotonic()
             checkpoint = training.save_state(f"step-{step}").result().path
-            record("checkpoint", step=step, path=checkpoint)
+            record(
+                "checkpoint",
+                step=step,
+                path=checkpoint,
+                seconds=time.monotonic() - start,
+            )
         if step == config.restore_step and not restored:
             assert checkpoint is not None and saved_scores is not None
             restore_started = time.monotonic()
@@ -273,7 +281,9 @@ def main() -> None:
                 raise ValueError(
                     "Training did not change probe scores beyond restore tolerance"
                 )
+            start = time.monotonic()
             training.load_state_with_optimizer(checkpoint).result()
+            load_seconds = time.monotonic() - start
             restored = True
             step = config.save_step
             previous = None
@@ -282,8 +292,14 @@ def main() -> None:
             evaluated = sample(sampler, tokenizer, held_out, 1, config.seed, config)
             record("evaluation", step=step, **summarize(evaluated))
         if step == config.total_steps:
+            start = time.monotonic()
             checkpoint = training.save_state("final").result().path
-            record("checkpoint", step=step, path=checkpoint)
+            record(
+                "checkpoint",
+                step=step,
+                path=checkpoint,
+                seconds=time.monotonic() - start,
+            )
             break
         start = time.monotonic()
         groups = sample(
@@ -342,6 +358,7 @@ def main() -> None:
             and step > config.save_step,
             **summarize(groups),
             **timing,
+            update_seconds=now - start,
             sampling_seconds=sampled - start,
             forward_backward_seconds=trained - sampled,
             optimizer_seconds=now - trained,

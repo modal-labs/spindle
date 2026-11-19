@@ -33,16 +33,27 @@ def main() -> None:
     catalog = ReferenceRunIndex.model_validate(tomllib.loads(args.index.read_text()))
     index = {entry.id: entry for entry in catalog.runs}
     figure, axes = pyplot.subplots(2, 2, figsize=(11, 7), layout="constrained")
-    for run_number, run in enumerate(args.runs):
+    runs = []
+    for run in args.runs:
         entry = index.get(run)
         path = args.index.parent / entry.output if entry else Path(run)
         records = read_output(path, published=bool(entry and entry.source))
-        label = run if run in index else path.stem
+        runs.append((run if run in index else path.stem, records))
+    update_durations = all(
+        "update_seconds" in r
+        for _, records in runs
+        for r in records
+        if r["event"] == "update"
+    )
+    for run_number, (label, records) in enumerate(runs):
         if len(args.runs) == 1:
             figure.suptitle(label, fontsize=10)
             label = "Retained"
         color = f"C{run_number % 10}"
         for axis, (event, field, title) in zip(axes.flat, PANELS):
+            if field == "seconds_since_previous_update" and update_durations:
+                field = "update_seconds"
+                title = "Seconds per update (sampling + training)"
             measurements = [r for r in records if r["event"] == event]
             points = [
                 (r["step"], r.get(field, nan))

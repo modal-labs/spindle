@@ -142,9 +142,13 @@ Discarded updates remain in JSONL with `discarded = true`. `attempt` counts all
 optimizer updates; `step` is the policy's logical step and rewinds on restore.
 `restore_validation` records the rewind and score comparison. Plots show the
 retained trajectory as a solid line and the discarded branch as a dashed line,
-starting from the shared checkpoint. The retained timing curve leaves a gap at
-the first resumed update. Sampler
-publication names stay unique across both passes. A restore failure fails the
+starting from the shared checkpoint. Every update records `update_seconds` for
+sampling, forward/backward and optimization, including the first resumed update.
+The timing plot uses these durations when all compared runs record them; otherwise
+it shows intervals between updates. Publication, checkpoint save and restore
+overhead are recorded separately in their events. `restore_validation.seconds`
+includes the score probes and publication; `load_seconds` measures the load API
+call alone. Sampler publication names stay unique across both passes. A restore failure fails the
 run and prevents index registration.
 
 Step 2 is already included in its checkpoint and is not trained twice. After

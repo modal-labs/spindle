@@ -257,7 +257,14 @@ def test_launcher_checkpoint_lifecycle(
         if mode == "restore":
             assert [r["step"] for r in updates] == [1, 2, 3, 4, 3, 4, 5, 6]
             assert [r["step"] for r in updates if r["discarded"]] == [3, 4]
-            assert "seconds_since_previous_update" not in retained[2]
+            assert all(r["update_seconds"] > 0 for r in updates)
+            for r in updates:
+                assert r["update_seconds"] == pytest.approx(
+                    r["sampling_seconds"]
+                    + r["forward_backward_seconds"]
+                    + r["optimizer_seconds"]
+                )
+            assert all(r["seconds"] >= 0 for r in records if r["event"] == "checkpoint")
             restore = next(r for r in records if r["event"] == "restore_validation")
             assert (
                 restore["step"],
@@ -285,7 +292,10 @@ def test_launcher_checkpoint_lifecycle(
             plot.main()
             axes = plot.pyplot.gcf().axes
             assert list(axes[1].lines[0].get_xdata()) == list(range(1, 7))
-            assert np.isnan(axes[3].lines[0].get_ydata()[2])
+            assert list(axes[3].lines[0].get_ydata()) == [
+                r["update_seconds"] for r in retained
+            ]
+            assert axes[3].get_title() == "Seconds per update (sampling + training)"
             discarded = axes[1].lines[1]
             assert list(discarded.get_xdata()) == [2, 3, 4]
             assert list(discarded.get_ydata()) == [
