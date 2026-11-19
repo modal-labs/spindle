@@ -33,7 +33,7 @@ def main() -> None:
     catalog = ReferenceRunIndex.model_validate(tomllib.loads(args.index.read_text()))
     index = {entry.id: entry for entry in catalog.runs}
     figure, axes = pyplot.subplots(2, 2, figsize=(11, 7), layout="constrained")
-    for run in args.runs:
+    for color, run in enumerate(args.runs):
         entry = index.get(run)
         path = args.index.parent / entry.output if entry else Path(run)
         records = read_output(path, published=bool(entry and entry.source))
@@ -44,6 +44,7 @@ def main() -> None:
             axis.plot(
                 *zip(*points),
                 marker="o",
+                color=f"C{color}",
                 markersize=3,
                 label=run if run in index else path.stem,
             )
