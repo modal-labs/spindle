@@ -157,12 +157,18 @@ async def trial(training, cfg, case, mode, profile, *, learning_rate=0.0):
     }
 
 
-async def probe(training, cfg, case):
-    records = [dict(record, rows=record["rows"][:1]) for record in case["records"]]
-    response = await (
-        await training.forward_async(training_datums(records, cfg), "cross_entropy")
-    ).result_async()
-    return [list(row["logprobs"].data) for row in response.loss_fn_outputs]
+async def probe(training, cfg, case, *, groupwise=False, all_rows=False):
+    records = [
+        dict(record, rows=record["rows"] if all_rows else record["rows"][:1])
+        for record in case["records"]
+    ]
+    outputs = []
+    for batch in ([record] for record in records) if groupwise else [records]:
+        response = await (
+            await training.forward_async(training_datums(batch, cfg), "cross_entropy")
+        ).result_async()
+        outputs.extend(list(row["logprobs"].data) for row in response.loss_fn_outputs)
+    return outputs
 
 
 def probe_difference(first, second):
@@ -331,16 +337,43 @@ def benchmark(
                 return await create_full_training_client_async(service, cfg.model)
 
             check_case = cases[1]
-            updates, probes, changes = {}, {}, {}
+            updates, probes, changes, initial_probes = {}, {}, {}, {}
             for mode in ("batch", "stream"):
                 training = await create()
                 try:
+                    if mode == "batch":
+                        packed = await probe(training, cfg, check_case, all_rows=True)
+                        repeated = await probe(training, cfg, check_case, all_rows=True)
+                        grouped = await probe(
+                            training, cfg, check_case, all_rows=True, groupwise=True
+                        )
+                        report["frozen_layout_check"] = {
+                            "repeat_difference": probe_difference(packed, repeated),
+                            "grouping_difference": probe_difference(packed, grouped),
+                        }
+                        print(
+                            "FROZEN_LAYOUT_CHECK "
+                            + json.dumps(report["frozen_layout_check"]),
+                            flush=True,
+                        )
+                        persist()
                     initial = await probe(training, cfg, check_case)
+                    initial_probes[mode] = initial
                     updates[mode] = await trial(
                         training, cfg, check_case, mode, "all_ready", learning_rate=1e-5
                     )
                     probes[mode] = await probe(training, cfg, check_case)
                     changes[mode] = probe_difference(initial, probes[mode])
+                    report["gpu_update_check"] = {
+                        "learning_rate": 1e-5,
+                        "updates": updates,
+                        "policy_changes": changes,
+                    }
+                    print(
+                        "GPU_UPDATE_PROGRESS " + json.dumps(report["gpu_update_check"]),
+                        flush=True,
+                    )
+                    persist()
                     if (
                         changes[mode]["max_abs"] <= 1e-6
                         or updates[mode]["grad_norm"] <= 0
@@ -351,6 +384,18 @@ def benchmark(
                 finally:
                     await release(training)
             difference = probe_difference(probes["batch"], probes["stream"])
+            baseline_difference = probe_difference(
+                initial_probes["batch"], initial_probes["stream"]
+            )
+            report["gpu_update_check"].update(
+                {
+                    "probe_difference": difference,
+                    "reset_difference": baseline_difference,
+                }
+            )
+            persist()
+            if baseline_difference["max_abs"] > 1e-6:
+                raise RuntimeError(f"Base policy reset differs: {baseline_difference}")
             if difference["max_abs"] > 1e-3 or difference["mean_abs"] > 1e-4:
                 raise RuntimeError(f"Post-update GPU probes differ: {difference}")
             if not math.isclose(
