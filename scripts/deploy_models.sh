@@ -13,6 +13,7 @@ deployment_files=(
   src/spindle/configs/gpt_oss_20b_lora_32k.py
   src/spindle/configs/gpt_oss_20b_lora_64k.py
   src/spindle/configs/qwen36_35b_a3b_lora_32k.py
+  src/spindle/configs/inkling2_small_lora_8k_b300.py
 )
 
 spindle deploy "${deployment_files[@]}" "$@"

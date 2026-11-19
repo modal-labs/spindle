@@ -140,6 +140,23 @@ def backend_config(spec, asset_path="/assets/pending"):
             raise ValueError(
                 "canonical_lora requires megatron_to_hf_mode raw in Spindle"
             )
+        inkling2 = spec.trainer_image == "miles-v0.2.0-e186d97-inkling2-attn"
+        if inkling2:
+            if config.model_type != "inkling2" or config.megatron_to_hf_mode != "raw":
+                raise ValueError(
+                    "the Inkling2 trainer requires model_type inkling2 and raw mode"
+                )
+            if any(
+                size != 1
+                for size in (
+                    config.tensor_model_parallel_size,
+                    config.context_parallel_size,
+                    config.expert_tensor_parallel_size,
+                )
+            ):
+                raise ValueError("Inkling2 requires TP=CP=expert-TP=1")
+            if spec.trainer_nodes != 1:
+                raise ValueError("Inkling2 supports only single-node trainers")
     elif config.lora_type == "canonical_lora" and (
         not spec.trainer_image
         or spec.trainer_image.startswith(("miles-v0.1.1-", "miles-v0.1.2-"))

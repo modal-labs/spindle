@@ -56,6 +56,10 @@ from .kernel_cache import (
     KERNEL_CACHE_ROOT,
     kernel_cache_volume,
 )
+from .inkling2_image import image as inkling2_trainer_image
+from .inkling2_image import (
+    head_lora_inference_image as inkling2_head_lora_sampler_image,
+)
 from .kv import shared_kv
 from .lora_pool import LoraPoolSpec
 from .lora_pool import deploy_pool as deploy_lora
@@ -67,6 +71,8 @@ from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 # Named images are frozen: add a new name instead of editing one. See docs/deployment-configs.md#images.
 # Each entry notes the fork PR that last changed its commit.
 TRAINER_IMAGES = {
+    # https://github.com/modal-projects/miles/pull/45 Add Inkling2 attention and unembedding multi-LoRA
+    "miles-v0.2.0-e186d97-inkling2-attn": inkling2_trainer_image,
     # https://github.com/modal-projects/miles/pull/16 Support Tinker SDK 0.29+ in Miles' Tinker layer
     "miles-v0.1.1-fdd808c": miles_v011_image.image_01_fdd808c,
     # https://github.com/modal-projects/miles/pull/42 Support per-adapter seeds in the v0.1.1 LoRA slot API
@@ -89,6 +95,7 @@ TRAINER_IMAGES = {
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {
+    "sglang-inkling2-a2e3c49-head": inkling2_head_lora_sampler_image,
     "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
     # https://github.com/modal-projects/sglang/pull/81 Serve DeepSeek-V4 LoRA on quantized bases
     "sglang-v0.5.21-a3e0e17": deepseek_v41_image.image_01_a3e0e17,
@@ -388,7 +395,7 @@ def build_rollout_app(
         maximum = maximum if pool.max_containers is None else pool.max_containers
         window = window if pool.scaledown_window is None else pool.scaledown_window
 
-    @app.server(
+    server = app.server(
         name="Server",
         serialized=True,
         image=image
@@ -424,8 +431,12 @@ def build_rollout_app(
         startup_timeout=recipe.inference_startup_timeout_s,
         exit_grace_period=300,
         port=8000,
+        experimental_options=trainer_experimental_options(
+            recipe.inference_rdma, platform
+        ),
         **server_placement(platform["modal"]["region"]),
     )
+
     class Server:
         @modal.enter()
         def start(self) -> None:
@@ -505,7 +516,10 @@ def build_rollout_app(
             terminate(self.sidecar)
             terminate(self.sglang)
 
-    return app, Server
+    server_class = (
+        modal.clustered(size=1, rdma=True)(Server) if recipe.inference_rdma else Server
+    )
+    return app, server(server_class)
 
 
 def build_inference_app(

@@ -26,6 +26,7 @@ from spindle.providers.modal import (
     deployment_configs,
     fft_pool,
     glm53_image,
+    inkling2_image,
     lora_pool,
     miles_v011_image,
     miles_v012_image,
@@ -674,6 +675,13 @@ def test_pinned_fork_commits_are_on_the_branch_their_module_names(
 )
 def test_image_names_match_the_fork_commit_they_install(name):
     image = {**deployment_apps.TRAINER_IMAGES, **deployment_apps.SAMPLER_IMAGES}[name]
+    if image is inkling2_image.image:
+        assert inkling2_image.MILES_COMMIT[:7] in name.split("-")
+        return
+    if image is inkling2_image.head_lora_inference_image:
+        digest = inkling2_image.BASE_IMAGE.rsplit("sha256:", 1)[1]
+        assert digest[:7] in name.split("-")
+        return
     [path] = [
         f"{module.__name__}.{variable}"
         for module in FORK_IMAGE_MODULES
@@ -771,6 +779,38 @@ def test_trainer_can_exclude_reserved_capacity(builders, monkeypatch, rdma):
     assert settings["experimental_options"] == (
         {"efa_enabled": True, "exclude_reserved_capacity": True} if rdma else {}
     )
+
+
+@pytest.mark.parametrize("exclude", [False, True])
+@pytest.mark.parametrize("rdma", [False, True])
+def test_sampler_can_exclude_reserved_capacity(builders, monkeypatch, exclude, rdma):
+    row = deployment()
+    original_identity = row.inference_identity()
+    row.recipe.platform["modal"]["exclude_reserved_capacity"] = exclude
+    row.recipe.inference_rdma = rdma
+    allocations = []
+
+    def clustered(*, size, rdma):
+        allocations.append((size, rdma))
+        return lambda cls: cls
+
+    monkeypatch.setattr(modal, "clustered", clustered)
+    app, _ = deployment_apps.build_rollout_app(
+        row, LoraPoolSpec(row.definition_id), image="test"
+    )
+    settings, _ = app.servers["Server"]
+    assert settings["experimental_options"] == (
+        (
+            {"efa_enabled": True}
+            | ({"exclude_reserved_capacity": True} if exclude else {})
+        )
+        if rdma
+        else {}
+    )
+    assert allocations == ([(1, True)] if rdma else [])
+    restored = DeploymentConfig.model_validate_json(row.model_dump_json())
+    assert restored.recipe.inference_rdma == rdma
+    assert (restored.inference_identity() != original_identity) == rdma
 
 
 def test_multinode_trainer_uses_cluster_launcher(builders, monkeypatch):

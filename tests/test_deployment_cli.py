@@ -478,6 +478,7 @@ def test_source_mount_excludes_authoring_configs():
     assert ignore_config_source(Path("data.json"))
     assert not ignore_config_source(Path("deployments.py"))
     assert not ignore_config_source(Path("backends/miles_config.py"))
+    assert not ignore_config_source(Path("providers/modal/inkling2-lora-head.patch"))
 
 
 def test_cli_flags_override_recipe_platform(monkeypatch):

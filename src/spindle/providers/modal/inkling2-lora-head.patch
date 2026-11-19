@@ -1,0 +1,11 @@
+--- a/python/sglang/srt/models/inkling2.py
++++ b/python/sglang/srt/models/inkling2.py
+@@ -582,6 +582,8 @@
+ 
+     @classmethod
+     def get_lora_target_module_name(cls, name: str) -> str:
++        if name == "model.llm.unembed":
++            return "lm_head"
+         parent, _, leaf = name.rpartition(".")
+         if parent.endswith(".attn") and leaf in cls._QKVR_MEMBERS:
+             return "qkvr"

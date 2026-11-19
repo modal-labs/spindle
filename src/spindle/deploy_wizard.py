@@ -34,6 +34,7 @@ PROVIDER_ORDER = (
     "zai-org",
     "moonshotai",
     "reflection",
+    "thinkingmachines",
 )
 MODE_LABELS = {"lora": "LoRA", "full": "Full fine-tune"}
 

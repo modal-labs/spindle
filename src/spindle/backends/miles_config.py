@@ -16,6 +16,7 @@ _PEFT_TARGETS = {
     "linear_fc1_up": ("up_proj",),
     "linear_fc2": ("down_proj",),
     "output_layer": ("lm_head",),
+    "unembed": ("lm_head",),
     # SGLang serves the Qwen3.5 linear-attention input projections as in_proj_qkvz and in_proj_ba.
     "in_proj_qkv": ("in_proj_qkvz",),
     "in_proj_z": ("in_proj_qkvz",),
@@ -47,6 +48,12 @@ _ATTN_LEAVES = frozenset(
         "wkv",
         "wq_b",
         "wo_b",
+        "wq_du",
+        "wr_du",
+        "gate_attn",
+        "wk_dv",
+        "wv_dv",
+        "wo_ud",
         *GDN_INPUT_PROJECTIONS,
         "out_proj",
     }
@@ -65,7 +72,7 @@ _MLP_LEAVES = frozenset(
         "w3",
     }
 )
-_UNEMBED_LEAVES = frozenset({"output_layer", "lm_head"})
+_UNEMBED_LEAVES = frozenset({"output_layer", "lm_head", "unembed"})
 
 
 def _peft_names(target: str) -> tuple[str, ...]:
@@ -163,7 +170,13 @@ class MilesBackendConfig(BaseModel):
     def peft_target_modules(self) -> tuple[str, ...]:
         targets: list[str] = []
         for target in self.target_modules:
-            for name in _peft_names(target):
+            # Inkling2's fused-attention resolver needs the parent before .attn.
+            names = (
+                (target,)
+                if self.model_type == "inkling2" and "*" in target
+                else _peft_names(target)
+            )
+            for name in names:
                 if name not in targets:
                     targets.append(name)
         return tuple(targets)
