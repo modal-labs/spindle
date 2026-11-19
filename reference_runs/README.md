@@ -88,6 +88,41 @@ commits and observed runtime image versions identify executions and belong in
 the index, not in the validation definition. Deployment recipes own image
 selection; record the images used for each execution in the index.
 
+## Guess-the-number regression
+
+`configs/guess_number_gpt_oss_20b.toml` runs `scripts/guess_number.py` on
+`gpt-oss-20b-lora-32k`. It uses the recipe's selected images, including the
+older Miles v0.1.1 trainer. Image versions belong to each execution's index entry.
+
+The task follows tinker-cookbook 0.6.1's multi-turn guess-number game: a hidden
+integer from 0 through 1023, at most ten guesses, higher/lower feedback, reward
+1 for a correct guess and -1 for each malformed answer. The script uses the
+stock Tinker SDK and a pinned tokenizer's chat template, without the cookbook
+training loop. It uses low reasoning effort for GPT-OSS. These measurements
+are a separate workload from the cookbook regression, not interchangeable baselines.
+
+Three GRPO updates use eight hidden numbers and four independent trajectories
+per number, rank-32 LoRA, a 64-token response cap and learning rate 3e-5.
+Each trajectory's total reward is centered within its group and applied to
+its sampled tokens. Prior conversation tokens receive zero advantage.
+Eight held-out numbers are evaluated before training and after the last update.
+The run publishes each policy and saves a final checkpoint; it does not test restoration.
+
+In evaluation and update records, `responses` counts games, `reward` is mean
+cumulative game reward, `response_tokens_mean` is per assistant turn, and
+`truncated_fraction` counts assistant turns that hit the response cap.
+`success_fraction` and `turns_mean` describe completed games.
+`kl_sample_train_v2` is the mean squared sample/train logprob difference divided
+by two, measured on all sampled tokens before the optimizer update.
+A successful run confirms the API path works; three updates do not establish learning.
+
+Prepare and deploy this definition as below, then launch it with:
+
+```bash
+uv run python reference_runs/run.py reference_runs/configs/guess_number_gpt_oss_20b.toml \
+  --output reference_runs/outputs/guess-number-gpt-oss-20b.jsonl
+```
+
 ## Prepare and run
 
 Prepare the selected recipe with its reference overrides, then deploy it

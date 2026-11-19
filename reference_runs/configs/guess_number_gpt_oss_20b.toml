@@ -1,0 +1,9 @@
+config = "gpt-oss-20b-lora-32k"
+script = "../scripts/guess_number.py"
+
+[tokenizer]
+model = "openai/gpt-oss-20b"
+revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
+
+[config_overrides]
+inference_max_replicas = 1
