@@ -286,6 +286,14 @@ def test_launcher_checkpoint_lifecycle(
             axes = plot.pyplot.gcf().axes
             assert list(axes[1].lines[0].get_xdata()) == list(range(1, 7))
             assert np.isnan(axes[3].lines[0].get_ydata()[2])
+            discarded = axes[1].lines[1]
+            assert list(discarded.get_xdata()) == [2, 3, 4]
+            assert list(discarded.get_ydata()) == [
+                updates[i]["reward"] for i in (1, 2, 3)
+            ]
+            assert discarded.get_linestyle() == "--"
+            assert discarded.get_label() == "Discarded"
+            assert list(axes[3].lines[1].get_xdata()) == [2, 3, 4]
             plot.pyplot.close("all")
     finally:
         output.unlink(missing_ok=True)

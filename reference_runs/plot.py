@@ -33,23 +33,46 @@ def main() -> None:
     catalog = ReferenceRunIndex.model_validate(tomllib.loads(args.index.read_text()))
     index = {entry.id: entry for entry in catalog.runs}
     figure, axes = pyplot.subplots(2, 2, figsize=(11, 7), layout="constrained")
-    for run in args.runs:
+    for run_number, run in enumerate(args.runs):
         entry = index.get(run)
         path = args.index.parent / entry.output if entry else Path(run)
         records = read_output(path, published=bool(entry and entry.source))
+        label = run if run in index else path.stem
+        if len(args.runs) == 1:
+            figure.suptitle(label, fontsize=10)
+            label = "Retained"
+        color = f"C{run_number % 10}"
         for axis, (event, field, title) in zip(axes.flat, PANELS):
+            measurements = [r for r in records if r["event"] == event]
             points = [
                 (r["step"], r.get(field, nan))
-                for r in records
-                if r["event"] == event and not r.get("discarded", False)
+                for r in measurements
+                if not r.get("discarded", False)
             ]
             axis.plot(
                 *zip(*points),
                 marker="o",
                 markersize=3,
-                label=run if run in index else path.stem,
+                label=label,
+                color=color,
             )
-            axis.set(title=title, xlabel="Accepted optimizer updates")
+            discarded = [r for r in measurements if r.get("discarded", False)]
+            if discarded:
+                first = measurements.index(discarded[0])
+                branch = measurements[max(0, first - 1) : first] + discarded
+                axis.plot(
+                    [r["step"] for r in branch],
+                    [r.get(field, nan) for r in branch],
+                    linestyle="--",
+                    marker="x",
+                    markersize=5,
+                    color="tab:orange" if len(args.runs) == 1 else color,
+                    label="Discarded"
+                    if len(args.runs) == 1
+                    else f"{label} (discarded)",
+                )
+                axis.legend(fontsize=8)
+            axis.set(title=title, xlabel="Logical optimizer step")
             axis.grid(alpha=0.3)
     axes.flat[0].legend()
     figure.savefig(args.output, dpi=150)

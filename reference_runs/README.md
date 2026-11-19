@@ -140,8 +140,10 @@ Direct callers use `--total-steps`, `--save-step` and `--restore-step`.
 
 Discarded updates remain in JSONL with `discarded = true`. `attempt` counts all
 optimizer updates; `step` is the policy's logical step and rewinds on restore.
-`restore_validation` records the rewind and score comparison. Plots omit the
-discarded branch and leave a timing gap at the first resumed update. Sampler
+`restore_validation` records the rewind and score comparison. Plots show the
+retained trajectory as a solid line and the discarded branch as a dashed line,
+starting from the shared checkpoint. The retained timing curve leaves a gap at
+the first resumed update. Sampler
 publication names stay unique across both passes. A restore failure fails the
 run and prevents index registration.
 
