@@ -42,6 +42,7 @@ class ConfigOverrides(BaseModel):
     inference_gpus_per_node: int | None = None
     inference_min_replicas: int | None = None
     inference_max_replicas: int | None = None
+    sglang_tp_size: int | None = Field(default=None, alias="sglang_cfg.tp_size")
     miles_max_lora_slots: int | None = Field(
         default=None, alias="miles_cfg.max_lora_slots"
     )

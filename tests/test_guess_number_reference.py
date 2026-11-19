@@ -185,8 +185,11 @@ def test_launcher_indexes_only_completed_guess_number(
         )
         assert catalog.validation == "guess_number_gpt_oss_20b"
         assert catalog.trainer_image == "miles-v0.1.1-52a7a99"
+        assert "1 x 1 H200" in catalog.hardware
+        assert "0-1 x 1 H200" in catalog.hardware
         assert catalog.spindle_commit == "a" * 40
         records = importlib.import_module("catalog").read_output(output)
+        assert records[0]["adam"]["eps"] == 1e-8
         updates = [row for row in records if row["event"] == "update"]
         assert [row["step"] for row in updates] == [1, 2, 3]
         assert all(row["kl_sample_train_v2"] == 0.125 for row in updates)

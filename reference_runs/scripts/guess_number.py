@@ -184,7 +184,7 @@ def main() -> None:
     held_out = answers[int(1024 * 0.9) :][: config.eval_problems]
     service = tinker.ServiceClient()
     training = service.create_lora_training_client(args.base_model, config.lora_rank)
-    adam = types.AdamParams(learning_rate=config.learning_rate, beta2=0.95)
+    adam = types.AdamParams(learning_rate=config.learning_rate, beta2=0.95, eps=1e-8)
     record(
         "run",
         config=dataclasses.asdict(config),

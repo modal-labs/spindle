@@ -7,4 +7,6 @@ revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
 
 [config_overrides]
 trainer_gpus_per_node = 1
+inference_gpus_per_node = 1
+"sglang_cfg.tp_size" = 1
 inference_max_replicas = 1

@@ -36,7 +36,8 @@ The existing H100 reference pins its hardware and client capacity in
 `[config_overrides]`, preserving the old Python reference recipe. Its fields
 are declared in `ConfigOverrides` in `run.py`; unknown fields and incorrect
 types are rejected. Omitted fields keep their deployment recipe values.
-Use `inference_gpu = "H100!"` to select exact H100 hardware, or the declared
+Use `inference_gpu = "H100!"` to select exact H100 hardware,
+`"sglang_cfg.tp_size"` to match sampler tensor parallelism to its GPU count, or the declared
 `"miles_cfg.max_lora_slots"` key to set adapter capacity. Optional
 `script_args = []` contains the workload's literal CLI arguments. The launcher
 does not forward extra arguments from its own command line. Dataset, grading,
@@ -95,8 +96,7 @@ selection; record the images used for each execution in the index.
 `configs/guess_number_gpt_oss_20b.toml` runs `scripts/guess_number.py` on
 `gpt-oss-20b-lora-32k`. It uses the recipe's selected images, including the
 older Miles v0.1.1 trainer. It requests one H200 trainer instead of the
-recipe's eight data-parallel replicas and limits sampling to one four-H200
-replica. Image versions belong to each execution's index entry.
+recipe's eight data-parallel replicas and uses one H200 sampler with tensor parallel size one. Image versions belong to each execution's index entry.
 
 The task follows tinker-cookbook 0.6.1's multi-turn guess-number game: a hidden
 integer from 0 through 1023, at most ten guesses, higher/lower feedback, reward
