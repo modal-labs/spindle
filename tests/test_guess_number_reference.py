@@ -88,15 +88,11 @@ def test_multiturn_history_and_format_penalty(invalid_scores: bool) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "mode", ["three", "six", "restore", "broken_restore", "rejected"]
-)
+@pytest.mark.parametrize("mode", ["restore", "broken_restore", "rejected"])
 def test_launcher_checkpoint_lifecycle(
     mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    definition = "guess_number_gpt_oss_20b" + (
-        "_restore" if "restore" in mode else "_6steps" if mode == "six" else ""
-    )
+    definition = "guess_number_gpt_oss_20b_restore"
     parameters = tomllib.loads((ROOT / "configs" / f"{definition}.toml").read_text())[
         "workload"
     ]
@@ -112,7 +108,11 @@ def test_launcher_checkpoint_lifecycle(
         workload.PreTrainedTokenizerFast, "from_pretrained", lambda *a, **kw: None
     )
 
+    training_batches: list[tuple[list[int], int]] = []
+
     def sample(*args: object) -> list[list[workload.Episode]]:
+        if args[3] == workload.Config.samples_per_group:
+            training_batches.append((list(args[2]), args[4]))
         return [
             [
                 workload.Episode([([10, 11], sequence(12))], 1.0, True),
@@ -266,6 +266,9 @@ def test_launcher_checkpoint_lifecycle(
             ) == (2, 4, 0)
             assert restore["discarded_score_change"] > 0
             assert training.calls == 8
+            assert training_batches[2] == training_batches[4]
+            assert training_batches[3] == training_batches[5]
+            assert len({tuple(answers) for answers, _ in training_batches}) == 6
             plot = importlib.import_module("plot")
             monkeypatch.setattr(
                 sys,

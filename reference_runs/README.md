@@ -8,7 +8,7 @@ reference_runs/
   configs/dapo_qwen35_4b.toml   # Immutable validation definition
   configs/dapo_qwen38_27b_multinode.toml
   configs/beam_blog_repro.toml
-  configs/guess_number_gpt_oss_20b.toml
+  configs/guess_number_gpt_oss_20b_restore.toml
   scripts/dapo_math.py         # Dataset, grading and training settings
   scripts/guess_number.py      # Multi-turn number guessing through Tinker
   scripts/beam_blog_repro.py    # Beam LoRA training with AIME25 evaluation
@@ -97,7 +97,7 @@ selection; record the images used for each execution in the index.
 
 ## Guess-the-number regression
 
-`configs/guess_number_gpt_oss_20b.toml` runs `scripts/guess_number.py` on
+`configs/guess_number_gpt_oss_20b_restore.toml` runs `scripts/guess_number.py` on
 `gpt-oss-20b-lora-32k`. It uses the recipe's selected images, including the
 older Miles v0.1.1 trainer. It requests one H200 trainer instead of the
 recipe's eight data-parallel replicas and uses one H200 sampler with tensor parallel size one. Image versions belong to each execution's index entry.
@@ -109,17 +109,14 @@ stock Tinker SDK and a pinned tokenizer's chat template, without the cookbook
 training loop. It uses low reasoning effort for GPT-OSS. These measurements
 are a separate workload from the cookbook regression, not interchangeable baselines.
 
-The original definition uses three GRPO updates.
-`configs/guess_number_gpt_oss_20b_6steps.toml` doubles that to six with
-`total_steps = 6` in the `[workload]` block.
-Each update uses eight hidden numbers and four independent trajectories
+The definition retains six GRPO updates. Each update uses eight hidden numbers and four independent trajectories
 per number, rank-32 LoRA, a 64-token response cap and learning rate 3e-5.
 Each trajectory's total reward is centered within its group and applied to
 its sampled tokens. Prior conversation tokens receive zero advantage.
 Eight held-out numbers are evaluated before training and after the last update.
-The original definitions publish each policy and save a final checkpoint.
+Each policy is published for sampling, and the final checkpoint is saved.
 
-`configs/guess_number_gpt_oss_20b_restore.toml` tests checkpoint continuation:
+The checkpoint schedule is:
 
 ```toml
 [workload]
@@ -146,8 +143,15 @@ optimizer updates; `step` is the policy's logical step and rewinds on restore.
 `restore_validation` records the rewind and score comparison. Plots omit the
 discarded branch and leave a timing gap at the first resumed update. Sampler
 publication names stay unique across both passes. A restore failure fails the
-run and prevents index registration. The original definitions keep their prior
-save-only behavior when the restore schedule is absent.
+run and prevents index registration.
+
+Step 2 is already included in its checkpoint and is not trained twice. After
+restore, logical steps 3 and 4 select the same hidden-number batches and sampling
+seeds as their first pass. Their rollouts are generated again with the restored
+policy. The script does not cache or replay sampled responses; seeded sampling
+can still vary between executions. The first pass's weight and optimizer updates
+are undone by loading the checkpoint. The held-out numbers stay disjoint from
+all training batches.
 
 In evaluation and update records, `responses` counts games, `reward` is mean
 cumulative game reward, `response_tokens_mean` is per assistant turn, and
@@ -160,8 +164,8 @@ A successful run confirms the API path works; these short runs do not establish 
 Prepare and deploy this definition as below, then launch it with:
 
 ```bash
-uv run python reference_runs/run.py reference_runs/configs/guess_number_gpt_oss_20b.toml \
-  --output reference_runs/outputs/guess-number-gpt-oss-20b.jsonl
+uv run python reference_runs/run.py reference_runs/configs/guess_number_gpt_oss_20b_restore.toml \
+  --output reference_runs/outputs/guess-number-gpt-oss-20b-restore.jsonl
 ```
 
 ## Prepare and run
