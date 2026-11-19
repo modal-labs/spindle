@@ -68,7 +68,7 @@ learning curve. The `restore-probe`, `restore-expected` and `restore-replayed`
 checkpoints retain their states.
 
 `beam_blog_repro.toml` trains `reflection/Beam-1.0-501B-A23B` with BF16
-LoRA on the bundled `beam-501b-a23b-lora-5k` recipe: two eight-H200 trainer
+LoRA on the bundled `beam-501b-a23b-lora-64k` recipe: two eight-H200 trainer
 nodes and one eight-B300 sampler. Its script uses routing replay, CISPO with
 one update of rollout prefetch and a 400-update cosine learning-rate schedule,
 and evaluates on AIME25. It writes local evaluations, run identity, the replay

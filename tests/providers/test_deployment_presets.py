@@ -128,7 +128,7 @@ def test_single_client_recipe_keeps_shared_backend_capacity():
 
 
 def test_beam_preserves_distinct_attention_and_mlp_gates():
-    spec = load(config_path("beam-501b-a23b-lora-5k"))
+    spec = load(config_path("beam-501b-a23b-lora-64k"))
     assert spec.trainer_image == "miles-v0.2.0-8c5de26"
     assert spec.miles_cfg["cli_options"]["qkv_format"] == "thd"
     miles = MilesBackendConfig(
