@@ -10,7 +10,7 @@ class Config(Parent):
 
     name = "deepseek-v41-flash-lora-64k"
     trainer_image = "miles-v0.1.2-99e1ebe"
-    inference_image = "sglang-v0.5.23-c4182b2"
+    inference_image = "sglang-v0.5.23-5b3b8c8"
     max_context_length = 65536
     trainer_gpu = ["B300", "B200"]
     overrides = {

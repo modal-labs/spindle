@@ -10,7 +10,7 @@ class Config(BaseConfig):
 
     name = "deepseek-v41-flash-lora-8k"
     trainer_image = "miles-v0.1.2-99e1ebe"
-    inference_image = "sglang-v0.5.23-c4182b2"
+    inference_image = "sglang-v0.5.23-5b3b8c8"
     model = "deepseek-ai/DeepSeek-V4.1-Flash"
     # The FP8/FP4 release. The trainer dequantizes it to BF16 as it loads.
     weights_revision = "2cba9e42aa026125f3ed06c6d98c1db82f7ca027"
