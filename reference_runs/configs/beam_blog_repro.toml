@@ -1,4 +1,4 @@
-config = "beam-501b-a23b-lora-5k"
+config = "beam-501b-a23b-lora-64k"
 script = "../scripts/beam_blog_repro.py"
 
 [tokenizer]
