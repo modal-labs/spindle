@@ -28,6 +28,14 @@ Every Miles LoRA `optim_step` result includes `timing/*` metrics for the step:
 | `timing/save_sampler_weights_s`, `timing/publish_weights_s` | Sampler-weight export and publish, reported one step late. |
 | `timing/<phase>_calls` | Calls per phase. |
 
+On Miles v0.2.0, `save_sampler_weights` copies rank-local adapter parameters to
+owned CPU tensors. `publish_weights` includes CPU shard extraction, transfer to
+the coordinator, assembly, adapter conversion, serialization and bulletin
+publication. These deferred operations do not use the training process groups
+or the checkpoint I/O lock. Legacy Miles images still export adapter files
+during `save_sampler_weights`. CPU snapshot memory grows with the number of
+in-flight publications; `sampler_persistence_concurrency` bounds that number.
+
 The trainer log (`modal app logs <frontend>-trainer-<config>`) has the same
 numbers as `{"event": "spindle_step_timing", "phase": ..., "step": ..., "seconds": ...}`
 lines, and `spindle_memory` lines with `max_allocated_gb`.

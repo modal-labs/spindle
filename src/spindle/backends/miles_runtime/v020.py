@@ -22,6 +22,8 @@ from miles.ray.wiring import compute_backend_capability
 from miles.utils.hf_utils.config import load_hf_config
 from miles.utils.lora.hf_lora_targets import get_hf_lora_targets
 
+from spindle.patching import same_signature
+
 
 CHECKPOINT_FORMAT = "miles_adapter_state"
 ACTOR_CLASS = "spindle.backends.miles_runtime.actor_v020.SpindleMilesTrainRayActor"
@@ -32,13 +34,20 @@ def configure_actor() -> None:
     if getattr(original, "_spindle_actor_spec", False):
         return
 
+    @same_signature(original)
     def create(cls: type, config: object) -> object:
         spec = original(cls, config)
         if (
             spec.worker_class
             == "miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor"
         ):
-            return spec.model_copy(update={"worker_class": ACTOR_CLASS})
+            return spec.model_copy(
+                update={
+                    "worker_class": ACTOR_CLASS,
+                    "concurrency_groups": (spec.concurrency_groups or {"default": 1})
+                    | {"sampler_persistence": 1},
+                }
+            )
         return spec
 
     create._spindle_actor_spec = True

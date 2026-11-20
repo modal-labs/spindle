@@ -100,3 +100,32 @@ def test_refresh_retries_transient_open_files(tmp_path):
 
     asyncio.run(SnapshotBulletin(tmp_path, refresh=refresh).refresh())
     assert attempts == 3
+
+
+def test_generated_publication_hides_partial_files_and_cleans_failures(tmp_path):
+    ref = VersionRef("run-a", 1)
+    committed = []
+    board = SnapshotBulletin(tmp_path, commit=lambda: committed.append(ref))
+
+    def partial(directory):
+        assert directory.parent == board.snapshot_dir(ref).parent
+        assert board.read_latest(ref.run_id) is None
+        assert not board.snapshot_dir(ref).exists()
+        (directory / "adapter_model.safetensors").write_bytes(b"partial")
+        raise OSError("interrupted write")
+
+    with pytest.raises(OSError, match="interrupted write"):
+        board.publish_generated(ref, partial)
+    assert not committed
+    assert not list((tmp_path / "run-a").iterdir())
+
+    def complete(directory):
+        (directory / "adapter_model.safetensors").write_bytes(b"complete")
+        (directory / "adapter_config.json").write_text("{}")
+
+    assert board.publish_generated(ref, complete)
+    assert (
+        board.resolve(ref).joinpath("adapter_model.safetensors").read_bytes()
+        == b"complete"
+    )
+    assert committed == [ref]

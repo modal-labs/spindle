@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import numpy as np
@@ -18,6 +19,58 @@ from spindle.backends.miles_runtime.runtime import (
     _worker_env,
 )
 from spindle.errors import BackendFailed
+from spindle.backends.miles_runtime.sampler_snapshot import AdapterShard, SamplerExport
+
+
+@pytest.mark.parametrize("failure", [None, "rank", "get", "write"])
+def test_cpu_publication_releases_store_objects_and_leaves_the_trainer_usable(
+    monkeypatch, failure
+):
+    runtime = MilesRuntime.__new__(MilesRuntime)
+    runtime._closed = False
+    runtime._failure = None
+    runtime._call = asyncio.run
+    references = [0] if failure == "rank" else [0, 1]
+    removed = []
+
+    async def execute(method, **kwargs):
+        return [0, "snapshot conversion failed"] if failure == "rank" else references
+
+    def get(ref):
+        if failure == "get" and ref == 1:
+            raise RuntimeError("snapshot retrieval failed")
+        shard = AdapterShard("layer.lora_A", (4, 2), (2 * ref, 0), torch.ones(2, 2))
+        return nullcontext(SamplerExport((shard,), {}, {}, 0.0))
+
+    store = SimpleNamespace(get=get, remove=removed.append)
+    monkeypatch.setattr(
+        miles_runtime,
+        "object_store",
+        SimpleNamespace(get_instance=lambda: store),
+        raising=False,
+    )
+    runtime._trainer = SimpleNamespace(_execute_slots=execute)
+
+    def publish():
+        with runtime.take_sampler_snapshot("capture") as snapshot:
+            assert not removed
+            if failure == "write":
+                raise RuntimeError("snapshot write failed")
+            torch.testing.assert_close(
+                snapshot.weights()["layer.lora_A"], torch.ones(4, 2)
+            )
+
+    if failure is None:
+        publish()
+    else:
+        with pytest.raises(RuntimeError, match="snapshot"):
+            publish()
+    assert sorted(removed) == references
+
+    async def train():
+        return {"grad_norm": 1.0}
+
+    assert runtime._run(train()) == {"grad_norm": 1.0}
 
 
 def test_worker_env_carries_volume_names_to_other_nodes(monkeypatch):

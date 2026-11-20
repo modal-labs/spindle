@@ -5,6 +5,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Self
 
 import pytest
 
@@ -80,6 +81,30 @@ def test_native_restore_preserves_slot_configuration_and_optimizer_intent(
 
     asyncio.run(run())
     assert bridge.slots == {0: (4, 8), 1: (8, 16)}
+
+
+@pytest.mark.parametrize("groups", [None, {"default": 1, "control": 2}])
+def test_native_publication_has_a_cpu_rpc_lane(
+    api: ModuleType, groups: dict[str, int] | None
+) -> None:
+    class Spec:
+        worker_class = "miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor"
+        concurrency_groups = groups
+
+        @classmethod
+        def create(cls, config: object) -> Self:
+            return cls()
+
+        def model_copy(self, *, update: dict[str, object]) -> SimpleNamespace:
+            return SimpleNamespace(**(vars(self) | update))
+
+    api.TrainerSpec = Spec
+    api.configure_actor()
+    spec = Spec.create(None)
+    assert spec.worker_class == api.ACTOR_CLASS
+    assert spec.concurrency_groups == (groups or {"default": 1}) | {
+        "sampler_persistence": 1
+    }
 
 
 def test_rejected_native_load_keeps_slot_configuration(api: ModuleType) -> None:

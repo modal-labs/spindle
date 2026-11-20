@@ -26,7 +26,9 @@ from miles.backends.training_utils.loss.hub import (
 )
 from miles.backends.training_utils.replay.data import fill_replay_data
 from miles.ray.rollout import train_data_conversion
+from miles.utils import object_store
 from miles.utils.replay_base import routing_replay_manager
+from miles.utils.workers.rpc.common.metadata import rpc
 
 from spindle.backends.score_centering import REPLAY_LOSSES
 
@@ -39,6 +41,7 @@ from .actor_shared import (
 )
 from .native_checkpoint import validate_adapter
 from .qwen3_vl_cp import install_qwen3_vl_cp_position_ids
+from .sampler_snapshot import CpuSamplerSnapshot, SamplerLayout
 from .volumes import sync_checkpoint_volume
 
 if TYPE_CHECKING:
@@ -65,6 +68,8 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
                 bridge_model=qwen3_vl_model, miles_qwen3_vl=miles_qwen3_vl
             )
         result = MultiLoRATrainRayActor.init(self, args, role, **kwargs)
+        self._sampler_snapshots: dict[str, CpuSamplerSnapshot] = {}
+        self._sampler_layouts: dict[int, SamplerLayout] = {}
         pin_fla_kernels_if_loaded()
         mark_actor_initialized()
         return result
@@ -82,7 +87,7 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             # Miles checks keys and shapes, not that each shard on the volume is complete.
             with agree_on_failure_context():
                 validate_adapter(Path(source["path"]), checkpoint=True)
-        return MultiLoRATrainRayActor.load_slot(
+        result = MultiLoRATrainRayActor.load_slot(
             self,
             slot,
             rank,
@@ -90,6 +95,45 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             source=source,
             **({"seed": seed} if seed is not None and source is None else {}),
         )
+        if result is None:
+            self._sampler_layout(slot, rank)
+        return result
+
+    def _sampler_layout(self, slot: int, rank: int) -> SamplerLayout:
+        # Every rank must make the same cache decision before collecting shard metadata.
+        if rank not in self._sampler_layouts:
+            self._sampler_layouts[rank] = SamplerLayout.from_slots(
+                self.adapter_slots, slot
+            )
+        return self._sampler_layouts[rank]
+
+    def capture_sampler_snapshot(
+        self,
+        *,
+        capture_id: str,
+        slot: int,
+        parametrization_fields: dict[str, Any],
+    ) -> None:
+        if capture_id in self._sampler_snapshots:
+            raise ValueError(f"sampler capture already exists: {capture_id}")
+        layout = self._sampler_layout(slot, parametrization_fields["lora_rank"])
+        self._sampler_snapshots[capture_id] = CpuSamplerSnapshot.capture(
+            layout,
+            self.adapter_slots.slot_parameters(slot),
+            self.adapter_slots.parametrization(**parametrization_fields),
+            self.adapter_slots.targets,
+            self.args.lora_dropout,
+        )
+
+    @rpc(concurrency_group="sampler_persistence")
+    def take_sampler_snapshot(
+        self, capture_id: str
+    ) -> object_store.StoreObjectRef | str:
+        try:
+            snapshot = self._sampler_snapshots.pop(capture_id).export()
+            return object_store.get_instance().put(snapshot)
+        except Exception as exc:
+            return f"{type(exc).__name__}: {exc}"
 
     def commit_checkpoint_volume(self) -> None:
         sync_checkpoint_volume("commit")
