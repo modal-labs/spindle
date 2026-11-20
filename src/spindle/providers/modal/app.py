@@ -466,6 +466,7 @@ async def _ready_lora_pool(spec: LoraPoolSpec) -> str:
 @app.function(
     image=sample_image,
     min_containers=0,
+    buffer_containers=2,
     timeout=60 * 60,
     retries=2,
     nonpreemptible=True,
