@@ -147,3 +147,26 @@ tinker_sdk = "0.26.0"
 hardware = "Configured trainers: 1 x 1 H200; samplers: 0-1 x 1 H200."
 region = "us-west"
 notes = "Sampler: sglang-v0.5.23-e003cf9; NCCL_NVLS_ENABLE=0. Same workload as the v0.1.1 baseline. Eight physical updates, six retained; restored scores matched exactly."
+
+[[runs]]
+id = "beam-blog-repro-miles-v020-fused"
+validation = "beam_blog_repro"
+output = "outputs/beam-blog-repro-miles-v020-fused.jsonl"
+spindle_commit = "f58e1c4543c8f02c44a72bd162490862d7e459df"
+trainer_image = "miles-v0.2.0-8c5de26"
+miles_commit = "8c5de2650a6876c2ca17ff221c7e0ba8a2d7b84a"
+tinker_sdk = "0.26.0"
+hardware = "Two eight-H200 trainer nodes; one eight-B300 sampler replica."
+region = "Frontend: us-east."
+notes = '''
+Stock-Tinker execution of beam-501b-a23b-lora-64k, the first with fused (cuDNN)
+trainer attention; earlier Beam runs used unfused attention. Sampler image
+sglang-v0.5.23-e003cf9. Platform-only overrides enabled proxy auth and omitted the
+optional HF secret. It stopped at update 40 of the planned 100, then resumed from the
+update-40 checkpoint to record the step-40 evaluation and stopped after update 41;
+the update-41 interval includes that restart. AIME25 (30 problems, eight samples,
+4,096-token cap): 102/240 (42.5%) initially, 154/240 (64.2%) at update 40.
+Mean evaluation response tokens: 3,162 -> 2,412. Median seconds: trainer
+forward/backward 353.3, between accepted updates 553.4. One seed; checkpoints
+at 10/20/30/40 were saved, and only update 40 was restored.
+'''

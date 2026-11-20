@@ -1,4 +1,6 @@
 import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -16,6 +18,7 @@ from spindle.providers.local import (
     InMemoryKeyValueStore,
     LocalEnginePlatform,
 )
+from spindle.providers.modal.sampler_storage import ModalSamplerStorage
 
 BASE_MODEL = "Qwen/Qwen3-8B"
 DEFINITION = "qwen3_8b"
@@ -337,17 +340,26 @@ def test_closed_parent_export_retry_never_ensures_pool(missing_record) -> None:
     asyncio.run(run())
 
 
-def test_expired_named_artifact_remains_reserved() -> None:
+@pytest.mark.parametrize("persistent", [False, True])
+@pytest.mark.parametrize("expired", [False, True])
+def test_named_artifact_remains_reserved(
+    tmp_path: Path, persistent: bool, expired: bool
+) -> None:
     async def run() -> None:
         now = 100.0
         plane, _, model_id = await plane_with_model(lambda: now)
+        storage = ModalSamplerStorage(Mock(), str(tmp_path))
+        if persistent:
+            plane.read_sampler_artifact = storage.read
+            plane.write_sampler_artifact = storage.write
         request_id = await plane.submit_sampler_export(
             export_request(model_id, ttl_seconds=10)
         )
         result = await plane.retrieve(request_id, timeout=1.0)
         key = sampler_artifact_key(result.result["path"])
         original = await plane.kv.get(key)
-        now = 110.0
+        saved = await plane.get_sampler_artifact(result.result["path"])
+        now = 110.0 if expired else 100.0
         await plane.submit_sampler_export(export_request(model_id, seq_id=2))
         export = await plane._sampler_export_submission(model_id, 2)
         assert export is not None
@@ -356,6 +368,9 @@ def test_expired_named_artifact_remains_reserved() -> None:
                 await plane.get_model(model_id), export, {"publish_version": 8}, now
             )
         assert await plane.kv.get(key) == original
+        if persistent:
+            assert original is None
+            assert await storage.read(saved.model_path) == saved
 
     asyncio.run(run())
 
@@ -428,5 +443,139 @@ def test_exports_sharing_a_publish_version_both_finalize() -> None:
             f"tinker://{model_id}:train:0/sampler_weights/latest/000007"
         )
         assert latest.export_seq_id == 1
+
+    asyncio.run(run())
+
+
+def test_named_checkpoint_loads_on_a_fresh_control_plane(tmp_path: Path) -> None:
+    async def run() -> None:
+        storage = ModalSamplerStorage(Mock(), str(tmp_path))
+        original, _, model_id = await plane_with_model()
+        original.read_sampler_artifact = storage.read
+        original.write_sampler_artifact = storage.write
+        result = await original.retrieve(
+            await original.submit_sampler_export(export_request(model_id)), timeout=1.0
+        )
+        path = result.result["path"]
+        assert await original.kv.get(sampler_artifact_key(path)) is None
+        latest_path = original._sampler_model_path(model_id, "latest")
+        assert (await original.get_sampler_artifact(latest_path)).publish_version == 7
+
+        engines = LocalEnginePlatform(DEFINITION, VersionedExecutor)
+        ensure_pool = AsyncMock()
+        fresh = ControlPlane(
+            InMemoryKeyValueStore(),
+            engines,
+            clock=lambda: 101.0,
+            read_sampler_artifact=storage.read,
+            ensure_sampling_pool=ensure_pool,
+        )
+        session = await fresh.create_session()
+        sampling = await fresh.create_sampling_session(
+            session_id=session.session_id,
+            sampling_session_seq_id=0,
+            model_path=path,
+            definition_ids={DEFINITION},
+        )
+        assert sampling.model_id == model_id
+        assert sampling.publish_version == 7
+        assert sampling.base_model == BASE_MODEL
+        assert sampling.engine_definition_id == DEFINITION
+        assert not sampling.latest
+        ensure_pool.assert_awaited_once_with(sampling)
+        assert await engines.list_instances() == ()
+        assert await fresh.kv.get(sampler_artifact_key(path)) is None
+
+        for seq, kwargs, message in (
+            (1, {"base_model": "wrong-model"}, "base_model does not match"),
+            (2, {"definition_ids": {"other"}}, "not deployed"),
+        ):
+            with pytest.raises(ValueError, match=message):
+                await fresh.create_sampling_session(
+                    session_id=session.session_id,
+                    sampling_session_seq_id=seq,
+                    model_path=path,
+                    **kwargs,
+                )
+        assert ensure_pool.await_count == 1
+
+    asyncio.run(run())
+
+
+def test_durable_checkpoint_expiry_and_missing_paths(tmp_path: Path) -> None:
+    async def run() -> None:
+        storage = ModalSamplerStorage(Mock(), str(tmp_path))
+        original, _, model_id = await plane_with_model()
+        original.read_sampler_artifact = storage.read
+        original.write_sampler_artifact = storage.write
+        result = await original.retrieve(
+            await original.submit_sampler_export(
+                export_request(model_id, ttl_seconds=10)
+            ),
+            timeout=1.0,
+        )
+        fresh = ControlPlane(
+            InMemoryKeyValueStore(),
+            LocalEnginePlatform(DEFINITION, VersionedExecutor),
+            clock=lambda: 110.0,
+            read_sampler_artifact=storage.read,
+        )
+        path = result.result["path"]
+        with pytest.raises(RecordUnavailable, match="expired"):
+            await fresh.get_sampler_artifact(path)
+        with pytest.raises(RecordNotFound):
+            await fresh.get_sampler_artifact(path + "-missing")
+
+    asyncio.run(run())
+
+
+def test_export_retry_finishes_persistence_before_returning(tmp_path: Path) -> None:
+    async def run() -> None:
+        volume = Mock()
+        volume.commit.side_effect = [OSError("commit failed"), None]
+        storage = ModalSamplerStorage(volume, str(tmp_path))
+        plane, _, model_id = await plane_with_model()
+        plane.read_sampler_artifact = storage.read
+        plane.write_sampler_artifact = storage.write
+        request_id = await plane.submit_sampler_export(export_request(model_id))
+        with pytest.raises(OSError, match="commit failed"):
+            await plane.retrieve(request_id, timeout=1.0)
+        result = await plane.retrieve(request_id, timeout=1.0)
+        assert result.status == FutureResolutionStatus.COMPLETE
+        assert (await storage.read(result.result["path"])).publish_version == 7
+        assert volume.commit.call_count == 2
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_named_export_retry_uses_metadata_after_trainer_and_receipt_are_lost(
+    tmp_path: Path, legacy: bool
+) -> None:
+    async def run() -> None:
+        storage = ModalSamplerStorage(Mock(), str(tmp_path))
+        plane, _, model_id = await plane_with_model()
+        if not legacy:
+            plane.read_sampler_artifact = storage.read
+            plane.write_sampler_artifact = storage.write
+        request = export_request(model_id)
+        request_id = await plane.submit_sampler_export(request)
+        result = await plane.retrieve(request_id, timeout=1.0)
+        path = result.result["path"]
+        saved = await plane.get_sampler_artifact(path)
+        original_entry = await plane.kv.get(sampler_artifact_key(path))
+        assert (original_entry is not None) == legacy
+
+        plane.read_sampler_artifact = storage.read
+        plane.write_sampler_artifact = storage.write
+        await plane.kv.delete(sampler_export_result_key(model_id, 1))
+        for instance in await plane.engines.list_instances():
+            await plane.engines.stop_instance(instance.instance_id)
+
+        assert await plane.submit_sampler_export(request) == request_id
+        assert (await plane.retrieve(request_id)).result == result.result
+        assert await storage.read(path) == saved
+        assert await plane.kv.get(sampler_artifact_key(path)) == original_entry
+        assert await plane.engines.active_instances(DEFINITION) == ()
 
     asyncio.run(run())
