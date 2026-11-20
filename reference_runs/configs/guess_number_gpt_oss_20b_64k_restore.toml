@@ -1,0 +1,16 @@
+config = "gpt-oss-20b-lora-64k"
+script = "../scripts/guess_number.py"
+
+[workload]
+tokenizer_model = "openai/gpt-oss-20b"
+tokenizer_revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
+total_steps = 6
+save_step = 2
+restore_step = 4
+
+[config_overrides]
+trainer_gpus_per_node = 2
+inference_gpus_per_node = 1
+"sglang_cfg.tp_size" = 1
+inference_min_replicas = 0
+inference_max_replicas = 1
