@@ -61,6 +61,8 @@ When several clients share a trainer, it trains all of their queued batches toge
 
 Sampler replicas scale between `inference_min_replicas` and `inference_max_replicas`. Each sampled sequence counts as one request, so `num_samples=4` counts four times. By default another replica starts once every replica holds `sglang_cfg.max_running_requests` requests. Set `inference_target_concurrency` lower to scale out earlier. Idle replicas stop after `inference_scaledown_window_s`, so replicas added in one sampling round stay up for the next.
 
+LoRA replicas admit at most `sglang_cfg.max_running_requests` generations, including requests preparing adapters or waiting for prefill. Excess requests receive a retryable 503 so the router can use another replica. `max_queued_requests` controls SGLang's internal queue; it does not add router admission slots. Keep `max_running_requests` within `cuda_graph_max_bs_decode` to keep decode on CUDA graphs.
+
 `inference_scaleup_window_s` delays scale-out until load has stayed above the target that long. Leave it unset for training loops that sample in repeated rounds. See the next section for when to set it.
 
 ### Older Qwen3.5 LoRA checkpoints

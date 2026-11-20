@@ -193,6 +193,7 @@ def start_fft_sidecar(
 
 def start_lora_sidecar(
     *,
+    max_running_requests: int,
     port: int,
     sglang_port: int,
     bulletin_root: str,
@@ -202,6 +203,8 @@ def start_lora_sidecar(
         sys.executable,
         "-m",
         "spindle.inference.lora_sidecar",
+        "--max-running-requests",
+        str(max_running_requests),
         "--port",
         str(port),
         "--upstream-url",

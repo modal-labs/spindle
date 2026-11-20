@@ -460,7 +460,10 @@ def build_rollout_app(
                     bulletin_volume=platform["storage"]["bulletin"],
                 )
                 self.sidecar = (
-                    start_lora_sidecar(**kwargs)  # ty: ignore[invalid-argument-type]
+                    start_lora_sidecar(
+                        **kwargs,  # ty: ignore[invalid-argument-type]
+                        max_running_requests=options["max_running_requests"],
+                    )
                     if lora
                     else start_fft_sidecar(
                         **kwargs,  # ty: ignore[invalid-argument-type]

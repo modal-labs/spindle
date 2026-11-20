@@ -299,8 +299,13 @@ def deployment_apps(frontend, environment):
     command = [sys.executable, "-m", "modal", "app", "list", "--json"]
     if environment:
         command += ["--env", environment]
+    environment_vars = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
+    for key in ("FORCE_COLOR", "CLICOLOR_FORCE"):
+        environment_vars.pop(key, None)
     rows = json.loads(
-        subprocess.run(command, check=True, capture_output=True, text=True).stdout
+        subprocess.run(
+            command, check=True, capture_output=True, text=True, env=environment_vars
+        ).stdout
     )
     prefixes = [f"{frontend}-{role}-" for role in APP_ROLES]
 

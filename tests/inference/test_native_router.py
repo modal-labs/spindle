@@ -96,6 +96,10 @@ def worker():
                 )
                 return
             status = state["statuses"].pop(0) if state["statuses"] else 200
+            if state.get("reject_first_replica"):
+                full = state.setdefault("full_replica", self.replica())
+                if self.replica() == full:
+                    status = 503
             self.reply(
                 {
                     "meta_info": {"completion_tokens": 1, **state.get("meta_info", {})},
@@ -356,3 +360,22 @@ def test_an_unset_prefill_rate_is_measured_from_completed_requests(
         assert second.routing["prefill_tokens_per_second"] == measured
 
     with_router(worker, test, prefill_tokens_per_second=configured)
+
+
+def test_full_replica_is_retried_on_another_worker(worker):
+    worker["observations"] = {"a": {}, "b": {}}
+    worker["reject_first_replica"] = True
+
+    async def test(router):
+        response = await dispatch(router, worker)
+        assert response.response.status_code == 200
+        replicas = [
+            headers["modal-flash-upstream"].split(":")[0]
+            for headers, _ in worker["requests"]
+        ]
+        assert len(replicas) == 2
+        assert replicas[0] == worker["full_replica"]
+        assert replicas[1] != replicas[0]
+        assert len(set(rids(worker))) == 2
+
+    with_router(worker, test)

@@ -1444,3 +1444,19 @@ def test_native_mtp_reuses_the_resolved_target_checkpoint(weights):
     )
     assert row.draft_asset_path is None
     assert row.inference_settings["speculative_draft_model_path"] == row.asset_path
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "deepseek_v41_flash_lora_32k",
+        "deepseek_v41_flash_lora_32k_b300",
+        "deepseek_v41_flash_lora_64k",
+        "deepseek_v41_flash_1017_lora_32k",
+        "deepseek_v41_flash_1017_lora_64k",
+    ],
+)
+def test_deepseek_running_concurrency_fits_decode_graphs(config):
+    deployment = DeploymentConfig.create(load(config_path(config)))
+    assert deployment.inference_settings["max_running_requests"] == 64
+    assert deployment.inference_settings["cuda_graph_max_bs_decode"] == 64
