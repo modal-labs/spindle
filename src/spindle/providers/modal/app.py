@@ -9,6 +9,7 @@ import sys
 import time
 from dataclasses import asdict
 
+import httpx
 import modal
 from huggingface_hub import snapshot_download
 from stitch.pools.modal_flash import ModalFlashPool
@@ -19,7 +20,7 @@ from spindle.control_plane.deployments import DeploymentRoutes, RegistryUnavaila
 from spindle.control_plane.keys import model_key, placement_key, trainer_demand_key
 from spindle.control_plane.queues import RECENT_WINDOW_S, prune_queue_events
 from spindle.control_plane.records import ModelRecord
-from spindle.inference.sampling import sample_task
+from spindle.inference.sampling import keepalive_transport, sample_task
 from spindle.providers.contracts import (
     Parameterization,
     SamplingTask,
@@ -492,6 +493,27 @@ async def execute_sample(task: dict) -> dict:
     return result
 
 
+_pool_client: tuple[asyncio.AbstractEventLoop, httpx.AsyncClient] | None = None
+
+
+def _pool_http_client() -> httpx.AsyncClient:
+    global _pool_client
+    loop = asyncio.get_running_loop()
+    if _pool_client is None or _pool_client[0] is not loop:
+        _pool_client = (
+            loop,
+            httpx.AsyncClient(
+                trust_env=False,
+                transport=keepalive_transport(
+                    limits=httpx.Limits(
+                        max_connections=None, max_keepalive_connections=256
+                    )
+                ),
+            ),
+        )
+    return _pool_client[1]
+
+
 async def _execute_sample(task: dict, stats: dict) -> dict:
     definition_id = str(task["engine_definition_id"])
     parameterization = await parameterization_for(definition_id)
@@ -539,6 +561,7 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
             gateway,
             data_parallel_size=rollout_data_parallel_size,
             headers=proxy_auth_headers(),
+            client=_pool_http_client(),
             context_length=definition.max_context_length,
             stop_token_ids_only=stop_token_ids_only,
             router=router,
@@ -569,6 +592,7 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
         await pool_gateway(spec),
         data_parallel_size=rollout_data_parallel_size,
         headers=proxy_auth_headers(),
+        client=_pool_http_client(),
         on_wait=lambda: _touch_fft_pool(spec),
         context_length=definition.max_context_length,
         stop_token_ids_only=stop_token_ids_only,

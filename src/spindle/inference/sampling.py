@@ -40,8 +40,10 @@ REPLAY_FLAGS = (
 )
 
 
-def keepalive_transport() -> httpx.AsyncHTTPTransport:
-    return httpx.AsyncHTTPTransport(socket_options=list(TCP_KEEPALIVE_OPTIONS))
+def keepalive_transport(**kwargs: Any) -> httpx.AsyncHTTPTransport:
+    return httpx.AsyncHTTPTransport(
+        socket_options=list(TCP_KEEPALIVE_OPTIONS), **kwargs
+    )
 
 
 async def sample_task(
