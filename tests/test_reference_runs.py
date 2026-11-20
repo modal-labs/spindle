@@ -276,6 +276,7 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     assert entry.spindle_commit == "c" * 40
     assert entry.spindle_version == "0.1.8"
     assert entry.trainer_image == prepared.trainer_image
+    assert entry.inference_image == prepared.inference_image
     assert entry.miles_commit in prepared.trainer_image
     assert "not attested" in entry.notes
     with pytest.raises(ValueError, match="already indexed"):
@@ -488,6 +489,7 @@ def test_index_accepts_spindle_run_without_reported_commit() -> None:
         ("missing_provenance", "missing miles_commit"),
         ("external_with_provenance", "external execution records source"),
         ("external_with_version", "external execution records source"),
+        ("external_with_sampler", "external execution records source"),
         ("unknown_entry_field", "extra_forbidden"),
         ("unknown_index_field", "extra_forbidden"),
         ("duplicate_id", "duplicate run IDs in index"),
@@ -506,6 +508,9 @@ def test_index_rejects_invalid_provenance(problem: str, message: str) -> None:
     elif problem == "external_with_version":
         external = next(run for run in data["runs"] if "source" in run)
         external["spindle_version"] = "0.1.8"
+    elif problem == "external_with_sampler":
+        external = next(run for run in data["runs"] if "source" in run)
+        external["inference_image"] = "sglang-v0.5.23-c4182b2"
     elif problem == "unknown_entry_field":
         data["runs"][0]["trainer_iamge"] = "typo"
     elif problem == "unknown_index_field":

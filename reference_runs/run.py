@@ -158,6 +158,7 @@ def main() -> None:
         validation=validation.stem,
         output=os.path.relpath(args.output.resolve(), args.index.resolve().parent),
         trainer_image=recipe.trainer_image,
+        inference_image=recipe.inference_image,
         miles_commit=commit.group(1) if commit else "unknown",
         tinker_sdk=importlib.metadata.version("tinker"),
         hardware=(
@@ -169,8 +170,7 @@ def main() -> None:
         region=recipe.platform["modal"].get("region"),
         notes=(
             "Server metadata from get_server_capabilities; resolved recipe settings; "
-            "remote runtime and hardware are not attested. "
-            f"Configured sampler image: {recipe.inference_image}."
+            "remote runtime and hardware are not attested."
         ),
     )
     with record_run(args.index, entry, indexed=indexed) as output:
