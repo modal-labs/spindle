@@ -465,10 +465,12 @@ def test_real_sdk_lists_and_deletes_checkpoints(tmp_path, monkeypatch) -> None:
             rest.delete_checkpoint_from_tinker_path(newest.tinker_path).result(
                 timeout=30
             )
-        with pytest.raises(tinker.BadRequestError):
-            rest.delete_checkpoint(training.model_id, "weights/%2e%2e/first").result(
-                timeout=30
-            )
+        # The SDK's default transport normalizes dot segments, so send this one raw.
+        traversal = httpx.delete(
+            f"{url}/api/v1/training_runs/{training.model_id}/checkpoints/weights/%2e%2e/first",
+            headers={"x-api-key": API_KEY},
+        )
+        assert traversal.status_code == 400
         assert first.is_dir()
 
 

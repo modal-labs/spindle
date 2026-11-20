@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Changed
+
+- Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.
+
 ### Fixed
 
 - Named sampling checkpoints persist their metadata only on the configured bulletin volume, rather than duplicating it in the artifacts Dict. A fresh deployment using that volume can open their Tinker paths without the original artifacts Dict or trainer session.
