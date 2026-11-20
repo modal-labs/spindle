@@ -2,6 +2,7 @@
 
 import argparse
 import dataclasses
+import hashlib
 import importlib.metadata
 import json
 import math
@@ -178,6 +179,7 @@ def main() -> None:
         "--tokenizer", required=True, nargs=2, metavar=("MODEL", "REVISION")
     )
     parser.add_argument("--total-steps", type=int, default=Config.total_steps)
+    parser.add_argument("--initial-evaluations", type=int)
     parser.add_argument("--save-step", type=int)
     parser.add_argument("--restore-step", type=int)
     args = parser.parse_args()
@@ -188,6 +190,8 @@ def main() -> None:
         save_step=args.save_step,
         restore_step=args.restore_step,
     )
+    if args.initial_evaluations is not None and args.initial_evaluations < 1:
+        parser.error("--initial-evaluations must be positive")
     max_steps = int(1024 * 0.9) // config.groups
     if not 1 <= config.total_steps <= max_steps:
         parser.error(f"--total-steps must be between 1 and {max_steps}")
@@ -222,6 +226,7 @@ def main() -> None:
         adam=adam.model_dump(),
         tinker_sdk=importlib.metadata.version("tinker"),
         recipe=args.base_model,
+        initial_evaluations=args.initial_evaluations,
     )
     previous = None
     step = attempt = 0
@@ -242,7 +247,11 @@ def main() -> None:
         )
         sampler = service.create_sampling_client(model_path=path)
         record(
-            "publication", step=step, attempt=attempt, seconds=time.monotonic() - start
+            "publication",
+            step=step,
+            attempt=attempt,
+            path=path,
+            seconds=time.monotonic() - start,
         )
         if restore_started is not None:
             assert probe is not None and saved_scores is not None
@@ -289,8 +298,36 @@ def main() -> None:
             previous = None
             continue
         if step in (0, config.total_steps):
-            evaluated = sample(sampler, tokenizer, held_out, 1, config.seed, config)
-            record("evaluation", step=step, **summarize(evaluated))
+            for repetition in range(args.initial_evaluations or 1):
+                start = time.monotonic()
+                evaluated = sample(sampler, tokenizer, held_out, 1, config.seed, config)
+                details = {}
+                if args.initial_evaluations:
+                    tokens = [
+                        [sequence.tokens for _, sequence in episode.turns]
+                        for group in evaluated
+                        for episode in group
+                    ]
+                    details = {
+                        "repetition": repetition + 1,
+                        "sample_sha256": hashlib.sha256(
+                            json.dumps(tokens).encode()
+                        ).hexdigest(),
+                        "games": [
+                            {"reward": episode.reward, "solved": episode.solved}
+                            for group in evaluated
+                            for episode in group
+                        ],
+                    }
+                record(
+                    "evaluation",
+                    step=step,
+                    seconds=time.monotonic() - start,
+                    **details,
+                    **summarize(evaluated),
+                )
+            if args.initial_evaluations:
+                return
         if step == config.total_steps:
             start = time.monotonic()
             checkpoint = training.save_state("final").result().path

@@ -8,7 +8,7 @@ New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context an
 
 ### Added
 
-- A guess-the-number reference workload trains through the stock Tinker SDK and records game reward, success rate, timings and sampling/training KL. Its typed workload settings include the tokenizer pins and total steps. An optional save/train-ahead/restore schedule tests checkpoint continuation with optimizer state. Plots distinguish retained and discarded updates.
+- A guess-the-number reference workload trains through the stock Tinker SDK and records game reward, success rate, timings and sampling/training KL. Its typed workload settings include the tokenizer pins and total steps. An optional save/train-ahead/restore schedule tests checkpoint continuation with optimizer state. Plots distinguish retained and discarded updates. An evaluation-only mode repeats the same seeded step-0 evaluation and plots its distribution across image pairs.
 
 - A two-node Qwen3.8-27B DAPO-Math reference definition uses the shared Tinker workload.
 - DAPO-Math references validate checkpoint restoration by replaying an Adam momentum step and sampling the restored adapter after the measured workload.

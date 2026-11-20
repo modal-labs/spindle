@@ -28,6 +28,7 @@ class WorkloadConfig(BaseModel):
     tokenizer_model: str = Field(min_length=1)
     tokenizer_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     total_steps: int | None = Field(default=None, ge=1)
+    initial_evaluations: int | None = Field(default=None, ge=1)
     save_step: int | None = Field(default=None, ge=1)
     restore_step: int | None = Field(default=None, ge=1)
 
@@ -79,6 +80,11 @@ class ValidationRunConfig(BaseModel):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("validation", type=Path, help="validation TOML file")
+    parser.add_argument(
+        "--initial-evaluations",
+        type=int,
+        help="repeat step-0 evaluation on one fixed snapshot, then exit (guess-number only)",
+    )
     destination = parser.add_mutually_exclusive_group(required=True)
     destination.add_argument(
         "--write-config", type=Path, help="write a new deployment Python file and exit"
@@ -87,16 +93,26 @@ def main() -> None:
     parser.add_argument(
         "--index", type=Path, default=Path(__file__).with_name("index.toml")
     )
+    parser.add_argument("--trainer-image", help="override the recipe trainer image")
+    parser.add_argument("--inference-image", help="override the recipe sampler image")
     args = parser.parse_args()
     definition = ValidationRunConfig.model_validate(
         tomllib.loads(args.validation.read_text())
     )
+    if args.initial_evaluations is not None:
+        definition.workload = WorkloadConfig.model_validate(
+            {
+                **definition.workload.model_dump(),
+                "initial_evaluations": args.initial_evaluations,
+            }
+        )
     parent = args.validation.resolve().parent
+    overrides = definition.config_overrides.model_dump(by_alias=True, exclude_none=True)
+    for field in ("trainer_image", "inference_image"):
+        if value := getattr(args, field):
+            overrides[field] = value
     recipe = BaseConfig(
-        **vars(load(config_path(definition.config))),
-        overrides=definition.config_overrides.model_dump(
-            by_alias=True, exclude_none=True
-        ),
+        **vars(load(config_path(definition.config))), overrides=overrides
     )
     if args.write_config:
         with args.write_config.open("x") as stream:
@@ -123,6 +139,7 @@ def main() -> None:
             "--output",
             "--tokenizer",
             "--total-steps",
+            "--initial-evaluations",
             "--save-step",
             "--restore-step",
         }
@@ -203,7 +220,7 @@ def launch(
         definition.workload.tokenizer_model,
         definition.workload.tokenizer_revision,
     ]
-    for field in ("total_steps", "save_step", "restore_step"):
+    for field in ("total_steps", "save_step", "restore_step", "initial_evaluations"):
         value = getattr(definition.workload, field)
         if value is not None:
             arguments.extend(["--" + field.replace("_", "-"), str(value)])

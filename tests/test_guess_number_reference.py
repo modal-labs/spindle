@@ -88,7 +88,7 @@ def test_multiturn_history_and_format_penalty(invalid_scores: bool) -> None:
     )
 
 
-@pytest.mark.parametrize("mode", ["restore", "broken_restore", "rejected"])
+@pytest.mark.parametrize("mode", ["restore", "broken_restore", "rejected", "initial"])
 def test_launcher_checkpoint_lifecycle(
     mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -203,10 +203,17 @@ def test_launcher_checkpoint_lifecycle(
             "openai/gpt-oss-20b",
             "a" * 40,
         ]
-        for field in ("total_steps", "save_step", "restore_step"):
+        for field in (
+            "total_steps",
+            "save_step",
+            "restore_step",
+            "initial_evaluations",
+        ):
             if field in parameters:
                 argv.extend(["--" + field.replace("_", "-"), str(parameters[field])])
         monkeypatch.setattr(sys, "argv", argv)
+        if mode == "initial":
+            sys.argv.extend(["--initial-evaluations", "3"])
         workload.main()
 
     monkeypatch.setattr(launcher, "launch", launch)
@@ -241,6 +248,33 @@ def test_launcher_checkpoint_lifecycle(
         assert catalog.spindle_commit == "a" * 40
         records = importlib.import_module("catalog").read_output(output)
         assert records[0]["adam"]["eps"] == 1e-8
+        if mode == "initial":
+            evaluations = [r for r in records if r["event"] == "evaluation"]
+            assert [r["step"] for r in evaluations] == [0, 0, 0]
+            assert [r["repetition"] for r in evaluations] == [1, 2, 3]
+            assert len({r["sample_sha256"] for r in evaluations}) == 1
+            assert training.calls == 0
+            assert len(training.publications) == 1
+            assert not training.saved
+            plot = importlib.import_module("plot")
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                [
+                    "plot.py",
+                    catalog.id,
+                    "--index",
+                    str(index),
+                    "--initial-distribution",
+                    "--output",
+                    str(tmp_path / "initial.png"),
+                ],
+            )
+            plot.main()
+            assert len(plot.pyplot.gcf().axes[0].collections[0].get_offsets()) == 3
+            plot.pyplot.close("all")
+            assert all(r["event"] not in ("update", "checkpoint") for r in records)
+            return
         updates = [r for r in records if r["event"] == "update"]
         retained = [r for r in updates if not r["discarded"]]
         assert [r["step"] for r in retained] == list(range(1, total + 1))

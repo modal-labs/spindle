@@ -182,13 +182,25 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         '[config_overrides]\nname = "reference-test"\ntrainer_gpu = "H100!"\n'
         '"miles_cfg.max_lora_slots" = 2\n'
     )
+    image_arguments = [
+        "--trainer-image",
+        "miles-v0.1.1-52a7a99",
+        "--inference-image",
+        "sglang-v0.5.23-c4182b2",
+        "--initial-evaluations",
+        "3",
+    ]
     deployment = tmp_path / "deployment.py"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        sys, "argv", ["run", str(definition), "--write-config", str(deployment)]
+        sys,
+        "argv",
+        ["run", str(definition), "--write-config", str(deployment), *image_arguments],
     )
     launcher.main()
     prepared = load(deployment)
+    assert prepared.trainer_image == "miles-v0.1.1-52a7a99"
+    assert prepared.inference_image == "sglang-v0.5.23-c4182b2"
     assert prepared.name == "reference-test"
     assert prepared.trainer_gpu == "H100!"
     assert prepared.miles_cfg["max_lora_slots"] == 2
@@ -216,7 +228,7 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     if not indexed:
         index.parent.mkdir(parents=True, exist_ok=True)
         index.write_text("scratch runs must not read or modify this catalog")
-    arguments = ["run", str(definition), "--output", str(output)]
+    arguments = ["run", str(definition), "--output", str(output), *image_arguments]
     if custom_index:
         arguments.extend(["--index", str(index)])
     monkeypatch.setattr(sys, "argv", arguments)
@@ -237,6 +249,8 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         "2",
         "--restore-step",
         "4",
+        "--initial-evaluations",
+        "3",
         "--literal",
         "a value with spaces",
     ]

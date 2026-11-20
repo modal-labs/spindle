@@ -174,6 +174,33 @@ uv run python reference_runs/run.py reference_runs/configs/guess_number_gpt_oss_
   --output reference_runs/outputs/guess-number-gpt-oss-20b-restore.jsonl
 ```
 
+To measure step-0 repeatability, add `--initial-evaluations 10` to the launcher.
+This creates one untrained adapter and publishes one fixed snapshot, evaluates
+that same snapshot ten times with the same held-out questions and sampling
+seeds, then exits without training or saving a training checkpoint. Evaluation
+records include the repetition number, per-game rewards and success, and a hash
+of the sampled tokens. These repeats measure variation within one warm sampler;
+they do not measure variation across independent sampler starts or adapter initializations.
+Use `--trainer-image` and `--inference-image` on the launcher for both
+`--write-config` and `--output` to compare image pairs without changing the TOML.
+The index records the selected overrides.
+
+When credentials are stored in Modal, the checked-in credential launcher can
+supply them to the existing proxy-auth wrapper and run the workload locally:
+
+```bash
+MODAL_PROFILE=prod uv run --no-sync modal run --env dev reference_runs/modal_client.py \
+  --base-url "$SPINDLE_URL" \
+  --command 'reference_runs/run.py reference_runs/configs/guess_number_gpt_oss_20b_restore.toml --initial-evaluations 10 --output reference_runs/outputs/initial-repeats.jsonl'
+```
+
+Plot distributions of the repeated evaluations with:
+
+```bash
+uv run --no-sync python reference_runs/plot.py OLD_RUN_ID NEW_RUN_ID \
+  --labels "Miles v0.1.1" "Miles v0.2.0" --initial-distribution
+```
+
 ## Prepare and run
 
 Prepare the selected recipe with its reference overrides, then deploy it
