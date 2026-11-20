@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Fixed
 
-- LoRA sampler replicas reject excess concurrent generations with a retryable 503 so dispatchers can use another replica. DeepSeek 32K DSPARK recipes and their derived variants limit running requests to their 64-request CUDA graph ceiling.
+- LoRA sampler replicas reject excess concurrent generations with a retryable 503 so dispatchers can use another replica. Their default scale-out target leaves half the admission slots free. DeepSeek 32K DSPARK recipes and their derived variants limit running requests to their 64-request CUDA graph ceiling.
 - `spindle stop` reads uncolored Modal app JSON even when terminal settings force colors.
 
 ## 0.1.9 - 2026-11-19

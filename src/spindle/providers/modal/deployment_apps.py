@@ -418,7 +418,11 @@ def build_rollout_app(
         min_containers=minimum,
         max_containers=maximum,
         target_concurrency=recipe.inference_target_concurrency
-        or options["max_running_requests"],
+        or (
+            max(1, options["max_running_requests"] // 2)
+            if lora
+            else options["max_running_requests"]
+        ),
         scaleup_window=recipe.inference_scaleup_window_s,
         scaledown_window=window,
         startup_timeout=recipe.inference_startup_timeout_s,
