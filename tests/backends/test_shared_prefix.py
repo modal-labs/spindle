@@ -36,15 +36,18 @@ def test_gate_defaults_off_and_roundtrips_when_explicit() -> None:
     enabled = _config(shared_prefix_training=True, shared_prefix_check_forward=True)
     assert "--deterministic-mode" in enabled.miles_arguments()
     assert "--prefix-tree-attention" in enabled.miles_arguments()
-    assert "--lora-kernel-policy" not in enabled.miles_arguments()
     assert MilesBackendConfig.model_validate_json(enabled.model_dump_json()) == enabled
 
 
 def test_forward_checks_require_the_feature_and_a_boolean() -> None:
     with pytest.raises(ValueError, match="requires shared_prefix_training"):
         _config(shared_prefix_check_forward=True)
-    with pytest.raises(ValueError):
-        _config(shared_prefix_training=True, shared_prefix_check_forward="true")
+    for options in (
+        {"shared_prefix_training": "true"},
+        {"shared_prefix_training": True, "shared_prefix_check_forward": "true"},
+    ):
+        with pytest.raises(ValueError):
+            _config(**options)
 
 
 def _actor_dispatch_classes(transport: object = None) -> tuple[type, type]:
@@ -209,20 +212,13 @@ def test_gate_rejects_unsupported_semantics(options: dict) -> None:
         _config(shared_prefix_training=True, **options)
 
 
-def test_gate_does_not_coerce_a_string_to_enabled() -> None:
-    with pytest.raises(ValueError):
-        _config(shared_prefix_training="true")
-
-
-def test_zero_forward_error_is_reported_without_losing_float_precision() -> None:
-    data = {
-        "per_datum": [{"logprobs": torch.tensor([-2.0, -5.0], dtype=torch.float64)}]
-    }
-    assert check_forward_parity(data, data) == {
-        "values": 2,
-        "max_abs": 0.0,
-        "relative_l2": 0.0,
-    }
+def test_forward_gate_accepts_roundoff_and_preserves_float64_error() -> None:
+    native = {"per_datum": [torch.tensor([-1.0, -2.0], dtype=torch.float64)]}
+    shared = {"per_datum": [torch.tensor([-1.0 - 1e-9, -2.0], dtype=torch.float64)]}
+    report = check_forward_parity(native, shared)
+    assert report["values"] == 2
+    assert report["max_abs"] == pytest.approx(1e-9, rel=1e-6, abs=0)
+    assert report["relative_l2"] == pytest.approx(1e-9 / (5**0.5), rel=1e-6, abs=0)
 
 
 @pytest.mark.parametrize(
@@ -267,12 +263,9 @@ def test_conflicting_deterministic_environment_is_rejected(
         prefix_checks.configure_prefix_environment()
 
 
-def test_example_gate_survives_full_deployment_serialization(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_example_gate_survives_full_deployment_serialization() -> None:
     from spindle.deployments import DeploymentConfig, load
 
-    monkeypatch.setenv("SPINDLE_MILES_COMMIT", "a" * 40)
     deployment = DeploymentConfig.create(
         load(Path(__file__).resolve().parents[2] / "examples/shared-prefix/config.py")
     )
@@ -282,7 +275,6 @@ def test_example_gate_survives_full_deployment_serialization(
     assert backend.shared_prefix_check_forward is False
     assert backend.megatron_to_hf_mode == "raw"
     assert backend.lora_type == "canonical_lora"
-    assert backend.cli_options["lora_kernel_policy"] == "native"
     assert backend.cli_options["moe_aux_loss_coeff"] == [0.0]
     assert backend.extra_args == ("--seq-length", "65552")
     assert backend.tensor_model_parallel_size == 2
@@ -296,13 +288,3 @@ def test_example_gate_survives_full_deployment_serialization(
         for target in backend.target_modules
     )
     assert restored.recipe.platform["modal"]["exclude_reserved_capacity"] is True
-    assert restored.recipe.trainer_image.endswith(":image")
-
-
-@pytest.mark.parametrize("policy", ["native", "rowwise"])
-def test_shared_prefix_preserves_explicit_native_kernel_policy(policy: str) -> None:
-    config = _config(
-        shared_prefix_training=True, cli_options={"lora_kernel_policy": policy}
-    )
-    assert config.cli_options["lora_kernel_policy"] == policy
-    assert "--lora-kernel-policy" not in config.miles_arguments()

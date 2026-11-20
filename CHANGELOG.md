@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Added
+
+- Miles v0.2.0 native LoRA has experimental shared-prefix training behind `miles_cfg.shared_prefix_training`. It is disabled by default; `examples/shared-prefix/config.py` shows the opt-in GLM Flash configuration. Set `miles_cfg.shared_prefix_check_forward=True` to compare native and shared forwards during validation or debugging.
+
 ### Changed
 
 - Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.
@@ -20,7 +24,6 @@ New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context an
 
 - A two-node Qwen3.8-27B DAPO-Math reference definition uses the shared Tinker workload.
 - DAPO-Math references validate checkpoint restoration by replaying an Adam momentum step and sampling the restored adapter after the measured workload.
-- Miles v0.2.0 native LoRA has experimental shared-prefix training behind `miles_cfg.shared_prefix_training`. It is disabled by default; `examples/shared-prefix/config.py` shows the opt-in GLM Flash configuration. Set `miles_cfg.shared_prefix_check_forward=True` to compare native and shared forwards during validation or debugging.
 - `glm53-flash-lora-256k`: GLM-5.3 Flash LoRA with 256K-token context on one 8×B300 node, with expert-routing replay. It trains on a new image, `miles-v0.1.2-99e1ebe-kpool-glm53`, which changes GLM's sparse-attention indexer so 256K sequences fit in GPU memory.
 - `deepseek-v41-flash-1017-lora-64k`: DeepSeek-V4.1-Flash-1017 LoRA with 64K context. Like `deepseek-v41-flash-lora-64k`, it trains on B300 or B200.
 - `kimi-k3-lora-32k` trains LoRA adapters on Moonshot AI Kimi K3 from the MXFP4 release weights, with a 2-node B300 trainer and a 1-node B300 sampler. Adapters train attention, the dense first layer and the shared experts; routed experts stay frozen.
