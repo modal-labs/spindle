@@ -2,13 +2,6 @@
 
 Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [semantic versioning](https://semver.org/). Before 1.0, a minor release (0.x.0) can change config defaults or deployment behavior; a patch release (0.x.y) only fixes bugs. Each release is tagged `vX.Y.Z` and published as a GitHub Release.
 
-## Unreleased
-
-### Fixed
-
-- LoRA sampler replicas reject excess concurrent generations with a retryable 503 so dispatchers can use another replica. Their default scale-out target leaves half the admission slots free. DeepSeek 32K DSPARK recipes and their derived variants limit running requests to their 64-request CUDA graph ceiling.
-- `spindle stop` reads uncolored Modal app JSON even when terminal settings force colors.
-
 ## 0.1.9 - 2026-11-19
 
 New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context and DeepSeek-V4.1-Flash-1017 at 64K context. Miles LoRA training states now restore after a trainer image update that keeps the same checkpoint format, and removing a config stops its sampler pools.
