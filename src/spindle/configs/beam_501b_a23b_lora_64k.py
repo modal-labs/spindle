@@ -2,10 +2,10 @@ from spindle.configuration import BaseConfig
 
 
 class Config(BaseConfig):
-    name = "beam-501b-a23b-lora-5k"
+    name = "beam-501b-a23b-lora-64k"
     model = "reflection/Beam-1.0-501B-A23B"
     weights_revision = "12950ae640b48cbbe9b5bb7735bf197507d6383f"
-    max_context_length = 5120
+    max_context_length = 65536
     trainer_image = "miles-v0.2.0-8c5de26"
     trainer_gpu = "H200"
     trainer_gpus_per_node = 8
@@ -26,7 +26,7 @@ class Config(BaseConfig):
         "context_parallel_size": 1,
         "expert_model_parallel_size": 16,
         "expert_tensor_parallel_size": 1,
-        "max_tokens_per_gpu": 5120,
+        "max_tokens_per_gpu": 65536,
         "dynamic_batch_size": False,
         "max_lora_slots": 2,
         "max_lora_rank": 16,
@@ -47,7 +47,7 @@ class Config(BaseConfig):
         "cli_options": {
             "bf16": True,
             "qkv_format": "thd",
-            "attention_backend": "unfused",
+            "attention_backend": "fused",
             "data_pad_size_multiplier": 1,
             "moe_router_dtype": "fp32",
             "moe_router_use_torch_mm": True,

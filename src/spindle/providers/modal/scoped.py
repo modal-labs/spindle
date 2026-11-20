@@ -40,6 +40,7 @@ from .kv import ModalSessionKeyValueStores, shared_kv
 from .megatron_image import image as default_trainer_image
 from .rollout_image import image_01_c4182b2 as default_sampler_image
 from .sampling import ModalSamplingTaskPlatform
+from .sampler_storage import ModalSamplerStorage
 from .scoped_assignment import claim_model
 from .scoped_control import ScopedControlPlane
 from .scoped_pins import forget_pin_route, pin_demand, publish_pin, touch_pin
@@ -417,7 +418,7 @@ def build_app(
         serialized=True,
         timeout=1200,
         secrets=[*telemetry_secrets, api_secret],
-        volumes={"/checkpoints": checkpoints},
+        volumes={"/checkpoints": checkpoints, "/bulletin": bulletin},
     )
     @modal.concurrent(max_inputs=128)
     @modal.asgi_app(requires_proxy_auth=False)
@@ -438,6 +439,7 @@ def build_app(
 
         stores = ModalSessionKeyValueStores()
         storage = ModalCheckpointStorage(checkpoints)
+        sampler_storage = ModalSamplerStorage(bulletin)
         plane = ScopedControlPlane(
             shared_kv(),
             ModalEnginePlatform(shared_kv(), spawn_engine),
@@ -447,6 +449,8 @@ def build_app(
             sampling_task_stores=stores,
             sampling_tasks=ModalSamplingTaskPlatform(stores, spawn_sampling),
             read_checkpoint_metadata=storage.read_metadata,
+            read_sampler_artifact=sampler_storage.read,
+            write_sampler_artifact=sampler_storage.write,
             list_checkpoints=storage.list,
             delete_checkpoint=storage.delete,
             checkpoint_root=storage.root,

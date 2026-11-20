@@ -448,6 +448,40 @@ def test_catalog_outputs_plot_as_ids_and_partial_files(
     assert interval.get_ydata()[2] == 510.0
 
 
+def test_plot_keeps_each_run_color_when_another_run_lacks_a_panel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    execution = tmp_path / "execution.jsonl"
+    records = [
+        {"event": "evaluation", "time": 0.0, "step": 0},
+        {
+            "event": "update",
+            "time": 1.0,
+            "step": 1,
+            "seconds_since_previous_update": 1.0,
+        },
+    ]
+    for row in records:
+        row.update(
+            responses=1, reward=0.5, response_tokens_mean=4.0, truncated_fraction=0.0
+        )
+    execution.write_text("".join(json.dumps(row) + "\n" for row in records))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "plot",
+            "beam-blog-digitized",
+            str(execution),
+            "--output",
+            str(tmp_path / "p.png"),
+        ],
+    )
+    runpy.run_path(str(ROOT / "plot.py"), run_name="__main__")
+    axes = plotter["pyplot"].gcf().axes
+    assert {axis.lines[-1].get_color() for axis in axes} == {"C1"}
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("reward", None), ("responses", 0), ("truncated_fraction", 2.0), ("time", "x")],
