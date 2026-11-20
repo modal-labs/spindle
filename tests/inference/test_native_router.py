@@ -25,6 +25,8 @@ def worker():
             pass
 
         def replica(self):
+            if state.get("gateway_affinity") and self.command == "POST":
+                return "worker" if self.headers.get("Modal-Session-ID") else "idle"
             return self.headers.get("Modal-Flash-Upstream", "worker:8000").split(":")[0]
 
         def reply(self, value, status=200, *, replica="worker", replay_state=None):
@@ -377,5 +379,26 @@ def test_full_replica_is_retried_on_another_worker(worker):
         assert replicas[0] == worker["full_replica"]
         assert replicas[1] != replicas[0]
         assert len(set(rids(worker))) == 2
+
+    with_router(worker, test)
+
+
+def test_gateway_fallback_releases_affinity_after_a_busy_response(worker):
+    worker["observations"] = {"worker": {"unobservable": True}}
+    worker["gateway_affinity"] = True
+    worker["reject_first_replica"] = True
+
+    async def test(router):
+        response = await dispatch(router, worker)
+        assert response.response.status_code == 200
+        assert response.replica == "idle"
+        attempts = [
+            {key.lower(): value for key, value in headers.items()}
+            for headers, _ in worker["requests"]
+        ]
+        assert len(attempts) == 2
+        assert attempts[0]["modal-session-id"] == "session"
+        assert "modal-session-id" not in attempts[1]
+        assert "modal-flash-upstream" not in attempts[1]
 
     with_router(worker, test)
