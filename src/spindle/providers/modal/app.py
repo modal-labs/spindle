@@ -818,6 +818,7 @@ def _plane():
     name="server",
     region=FRONTEND_REGION,
     routing_region=FRONTEND_REGION,
+    buffer_containers=2,
     timeout=20 * 60,
     volumes={
         CHECKPOINT_ROOT: checkpoint_volume,
