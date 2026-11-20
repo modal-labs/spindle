@@ -77,7 +77,6 @@ def test_recording_concurrent_runs_preserves_index(
         "output": "first.jsonl",
         "spindle_commit": "a" * 40,
         "trainer_image": "test-image",
-        "miles_commit": "b" * 40,
         "tinker_sdk": "0.26.0",
         "hardware": "test hardware",
     }
@@ -125,7 +124,6 @@ def test_failed_run_keeps_partial_metrics_without_indexing(tmp_path: Path) -> No
         output="partial.jsonl",
         spindle_commit="a" * 40,
         trainer_image="test",
-        miles_commit="b" * 40,
         tinker_sdk="0.26.0",
         hardware="test",
     )
@@ -277,7 +275,6 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     assert entry.spindle_version == "0.1.8"
     assert entry.trainer_image == prepared.trainer_image
     assert entry.inference_image == prepared.inference_image
-    assert "miles_commit" not in tomllib.loads(index.read_text())["runs"][0]
     assert "not attested" in entry.notes
     with pytest.raises(ValueError, match="already indexed"):
         launcher.main()

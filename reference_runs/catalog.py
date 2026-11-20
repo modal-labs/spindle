@@ -24,7 +24,6 @@ class ReferenceRun(BaseModel):
     spindle_version: str | None = None
     trainer_image: str | None = None
     inference_image: str | None = None
-    miles_commit: str | None = None
     tinker_sdk: str | None = None
     hardware: str | None = None
     source: str | None = None
@@ -52,7 +51,6 @@ class ReferenceRun(BaseModel):
                 self.spindle_commit,
                 self.spindle_version,
                 self.inference_image,
-                self.miles_commit,
                 *runtime.values(),
             )
         ):
