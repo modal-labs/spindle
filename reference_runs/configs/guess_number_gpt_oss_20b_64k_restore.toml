@@ -10,7 +10,5 @@ restore_step = 4
 
 [config_overrides]
 trainer_gpus_per_node = 2
-inference_gpus_per_node = 1
-"sglang_cfg.tp_size" = 1
 inference_min_replicas = 0
 inference_max_replicas = 1
