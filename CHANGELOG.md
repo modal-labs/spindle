@@ -8,6 +8,14 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - Megatron full-parameter training accepts `[T, K]` candidate targets and weights, including mixed candidate counts in one batch, for scoring and custom losses. Candidate scores share one vocabulary softmax in both the chunked output head and tensor-parallel path.
 
+### Changed
+
+- Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.
+
+### Fixed
+
+- Named sampling checkpoints persist their metadata only on the configured bulletin volume, rather than duplicating it in the artifacts Dict. A fresh deployment using that volume can open their Tinker paths without the original artifacts Dict or trainer session.
+
 ## 0.1.9 - 2026-11-19
 
 New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context and DeepSeek-V4.1-Flash-1017 at 64K context. Miles LoRA training states now restore after a trainer image update that keeps the same checkpoint format, and removing a config stops its sampler pools.
