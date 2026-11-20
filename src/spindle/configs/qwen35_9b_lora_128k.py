@@ -10,8 +10,6 @@ class Config(Parent):
     trainer_gpus_per_node = 4
     inference_gpu = "H200"
     trainer_max_clients_per_instance = 8
-    inference_min_replicas = 8
-    inference_max_replicas = 8
     overrides = {
         "miles_cfg.megatron_to_hf_mode": "raw",
         "miles_cfg.lora_type": "canonical_lora",
