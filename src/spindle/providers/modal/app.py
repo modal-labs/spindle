@@ -76,6 +76,7 @@ from .lora_pool import (
     stop_pool as stop_lora_pool,
 )
 from .sampling import ModalSamplingTaskPlatform
+from .sampler_storage import BULLETIN_ROOT, ModalSamplerStorage
 from .usage import USAGE_ROOT, sample_meter, usage_sink, usage_volume
 from .router_image import with_router
 from .trainer_reconciler import (
@@ -112,6 +113,10 @@ CHECKPOINT_VOLUME_NAME = PLATFORM["storage"]["checkpoints"]
 checkpoint_volume = modal.Volume.from_name(
     CHECKPOINT_VOLUME_NAME, create_if_missing=True, version=2
 )
+sampler_volume = modal.Volume.from_name(
+    PLATFORM["storage"]["bulletin"], create_if_missing=True, version=2
+)
+sampler_storage = ModalSamplerStorage(sampler_volume)
 TRAINER_DEPLOYMENT_ENV = {
     **trainer_deployment_env(),
     FRONTEND_SETTINGS_ENV: json.dumps(asdict(SETTINGS)),
@@ -795,6 +800,8 @@ def _plane():
         creation_error=deployment_error,
         sampling_task_stores=task_stores,
         read_checkpoint_metadata=_read_checkpoint_metadata,
+        read_sampler_artifact=sampler_storage.read,
+        write_sampler_artifact=sampler_storage.write,
         list_checkpoints=_list_checkpoints,
         delete_checkpoint=_delete_checkpoint,
         checkpoint_root=CHECKPOINT_ROOT,
@@ -813,7 +820,11 @@ def _plane():
     region=FRONTEND_REGION,
     routing_region=FRONTEND_REGION,
     timeout=20 * 60,
-    volumes={CHECKPOINT_ROOT: checkpoint_volume, USAGE_ROOT: usage_volume(APP_NAME)},
+    volumes={
+        CHECKPOINT_ROOT: checkpoint_volume,
+        BULLETIN_ROOT: sampler_volume,
+        USAGE_ROOT: usage_volume(APP_NAME),
+    },
     secrets=[modal.Secret.from_name(API_SECRET_NAME, required_keys=["TINKER_API_KEY"])],
 )
 @modal.concurrent(max_inputs=128, target_inputs=16)
