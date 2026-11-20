@@ -418,11 +418,7 @@ def build_rollout_app(
         min_containers=minimum,
         max_containers=maximum,
         target_concurrency=recipe.inference_target_concurrency
-        or (
-            max(1, options["max_running_requests"] // 2)
-            if lora
-            else options["max_running_requests"]
-        ),
+        or options["max_running_requests"],
         scaleup_window=recipe.inference_scaleup_window_s,
         scaledown_window=window,
         startup_timeout=recipe.inference_startup_timeout_s,
@@ -464,10 +460,7 @@ def build_rollout_app(
                     bulletin_volume=platform["storage"]["bulletin"],
                 )
                 self.sidecar = (
-                    start_lora_sidecar(
-                        **kwargs,  # ty: ignore[invalid-argument-type]
-                        max_running_requests=options["max_running_requests"],
-                    )
+                    start_lora_sidecar(**kwargs)  # ty: ignore[invalid-argument-type]
                     if lora
                     else start_fft_sidecar(
                         **kwargs,  # ty: ignore[invalid-argument-type]

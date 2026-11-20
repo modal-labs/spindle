@@ -65,7 +65,7 @@ class BaseConfig:
     inference_disk_mib = 0
     inference_min_replicas = 0
     inference_max_replicas = 8
-    # None scales LoRA at half max_running_requests, FFT at the full limit.
+    # None scales out when a replica's max_running_requests slots are full.
     inference_target_concurrency = None
     # None measures the rate from the pool's own prefills.
     inference_routing_prefill_tokens_per_second = None

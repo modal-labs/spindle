@@ -45,11 +45,7 @@ def create_app(
     upstream_url: str,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
-    max_running_requests: int = 128,
 ) -> FastAPI:
-    if max_running_requests < 1:
-        raise ValueError("max_running_requests must be at least 1")
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.client = httpx.AsyncClient(
@@ -57,10 +53,10 @@ def create_app(
             timeout=3000,
             trust_env=False,
             transport=transport,
-            # Generation admission must not block health or routing observations.
+            # SGLang owns admission. Long generations must not exhaust the
+            # HTTP pool before its configured concurrency or block control calls.
             limits=httpx.Limits(max_connections=None, max_keepalive_connections=20),
         )
-        app.state.generation_slots = 0
         app.state.adapter_lock = asyncio.Lock()
         app.state.registered_adapters = {}
         app.state.adapter_resolutions = {}
@@ -138,7 +134,7 @@ def create_app(
             )
         return {
             "replica": os.environ.get("MODAL_TASK_ID", "local"),
-            "active": app.state.generation_slots,
+            "active": len(app.state.routing_requests),
             "adapters": dict(Counter(app.state.routing_requests.values())),
             "request_ids": list(app.state.routing_requests),
             "pending_adapters": pending_adapters,
@@ -195,38 +191,10 @@ def create_app(
 
     async def generate_once(payload: dict) -> Response:
         rid = payload["rid"]
-        inputs = payload.get("input_ids", payload.get("text", []))
-        batch = (
-            len(inputs)
-            if isinstance(inputs, list)
-            and inputs
-            and isinstance(inputs[0], (list, str))
-            else 1
-        )
-        sampling = payload.get("sampling_params") or {}
-        if isinstance(sampling, list):
-            sampling = sampling[0] if sampling else {}
-        slots = batch * max(1, int(sampling.get("n", 1)))
-        if slots > max_running_requests:
-            return JSONResponse(
-                {
-                    "error": "Batch exceeds replica capacity; split it into smaller requests"
-                },
-                status_code=400,
-            )
-        if app.state.generation_slots + slots > max_running_requests:
-            return JSONResponse(
-                {"error": "Sampler replica is at capacity; retry another replica"},
-                status_code=503,
-                headers={"Retry-After": "0"},
-            )
-        # One event loop owns admission across all dispatchers and adapters.
-        app.state.generation_slots += slots
+        remember_request(payload)
         try:
-            remember_request(payload)
             return await generate_response(payload)
         finally:
-            app.state.generation_slots -= slots
             if isinstance(rid, str):
                 app.state.routing_requests.pop(rid, None)
                 app.state.request_work.pop(rid, None)
@@ -402,7 +370,6 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--upstream-url", required=True)
-    parser.add_argument("--max-running-requests", type=int, required=True)
     parser.add_argument("--bulletin-root", required=True)
     parser.add_argument("--bulletin-volume", default="")
     args = parser.parse_args()
@@ -412,9 +379,7 @@ def main() -> None:
         refresh = modal.Volume.from_name(args.bulletin_volume, version=2).reload
     bulletin = SnapshotBulletin(Path(args.bulletin_root), refresh=refresh)
     uvicorn.run(
-        create_app(
-            bulletin, args.upstream_url, max_running_requests=args.max_running_requests
-        ),
+        create_app(bulletin, args.upstream_url),
         host=args.host,
         port=args.port,
     )
