@@ -280,6 +280,8 @@ uv run python reference_runs/plot.py \
   reference_runs/outputs/my-run.jsonl dapo-qwen35-4b-miles-v011
 ```
 
+Use `--labels "Baseline" "Candidate"` to give the runs shorter legend labels.
+
 The chart shows held-out accuracy, training reward, response length and update
 timing. It uses sampling-plus-training durations when every compared update
 records them, otherwise seconds between accepted updates. It supports partial files and writes

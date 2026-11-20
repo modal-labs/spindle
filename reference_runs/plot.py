@@ -23,6 +23,7 @@ PANELS = [
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("runs", nargs="+", help="index IDs or JSONL paths")
+    parser.add_argument("--labels", nargs="+", help="one display label per run")
     parser.add_argument(
         "--index", type=Path, default=Path(__file__).with_name("index.toml")
     )
@@ -30,15 +31,24 @@ def main() -> None:
         "--output", type=Path, default=Path(__file__).with_name("reference-runs.png")
     )
     args = parser.parse_args()
+    if args.labels is not None and len(args.labels) != len(args.runs):
+        parser.error("--labels requires one label per run")
     catalog = ReferenceRunIndex.model_validate(tomllib.loads(args.index.read_text()))
     index = {entry.id: entry for entry in catalog.runs}
     figure, axes = pyplot.subplots(2, 2, figsize=(11, 7), layout="constrained")
     runs = []
-    for run in args.runs:
+    for run_number, run in enumerate(args.runs):
         entry = index.get(run)
         path = args.index.parent / entry.output if entry else Path(run)
         records = read_output(path, published=bool(entry and entry.source))
-        runs.append((run if run in index else path.stem, records))
+        label = (
+            args.labels[run_number]
+            if args.labels
+            else run
+            if run in index
+            else path.stem
+        )
+        runs.append((label, records))
     update_durations = all(
         "update_seconds" in r
         for _, records in runs

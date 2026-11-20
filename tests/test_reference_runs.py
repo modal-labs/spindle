@@ -413,11 +413,23 @@ def test_catalog_outputs_plot_as_ids_and_partial_files(
     partial.write_text("".join(json.dumps(row) + "\n" for row in records) + '{"event":')
     picture = tmp_path / "comparison.png"
     monkeypatch.setattr(
-        sys, "argv", ["plot", catalog[0].id, str(partial), "--output", str(picture)]
+        sys,
+        "argv",
+        [
+            "plot",
+            catalog[0].id,
+            str(partial),
+            "--labels",
+            "Indexed run",
+            "Partial run",
+            "--output",
+            str(picture),
+        ],
     )
     runpy.run_path(str(ROOT / "plot.py"), run_name="__main__")
     assert picture.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     interval = plotter["pyplot"].gcf().axes[3].lines[-1]
+    assert interval.get_label() == "Partial run"
     assert interval.get_xdata().tolist() == [1, 2, 3]
     assert interval.get_ydata()[0] == 500.0
     assert np.isnan(interval.get_ydata()[1])
