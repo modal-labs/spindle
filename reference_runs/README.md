@@ -98,8 +98,8 @@ selection; record the images used for each execution in the index.
 ## Guess-the-number regression
 
 `configs/guess_number_gpt_oss_20b_restore.toml` runs `scripts/guess_number.py` on
-`gpt-oss-20b-lora-32k`. It uses the recipe's selected images, including the
-older Miles v0.1.1 trainer. It requests one H200 trainer instead of the
+`gpt-oss-20b-lora-32k`. It uses the recipe's selected images, currently Miles v0.2.0 and SGLang v0.5.23.
+It requests one H200 trainer instead of the
 recipe's eight data-parallel replicas and uses one H200 sampler with tensor parallel size one. Image versions belong to each execution's index entry.
 
 The task follows tinker-cookbook 0.6.1's multi-turn guess-number game: a hidden
