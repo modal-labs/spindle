@@ -521,8 +521,7 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
                 _routers[spec.app_name] = create_router(
                     spec.app_name,
                     gateway,
-                    capacity=settings["max_running_requests"]
-                    + settings["max_queued_requests"],
+                    capacity=settings["max_running_requests"],
                     prefill_tokens_per_second=definition.recipe.inference_routing_prefill_tokens_per_second,
                     balance_absolute=definition.recipe.inference_routing_balance_absolute,
                     balance_relative=definition.recipe.inference_routing_balance_relative,

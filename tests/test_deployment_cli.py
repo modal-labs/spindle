@@ -803,7 +803,14 @@ def test_app_flag_names_every_app_after_the_frontend(deployed):
     assert deployed.calls == ["frontend"]
 
 
-def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, capsys):
+@pytest.mark.parametrize("force_color", [False, True])
+def test_stop_stops_the_frontend_then_pool_creators_then_pools(
+    monkeypatch, capsys, force_color
+):
+    if force_color:
+        monkeypatch.setenv("FORCE_COLOR", "1")
+        monkeypatch.setenv("CLICOLOR_FORCE", "1")
+        monkeypatch.setenv("TERM", "screen-256color")
     listed = [
         ("my-spindle-lora-qwen35-9b-lora-16k", "deployed"),
         ("my-spindle-trainer-qwen35-9b-lora-16k", "deployed"),
@@ -822,7 +829,17 @@ def test_stop_stops_the_frontend_then_pool_creators_then_pools(monkeypatch, caps
         calls.append(command[3:])
         if command[3:5] == ["app", "list"]:
             rows = [{"description": name, "state": state} for name, state in listed]
-            return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+            env = kwargs.get("env", {})
+            colored = force_color and (
+                env.get("FORCE_COLOR")
+                or env.get("CLICOLOR_FORCE")
+                or env.get("TERM") != "dumb"
+                or not env.get("NO_COLOR")
+            )
+            output = json.dumps(rows)
+            if colored:
+                output = "\x1b[1m" + output + "\x1b[0m"
+            return subprocess.CompletedProcess(command, 0, output, "")
         if command[5].endswith("-latest"):
             return subprocess.CompletedProcess(
                 command, 1, "", "App is already stopped."

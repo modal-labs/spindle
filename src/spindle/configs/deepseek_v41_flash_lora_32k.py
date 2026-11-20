@@ -15,6 +15,8 @@ class Config(Parent):
         "sglang_cfg.speculative_algorithm": "DSPARK",
         "sglang_cfg.speculative_dspark_block_size": 5,
         "sglang_cfg.cuda_graph_max_bs_decode": 64,
+        "sglang_cfg.max_running_requests": 64,
+        "sglang_cfg.max_queued_requests": 8,
     }
 
 
