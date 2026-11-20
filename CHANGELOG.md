@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Added
+
+- Megatron full-parameter training accepts `[T, K]` candidate targets and weights, including mixed candidate counts in one batch, for scoring and custom losses. Candidate scores share one vocabulary softmax in both the chunked output head and tensor-parallel path.
+
 ### Changed
 
 - Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.
