@@ -9,8 +9,8 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Coroutine
-from contextlib import contextmanager, suppress
+from collections.abc import Coroutine, Generator
+from contextlib import ExitStack, contextmanager, suppress
 from functools import wraps
 from itertools import count
 from pathlib import Path
@@ -28,6 +28,7 @@ from . import nemotron_h_omni
 from .native_checkpoint import materialize_adapter
 from .out_of_memory import OUT_OF_MEMORY
 from .replay_data import install_bridge_replay, validate_routed_experts
+from .sampler_snapshot import SamplerExport
 from .volumes import checkpoint_volume_path, sync_checkpoint_volume
 
 # CPU-side data helpers can be imported without the optional GPU runtime.
@@ -212,6 +213,38 @@ class MilesRuntime:
             materialize_adapter(written, Path(path), checkpoint=False)
             return
         _materialize_capture(path)
+
+    @property
+    def supports_cpu_sampler_capture(self) -> bool:
+        return self._v020 is not None
+
+    def capture_sampler_snapshot(
+        self, *, capture_id: str, slot: int, rank: int, alpha: float
+    ) -> None:
+        self._run(
+            self._trainer._execute_slots(
+                "capture_sampler_snapshot",
+                capture_id=capture_id,
+                slot=slot,
+                parametrization_fields=self._bridge.fields(rank, alpha),
+            )
+        )
+
+    @contextmanager
+    def take_sampler_snapshot(self, capture_id: str) -> Generator[SamplerExport]:
+        results = self._run_best_effort(
+            self._trainer._execute_slots("take_sampler_snapshot", capture_id=capture_id)
+        )
+        references = [result for result in results if not isinstance(result, str)]
+        store = object_store.get_instance()
+        with ExitStack() as stack:
+            for ref in references:
+                stack.callback(store.remove, ref)
+            errors = [result for result in results if isinstance(result, str)]
+            if errors:
+                raise RuntimeError("; ".join(errors))
+            parts = [stack.enter_context(store.get(ref)) for ref in references]
+            yield SamplerExport.combine(parts)
 
     def _gather_capture(self, written: Path, path: Path) -> None:
         """Make every node's writes to a capture on the checkpoint volume visible here."""

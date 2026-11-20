@@ -2,6 +2,7 @@ import asyncio
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,6 +30,7 @@ from spindle.providers.modal.checkpoint_storage import ModalCheckpointStorage
 
 
 class FakeMilesRuntime:
+    supports_cpu_sampler_capture = False
     supports_seed = True
     revision = "a" * 40
     checkpoint_format = "miles_torch_dist"
@@ -820,6 +822,70 @@ def test_volume_captures_wait_for_checkpoint_persistence(
         release.set()
         persist.result(timeout=5)
         export.result(timeout=5)
+
+
+@pytest.mark.parametrize("fail_publication", [False, True])
+def test_native_capture_and_training_continue_during_publication(
+    tmp_path, monkeypatch, fail_publication
+):
+    writing, release = threading.Event(), threading.Event()
+
+    class NativeRuntime(FakeMilesRuntime):
+        supports_cpu_sampler_capture = True
+        value = b"old"
+
+        def capture_sampler_snapshot(self, *, capture_id, **kwargs):
+            self.snapshot = self.value
+
+        @contextmanager
+        def take_sampler_snapshot(self, capture_id):
+            value = self.snapshot
+
+            def write(path):
+                writing.set()
+                assert release.wait(timeout=5)
+                (path / "adapter_model.safetensors").write_bytes(value)
+                if fail_publication:
+                    raise RuntimeError("publication interrupted")
+                (path / "adapter_config.json").write_text("{}")
+
+            yield SimpleNamespace(write=write)
+
+        def optim_step(self, parameters):
+            self.value = b"new"
+            return super().optim_step(parameters)
+
+    runtime = NativeRuntime()
+    backend = _backend(tmp_path, runtime)
+    backend._captures_on_volume = True
+    backend.accept_model("model-a", _spec())
+    root = tmp_path / "bulletin"
+    monkeypatch.setenv("SPINDLE_BULLETIN_ROOT", str(root))
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        with backend._checkpoint_io_lock:
+            workers.submit(
+                backend.capture_sampler_snapshot, "model-a", "capture", 1
+            ).result(timeout=5)
+            assert not backend.capture_dir.exists()
+            publication = workers.submit(backend.publish_sampler_snapshot, "capture")
+            assert writing.wait(timeout=5)
+            backend.jobs["model-a"].accumulating = True
+            backend.optim_step(("model-a",), AdamParams(learning_rate=1e-4))
+            assert runtime.value == b"new"
+            release.set()
+            if fail_publication:
+                with pytest.raises(RuntimeError, match="publication interrupted"):
+                    publication.result(timeout=5)
+            else:
+                publication.result(timeout=5)
+    board = SnapshotBulletin(root)
+    if fail_publication:
+        assert board.read_latest("model-a") is None
+        assert not list(root.rglob("*.tmp"))
+    else:
+        path = board.resolve(VersionRef("model-a", 1))
+        assert (path / "adapter_model.safetensors").read_bytes() == b"old"
+    assert not backend._sampler_captures
 
 
 @pytest.mark.parametrize("seed", [None, 0, 7])

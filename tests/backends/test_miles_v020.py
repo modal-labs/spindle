@@ -5,6 +5,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Self
 
 import pytest
 
@@ -17,7 +18,15 @@ def api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
         ),
         "miles.ray.placement_group": dict(create_trainer_handles=None),
         "miles.ray.specs.train": dict(
-            ACTOR_ROLE="actor", TrainerSpec=None, compute_trainer_configs=None
+            ACTOR_ROLE="actor",
+            TrainerSpec=None,
+            compute_trainer_configs=None,
+            TRAINER_CONCURRENCY_GROUPS={
+                "default": 1,
+                "heartbeat_status": 1,
+                "fault_injector": 1,
+                "kill_self": 1,
+            },
         ),
         "miles.ray.train.init_request": dict(TrainerControllerInitRequest=None),
         "miles.ray.wiring": dict(compute_backend_capability=None),
@@ -80,6 +89,30 @@ def test_native_restore_preserves_slot_configuration_and_optimizer_intent(
 
     asyncio.run(run())
     assert bridge.slots == {0: (4, 8), 1: (8, 16)}
+
+
+@pytest.mark.parametrize("groups", [None, {"default": 1, "control": 2}])
+def test_native_publication_has_a_cpu_rpc_lane(
+    api: ModuleType, groups: dict[str, int] | None
+) -> None:
+    class Spec:
+        worker_class = "miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor"
+        concurrency_groups = groups
+
+        @classmethod
+        def create(cls, config: object) -> Self:
+            return cls()
+
+        def model_copy(self, *, update: dict[str, object]) -> SimpleNamespace:
+            return SimpleNamespace(**(vars(self) | update))
+
+    api.TrainerSpec = Spec
+    api.configure_actor()
+    spec = Spec.create(None)
+    assert spec.worker_class == api.ACTOR_CLASS
+    assert spec.concurrency_groups == api.TRAINER_CONCURRENCY_GROUPS | (
+        groups or {}
+    ) | {"sampler_persistence": 1}
 
 
 def test_rejected_native_load_keeps_slot_configuration(api: ModuleType) -> None:

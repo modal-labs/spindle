@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from miles.utils.args.runtime import AllConfig
+    from miles.utils.args.runtime import AllConfig, TrainerConfig
     from miles.tinker.runtime import MilesBackend
 
 
@@ -16,11 +16,18 @@ from miles.backends.training_utils.checkpoint.adapter.parametrization import (
     base_model_fingerprint,
 )
 from miles.ray.placement_group import create_trainer_handles
-from miles.ray.specs.train import ACTOR_ROLE, TrainerSpec, compute_trainer_configs
+from miles.ray.specs.train import (
+    ACTOR_ROLE,
+    TRAINER_CONCURRENCY_GROUPS,
+    TrainerSpec,
+    compute_trainer_configs,
+)
 from miles.ray.train.init_request import TrainerControllerInitRequest
 from miles.ray.wiring import compute_backend_capability
 from miles.utils.hf_utils.config import load_hf_config
 from miles.utils.lora.hf_lora_targets import get_hf_lora_targets
+
+from spindle.patching import same_signature
 
 
 CHECKPOINT_FORMAT = "miles_adapter_state"
@@ -32,13 +39,21 @@ def configure_actor() -> None:
     if getattr(original, "_spindle_actor_spec", False):
         return
 
-    def create(cls: type, config: object) -> object:
+    @same_signature(original)
+    def create(cls: type[TrainerSpec], config: TrainerConfig) -> TrainerSpec:
         spec = original(cls, config)
         if (
             spec.worker_class
             == "miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor"
         ):
-            return spec.model_copy(update={"worker_class": ACTOR_CLASS})
+            return spec.model_copy(
+                update={
+                    "worker_class": ACTOR_CLASS,
+                    "concurrency_groups": TRAINER_CONCURRENCY_GROUPS
+                    | (spec.concurrency_groups or {})
+                    | {"sampler_persistence": 1},
+                }
+            )
         return spec
 
     create._spindle_actor_spec = True

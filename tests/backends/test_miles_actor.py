@@ -9,6 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+import torch
 
 
 class FakeDist:
@@ -109,6 +110,7 @@ def _load_actor(monkeypatch):
     importlib.import_module("spindle.backends.score_centering")
     importlib.import_module("spindle.backends.miles_runtime.moe_permute")
     importlib.import_module("spindle.backends.miles_runtime.out_of_memory")
+    importlib.import_module("spindle.backends.miles_runtime.sampler_snapshot")
     monkeypatch.delitem(
         sys.modules, "spindle.backends.miles_runtime.actor_shared", raising=False
     )
@@ -280,7 +282,7 @@ def test_gloo_group_waits_as_long_as_the_distributed_timeout(
     assert groups == [{"backend": "gloo", "timeout": timedelta(minutes=expected)}]
 
 
-def test_v020_native_worker_starts_without_loading_the_bridge_provider(monkeypatch):
+def _load_native_actor(monkeypatch):
     _load_actor(monkeypatch)
     from spindle.backends.score_centering import REPLAY_LOSSES
 
@@ -308,6 +310,12 @@ def test_v020_native_worker_starts_without_loading_the_bridge_provider(monkeypat
     _module(
         monkeypatch, "spindle.backends.miles_runtime.native_checkpoint"
     ).validate_adapter = None
+    _module(monkeypatch, "miles.utils.workers.rpc.common.metadata").rpc = (
+        lambda **kwargs: lambda function: function
+    )
+    _module(monkeypatch, "miles.utils.object_store").get_instance = lambda: (
+        types.SimpleNamespace(put=lambda value: value)
+    )
 
     parent = sys.modules[
         "miles.backends.megatron_utils.lora.actor"
@@ -345,6 +353,65 @@ def test_v020_native_worker_starts_without_loading_the_bridge_provider(monkeypat
     )
     assert result == 0
     assert actor.mode == "raw"
+    return module, actor
+
+
+def test_v020_native_worker_starts_without_loading_the_bridge_provider(monkeypatch):
+    _load_native_actor(monkeypatch)
+
+
+def test_native_snapshot_remains_valid_after_slot_reuse(monkeypatch):
+    _, actor = _load_native_actor(monkeypatch)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    values = torch.arange(4, dtype=torch.bfloat16).reshape(2, 2)
+    spec = types.SimpleNamespace(
+        key="layer.lora_A",
+        global_shape=(2, 2),
+        offsets=(0, 0),
+        local_shape=(2, 2),
+        is_primary=True,
+    )
+    actor.args = types.SimpleNamespace(lora_dropout=0.0)
+    actor.adapter_slots = types.SimpleNamespace(
+        slot_parameters=lambda slot: [values],
+        get_local_shard_specs=lambda slot: [spec],
+        piece_parameter=lambda slot, holds: [(0, torch.arange(4))],
+        parametrization=lambda **fields: fields,
+        targets={},
+        lora_rank=lambda slot: 2,
+    )
+    actor.slot_optimizers = {0: object()}
+
+    def unload(self, slot):
+        self.slot_optimizers.pop(slot)
+
+    monkeypatch.setattr(
+        sys.modules["miles.backends.megatron_utils.lora.actor"].MultiLoRATrainRayActor,
+        "unload_slot",
+        unload,
+        raising=False,
+    )
+    with pytest.raises(ValueError, match="rank differs"):
+        actor.capture_sampler_snapshot(
+            capture_id="wrong-rank", slot=0, parametrization_fields={"lora_rank": 4}
+        )
+    actor.capture_sampler_snapshot(
+        capture_id="first", slot=0, parametrization_fields={"lora_rank": 2}
+    )
+    actor.unload_slot(0)
+    assert not actor._sampler_layouts
+    values.add_(10)
+    exported = actor.take_sampler_snapshot("first")
+    torch.testing.assert_close(
+        exported.weights()[spec.key], values - 10, rtol=0, atol=0
+    )
+    assert "KeyError" in actor.take_sampler_snapshot("first")
+    actor.capture_sampler_snapshot(
+        capture_id="second", slot=0, parametrization_fields={"lora_rank": 2}
+    )
+    torch.testing.assert_close(
+        actor.take_sampler_snapshot("second").weights()[spec.key], values
+    )
 
 
 def test_checkpoint_is_published_from_committed_state(monkeypatch, tmp_path) -> None:

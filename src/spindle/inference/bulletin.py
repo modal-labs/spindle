@@ -102,10 +102,26 @@ class SnapshotBulletin:
 
     def publish(self, ref: VersionRef, source_dir: str | Path) -> bool:
         source = Path(source_dir)
-        manifest = _manifest(ref, source)
+
+        def write(directory: Path) -> None:
+            for name in PEFT_FILES:
+                shutil.copy2(source / name, directory / name)
+
+        return self._publish_generated(ref, write, _manifest(ref, source))
+
+    def publish_generated(self, ref: VersionRef, write: Callable[[Path], None]) -> bool:
+        """Write an adapter directly into unpublished bulletin storage."""
+        return self._publish_generated(ref, write, None)
+
+    def _publish_generated(
+        self,
+        ref: VersionRef,
+        write: Callable[[Path], None],
+        manifest: dict[str, Any] | None,
+    ) -> bool:
         target = self.snapshot_dir(ref)
         with self._lock:
-            created = self._install(target, source, manifest)
+            created, manifest = self._install(ref, target, write, manifest)
             if not created:
                 if _read_manifest(target) != manifest:
                     raise ImmutableSnapshotError(ref.identity)
@@ -119,18 +135,20 @@ class SnapshotBulletin:
 
     def _install(
         self,
+        ref: VersionRef,
         target: Path,
-        source: Path,
-        manifest: dict[str, Any],
-    ) -> bool:
-        if target.exists():
-            return False
+        write: Callable[[Path], None],
+        manifest: dict[str, Any] | None,
+    ) -> tuple[bool, dict[str, Any]]:
+        if manifest is not None and target.exists():
+            return False, manifest
         target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
         try:
             temp.mkdir()
-            for name in PEFT_FILES:
-                shutil.copy2(source / name, temp / name)
+            write(temp)
+            if manifest is None:
+                manifest = _manifest(ref, temp)
             (temp / _MANIFEST).write_text(
                 json.dumps(manifest, sort_keys=True, separators=(",", ":")),
                 encoding="utf-8",
@@ -140,8 +158,8 @@ class SnapshotBulletin:
             except OSError:
                 if not target.exists():
                     raise
-                return False
-            return True
+                return False, manifest
+            return True, manifest
         finally:
             shutil.rmtree(temp, ignore_errors=True)
 

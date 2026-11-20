@@ -6,6 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- Miles v0.2.0 sampler saves capture owned CPU tensors before training resumes. Shard assembly, adapter conversion and file publication run asynchronously, without intermediate checkpoint files or the checkpoint I/O lock. Legacy Miles images keep their existing export path.
 - Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.
 
 ### Fixed

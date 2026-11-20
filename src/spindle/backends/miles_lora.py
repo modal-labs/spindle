@@ -432,27 +432,34 @@ class MilesCommandBackend(Backend):
             raise ValueError(f"sampler capture already exists: {capture_id}")
         state = self.jobs[model_id]
         path = self.capture_dir / "sampler" / capture_id
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with (
-            self._timer.phase(
-                "save_sampler_weights", state.optimizer_step, model_id=model_id
-            ),
-            self._volume_capture_io(),
+        with self._timer.phase(
+            "save_sampler_weights", state.optimizer_step, model_id=model_id
         ):
-            self.runtime.export_slot_peft(
-                slot=self.job_to_slot[model_id],
-                path=str(path),
-                rank=state.rank,
-                alpha=state.alpha,
-                base_model=self.base_model,
-                target_modules=self.config.peft_target_modules,
-                lora_dropout=self.config.lora_dropout,
-            )
-        self._first("first_sampler_export_done", step=state.optimizer_step)
+            if self.runtime.supports_cpu_sampler_capture:
+                self.runtime.capture_sampler_snapshot(
+                    capture_id=capture_id,
+                    slot=self.job_to_slot[model_id],
+                    rank=state.rank,
+                    alpha=state.alpha,
+                )
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with self._volume_capture_io():
+                    self.runtime.export_slot_peft(
+                        slot=self.job_to_slot[model_id],
+                        path=str(path),
+                        rank=state.rank,
+                        alpha=state.alpha,
+                        base_model=self.base_model,
+                        target_modules=self.config.peft_target_modules,
+                        lora_dropout=self.config.lora_dropout,
+                    )
+        self._first("first_sampler_capture_done", step=state.optimizer_step)
         self._sampler_captures[capture_id] = {
             "model_id": model_id,
             "publish_version": requested_version,
-            "path": path,
+            "optimizer_step": state.optimizer_step,
+            "path": None if self.runtime.supports_cpu_sampler_capture else path,
         }
         return SamplerPublication(
             publish_version=requested_version,
@@ -463,30 +470,34 @@ class MilesCommandBackend(Backend):
     def publish_sampler_snapshot(self, capture_id: str) -> None:
         try:
             capture = self._sampler_captures[capture_id]
-            volume_name = os.environ.get("SPINDLE_BULLETIN_VOLUME")
-            bulletin = SnapshotBulletin(
-                os.environ["SPINDLE_BULLETIN_ROOT"],
-                commit=(
-                    (lambda: _commit_volume(volume_name))
-                    if volume_name is not None
-                    else None
-                ),
-            )
-            job = self.jobs.get(capture["model_id"])
-            publish_step = job.optimizer_step if job is not None else -1
+            publish_step = capture["optimizer_step"]
             with (
                 self._timer.phase(
                     "publish_weights", publish_step, model_id=capture["model_id"]
                 ),
-                self._volume_capture_io(),
+                contextlib.ExitStack() as stack,
             ):
-                bulletin.publish(
-                    VersionRef(
-                        capture["model_id"],
-                        int(capture["publish_version"]),
-                    ),
-                    capture["path"],
+                snapshot = (
+                    stack.enter_context(self.runtime.take_sampler_snapshot(capture_id))
+                    if capture["path"] is None
+                    else None
                 )
+                volume_name = os.environ.get("SPINDLE_BULLETIN_VOLUME")
+                bulletin = SnapshotBulletin(
+                    os.environ["SPINDLE_BULLETIN_ROOT"],
+                    commit=(
+                        (lambda: _commit_volume(volume_name))
+                        if volume_name is not None
+                        else None
+                    ),
+                )
+                ref = VersionRef(capture["model_id"], int(capture["publish_version"]))
+                if snapshot is not None:
+                    bulletin.publish_generated(ref, snapshot.write)
+                else:
+                    with self._volume_capture_io():
+                        bulletin.publish(ref, capture["path"])
+            self._first("first_sampler_export_done", step=publish_step)
             if (
                 self._profiling_active
                 and self._profile.step is not None
@@ -495,7 +506,7 @@ class MilesCommandBackend(Backend):
                 self._stop_profiling()
         finally:
             capture = self._sampler_captures.pop(capture_id, None)
-            if capture is not None:
+            if capture is not None and capture["path"] is not None:
                 shutil.rmtree(capture["path"], ignore_errors=True)
 
     def _volume_capture_io(self) -> contextlib.AbstractContextManager:
