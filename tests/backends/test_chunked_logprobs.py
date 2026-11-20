@@ -11,15 +11,19 @@ from spindle.backends.megatron_runtime.common.chunked_logprobs import (  # noqa:
 @pytest.mark.parametrize(
     ("fp32", "temperature"), [(True, 1.0), (True, 0.7), (False, 1.0)]
 )
+@pytest.mark.parametrize("candidates", [None, 1, 5])
 def test_chunked_logprobs_match_full_log_softmax(
-    fp32: bool, temperature: float
+    candidates: int | None, fp32: bool, temperature: float
 ) -> None:
     torch.manual_seed(0)
     hidden = torch.randn(37, 16, dtype=torch.float64, requires_grad=True)
     weight = torch.randn(50, 16, dtype=torch.float64, requires_grad=True)
-    labels = torch.randint(0, 50, (37,))
+    labels = torch.randint(0, 50, (37,) if candidates is None else (37, candidates))
+    if candidates and candidates > 1:
+        labels[:, 1] = labels[:, 0]
+        labels[5, -1] = -100
     labels[[3, 10]] = -100
-    grad = torch.randn(37, dtype=torch.float64)
+    grad = torch.randn(labels.shape, dtype=torch.float64)
 
     logprobs = chunked_logprobs(
         hidden, weight, labels, chunk=8, fp32=fp32, temperature=temperature
@@ -30,8 +34,8 @@ def test_chunked_logprobs_match_full_log_softmax(
 
     full = (
         torch.log_softmax(hidden @ weight.t() / temperature, dim=-1)
-        .gather(1, labels.clamp(min=0)[:, None])
-        .squeeze(1)
+        .gather(1, labels.clamp(min=0).reshape(37, -1))
+        .reshape(labels.shape)
         .masked_fill(labels == -100, 0)
     )
     (full * grad).sum().backward()

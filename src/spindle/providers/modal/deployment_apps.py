@@ -89,6 +89,8 @@ TRAINER_IMAGES = {
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {
+    # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches
+    "sglang-v0.5.23-3db151a": rollout_image.image_04_3db151a,
     "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
     # https://github.com/modal-projects/sglang/pull/81 Serve DeepSeek-V4 LoRA on quantized bases
     "sglang-v0.5.21-a3e0e17": deepseek_v41_image.image_01_a3e0e17,

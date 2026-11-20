@@ -288,7 +288,7 @@ def test_service_endpoints(monkeypatch) -> None:
             "spindle_commit": "abc123",
         }
         config = await client.post("/api/v1/client/config", json={})
-        assert config.json()["use_pyqwest_transport"] is False
+        assert config.json()["use_pyqwest_transport"] is True
         telemetry = await client.post("/api/v1/telemetry", json={})
         assert telemetry.json() == {"status": "accepted"}
         await client.aclose()
