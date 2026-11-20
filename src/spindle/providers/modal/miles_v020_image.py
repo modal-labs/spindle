@@ -79,3 +79,7 @@ image_02_8c5de26 = image_at("8c5de2650a6876c2ca17ff221c7e0ba8a2d7b84a")
 
 # Native canonical and routed-expert adapters, including Nemotron Nano (#47, #49).
 image_03_e814245 = image_at("e8142459617f8220825ddbacf054b8b17cabdd82")
+
+
+# Native shared-prefix execution and bounded-memory native LoRA (#53).
+image_04_7da41f2 = grouped_gemm_image_at("7da41f2f7d024fdb60d4ce456fb04af3cbd1ff73")

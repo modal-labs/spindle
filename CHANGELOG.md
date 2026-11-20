@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- Miles v0.2.0 native LoRA has experimental shared-prefix training behind `miles_cfg.shared_prefix_training`. It is disabled by default; `examples/shared-prefix/config.py` shows the opt-in GLM Flash configuration. Set `miles_cfg.shared_prefix_check_forward=True` to compare native and shared forwards during validation or debugging.
+- Miles v0.2.0 native LoRA has experimental shared-prefix training behind `miles_cfg.shared_prefix_training`. It is disabled by default; `glm53-flash-lora-shared-prefix-64k` provides the opt-in GLM Flash configuration on one 8×B300 node using `miles-v0.2.0-7da41f2`. Set `miles_cfg.shared_prefix_check_forward=True` to compare native and shared forwards during validation or debugging.
 
 ### Changed
 

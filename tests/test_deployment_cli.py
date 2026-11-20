@@ -309,6 +309,20 @@ def test_new_spindle_version_redeploys_trainer_and_inference(deployed):
     assert deployed.calls == ["trainer", "inference", "frontend"]
 
 
+def test_recipe_capacity_change_redeploys_both_gpu_apps(
+    deployed: SimpleNamespace,
+) -> None:
+    row = deployment()
+    cli.deploy([row])
+    spec = deepcopy(row.recipe)
+    spec.exclude_reserved_capacity = True
+    deployed.calls.clear()
+    cli.deploy([DeploymentConfig.create(spec)])
+    assert deployed.calls == ["trainer", "inference", "frontend"]
+    assert deployed.platform == row.recipe.platform
+    assert deployed.configs[0]["recipe"]["exclude_reserved_capacity"] is True
+
+
 def test_configs_saved_before_versioning_report_0_1_0():
     saved = deployment().model_dump(mode="json")
     del saved["spindle_version"]

@@ -263,14 +263,15 @@ def test_conflicting_deterministic_environment_is_rejected(
         prefix_checks.configure_prefix_environment()
 
 
-def test_example_gate_survives_full_deployment_serialization() -> None:
-    from spindle.deployments import DeploymentConfig, load
+def test_bundled_glm_gate_survives_full_deployment_serialization() -> None:
+    from spindle.deployments import DeploymentConfig, config_path, load
 
     deployment = DeploymentConfig.create(
-        load(Path(__file__).resolve().parents[2] / "examples/shared-prefix/config.py")
+        load(config_path("glm53-flash-lora-shared-prefix-64k"))
     )
     restored = DeploymentConfig.model_validate_json(deployment.model_dump_json())
     backend = MilesBackendConfig(**restored.trainer_settings["miles"])
+    assert restored.recipe.trainer_image == "miles-v0.2.0-7da41f2"
     assert backend.shared_prefix_training is True
     assert backend.shared_prefix_check_forward is False
     assert backend.megatron_to_hf_mode == "raw"
@@ -287,4 +288,4 @@ def test_example_gate_survives_full_deployment_serialization() -> None:
         fnmatchcase("model.visual.blocks.0.mlp.gate_proj", target)
         for target in backend.target_modules
     )
-    assert restored.recipe.platform["modal"]["exclude_reserved_capacity"] is True
+    assert restored.recipe.exclude_reserved_capacity is True

@@ -863,11 +863,13 @@ def test_launchers_do_not_reparse_backend_config(builders, monkeypatch):
     )
 
 
+@pytest.mark.parametrize("scope", ["frontend", "recipe"])
 def test_reserved_capacity_exclusion_survives_config_roundtrip_for_both_gpu_apps(
-    builders, monkeypatch
+    builders, monkeypatch, scope
 ):
     row = deployment()
-    row.recipe.platform["modal"]["exclude_reserved_capacity"] = True
+    row.recipe.exclude_reserved_capacity = scope == "recipe"
+    row.recipe.platform["modal"]["exclude_reserved_capacity"] = scope == "frontend"
     row.recipe.trainer_gpus_per_node = row.recipe.inference_gpus_per_node = 8
     row = DeploymentConfig.model_validate_json(row.model_dump_json())
     clusters = []

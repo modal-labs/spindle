@@ -1,11 +1,11 @@
-"""Experimental opt-in GLM Flash shared-prefix LoRA; one trainer and adapter."""
+"""64K GLM-5.3 Flash shared-prefix native LoRA on one 8×B300 node."""
 
 from spindle.configs.glm53_flash_lora_64k import Config as Parent
 
 
 class Config(Parent):
-    name = "glm53-flash-lora-shared-prefix-b300"
-    trainer_image = "spindle.providers.modal.shared_prefix_image:image"
+    name = "glm53-flash-lora-shared-prefix-64k"
+    trainer_image = "miles-v0.2.0-7da41f2"
     inference_image = "sglang-v0.5.23-c4182b2-glm53"
     trainer_gpu = "B300"
     trainer_gpus_per_node = 8
@@ -19,6 +19,7 @@ class Config(Parent):
         "MKL_NUM_THREADS": "8",
         "PYTORCH_ALLOC_CONF": "expandable_segments:True",
     }
+    exclude_reserved_capacity = True
     inference_gpu = "B300"
     inference_memory_mib = 786432
     max_context_length = 65552
@@ -70,7 +71,6 @@ class Config(Parent):
         },
     }
     overrides = {
-        "platform.modal.exclude_reserved_capacity": True,
         "sglang_cfg.enable_return_routed_experts": False,
     }
 
