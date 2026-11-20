@@ -35,6 +35,8 @@ publication. These deferred operations do not use the training process groups
 or the checkpoint I/O lock. Legacy Miles images still export adapter files
 during `save_sampler_weights`. CPU snapshot memory grows with the number of
 in-flight publications; `sampler_persistence_concurrency` bounds that number.
+Snapshots include the raw slot's rank padding, which CPU extraction removes
+before publication.
 
 The trainer log (`modal app logs <frontend>-trainer-<config>`) has the same
 numbers as `{"event": "spindle_step_timing", "phase": ..., "step": ..., "seconds": ...}`

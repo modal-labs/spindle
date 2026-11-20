@@ -1,4 +1,5 @@
 from dataclasses import replace
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -26,19 +27,16 @@ def test_snapshot_survives_slot_mutation_and_reuse() -> None:
         get_local_shard_specs=lambda slot: [
             spec,
             replace_shard(spec, is_primary=False),
+            replace_shard(spec, key="head.lora_B.vocab_padding"),
         ],
-        piece_parameter=lambda slot, holds: [(0, indices), (1, indices)],
+        piece_parameter=lambda slot, holds: [(0, indices), (1, indices), (2, indices)],
     )
     layout = SamplerLayout.from_slots(slots, 0)
     metadata = {"rank": 2, "groups": ["q", "k"]}
-    first = CpuSamplerSnapshot.capture(
-        layout, [parameter, parameter], metadata, {}, 0.0
-    )
+    first = CpuSamplerSnapshot.capture(layout, [parameter], metadata, {}, 0.0)
     with torch.no_grad():
         parameter.add_(100)
-    second = CpuSamplerSnapshot.capture(
-        layout, [parameter, parameter], metadata, {}, 0.0
-    )
+    second = CpuSamplerSnapshot.capture(layout, [parameter], metadata, {}, 0.0)
     metadata["groups"].clear()
     expected = torch.tensor([[0, 2], [8, 10]], dtype=torch.bfloat16)
     torch.testing.assert_close(
@@ -56,18 +54,20 @@ def replace_shard(spec: SimpleNamespace, **fields: object) -> SimpleNamespace:
     return SimpleNamespace(**(vars(spec) | fields))
 
 
-def test_rank_shards_assemble_without_transporting_layout_indices() -> None:
-    first = AdapterShard(
-        "expert.lora_B", (2, 4), (0, 0), torch.tensor([[1, 2], [5, 6]])
-    )
-    second = AdapterShard(
-        "expert.lora_B", (2, 4), (0, 2), torch.tensor([[3, 4], [7, 8]])
-    )
+@pytest.mark.parametrize("shape,axis", [((2, 4), 1), ((4, 2, 3), 0), ((2, 4, 3), 1)])
+def test_rank_shards_assemble_without_transporting_layout_indices(
+    shape: tuple[int, ...], axis: int
+) -> None:
+    expected = torch.arange(math.prod(shape)).reshape(shape)
+    pieces = expected.chunk(2, axis)
+    offsets = [0] * len(shape)
+    first = AdapterShard("expert.lora_B", shape, tuple(offsets), pieces[0])
+    offsets[axis] = pieces[0].shape[axis]
+    second = AdapterShard("expert.lora_B", shape, tuple(offsets), pieces[1])
     parts = [SamplerExport((shard,), {"rank": 2}, {}, 0.0) for shard in (first, second)]
+    parts.append(SamplerExport((), {"rank": 2}, {}, 0.0))
     merged = SamplerExport.combine(parts)
-    torch.testing.assert_close(
-        merged.weights()[first.key], torch.arange(1, 9).reshape(2, 4)
-    )
+    torch.testing.assert_close(merged.weights()[first.key], expected)
     with pytest.raises(ValueError, match="metadata differs"):
         SamplerExport.combine(
             [parts[0], replace(parts[1], parametrization={"rank": 4})]

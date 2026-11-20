@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from miles.utils.args.runtime import AllConfig
+    from miles.utils.args.runtime import AllConfig, TrainerConfig
     from miles.tinker.runtime import MilesBackend
 
 
@@ -40,7 +40,7 @@ def configure_actor() -> None:
         return
 
     @same_signature(original)
-    def create(cls: type, config: object) -> object:
+    def create(cls: type[TrainerSpec], config: TrainerConfig) -> TrainerSpec:
         spec = original(cls, config)
         if (
             spec.worker_class

@@ -378,10 +378,28 @@ def test_native_snapshot_remains_valid_after_slot_reuse(monkeypatch):
         piece_parameter=lambda slot, holds: [(0, torch.arange(4))],
         parametrization=lambda **fields: fields,
         targets={},
+        lora_rank=lambda slot: 2,
     )
+    actor.slot_optimizers = {0: object()}
+
+    def unload(self, slot):
+        self.slot_optimizers.pop(slot)
+
+    monkeypatch.setattr(
+        sys.modules["miles.backends.megatron_utils.lora.actor"].MultiLoRATrainRayActor,
+        "unload_slot",
+        unload,
+        raising=False,
+    )
+    with pytest.raises(ValueError, match="rank differs"):
+        actor.capture_sampler_snapshot(
+            capture_id="wrong-rank", slot=0, parametrization_fields={"lora_rank": 4}
+        )
     actor.capture_sampler_snapshot(
         capture_id="first", slot=0, parametrization_fields={"lora_rank": 2}
     )
+    actor.unload_slot(0)
+    assert not actor._sampler_layouts
     values.add_(10)
     exported = actor.take_sampler_snapshot("first")
     torch.testing.assert_close(

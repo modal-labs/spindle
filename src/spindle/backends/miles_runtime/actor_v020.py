@@ -107,6 +107,16 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
             )
         return self._sampler_layouts[rank]
 
+    def unload_slot(self, slot: int) -> dict[str, object] | None:
+        result = MultiLoRATrainRayActor.unload_slot(self, slot)
+        ranks = {self.adapter_slots.lora_rank(slot) for slot in self.slot_optimizers}
+        self._sampler_layouts = {
+            rank: layout
+            for rank, layout in self._sampler_layouts.items()
+            if rank in ranks
+        }
+        return result
+
     def capture_sampler_snapshot(
         self,
         *,
@@ -116,6 +126,8 @@ class SpindleMilesTrainRayActor(ProfiledActor, MultiLoRATrainRayActor):
     ) -> None:
         if capture_id in self._sampler_snapshots:
             raise ValueError(f"sampler capture already exists: {capture_id}")
+        if parametrization_fields["lora_rank"] != self.adapter_slots.lora_rank(slot):
+            raise ValueError("sampler capture rank differs from the live slot")
         layout = self._sampler_layout(slot, parametrization_fields["lora_rank"])
         self._sampler_snapshots[capture_id] = CpuSamplerSnapshot.capture(
             layout,
