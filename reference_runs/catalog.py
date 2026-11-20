@@ -39,7 +39,6 @@ class ReferenceRun(BaseModel):
         """
         runtime = {
             "trainer_image": self.trainer_image,
-            "miles_commit": self.miles_commit,
             "tinker_sdk": self.tinker_sdk,
             "hardware": self.hardware,
         }
@@ -53,6 +52,7 @@ class ReferenceRun(BaseModel):
                 self.spindle_commit,
                 self.spindle_version,
                 self.inference_image,
+                self.miles_commit,
                 *runtime.values(),
             )
         ):

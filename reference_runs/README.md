@@ -280,6 +280,7 @@ identifies the frontend answering that request. Missing metadata is omitted; the
 launcher never substitutes its local source revision. The SDK request uses a raw
 response to retain fields its typed capability model discards.
 `trainer_image` and `inference_image` record the trainer and sampler image names.
+The launcher does not infer source commits from image names; `miles_commit` is optional.
 Image, hardware and region settings describe the resolved recipe; they do not
 attest the remote trainer's actual source, image or GPU identity. Observed runtime
 details can be added to the entry after verification. Historical entries may

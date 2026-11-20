@@ -4,7 +4,6 @@ import argparse
 import importlib.metadata
 import os
 import pprint
-import re
 import runpy
 import sys
 import tomllib
@@ -148,18 +147,12 @@ def main() -> None:
         parser.error(
             "--base-model, --output, --tokenizer and workload step flags are supplied by the launcher"
         )
-    commit = (
-        re.search(r"-([0-9a-f]{7,40})(?:-|$)", recipe.trainer_image)
-        if recipe.trainer_image.startswith("miles-")
-        else None
-    )
     entry = ReferenceRun(
         id=args.output.stem,
         validation=validation.stem,
         output=os.path.relpath(args.output.resolve(), args.index.resolve().parent),
         trainer_image=recipe.trainer_image,
         inference_image=recipe.inference_image,
-        miles_commit=commit.group(1) if commit else "unknown",
         tinker_sdk=importlib.metadata.version("tinker"),
         hardware=(
             f"Configured trainers: {recipe.trainer_nodes} x "
