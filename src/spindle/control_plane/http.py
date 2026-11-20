@@ -455,7 +455,7 @@ def create_control_plane_app(
             "parallel_fwdbwd_chunks": True,
             "proto_write_fwdbwd": True,
             "proto_compress_fwdbwd": True,
-            "use_pyqwest_transport": False,
+            "use_pyqwest_transport": True,
             "create_model_via_load_weights": True,
         }
 
