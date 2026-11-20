@@ -37,6 +37,7 @@ class BaseConfig:
     max_context_length = 16384
     parameterization = "lora"
     backend = "miles"
+    exclude_reserved_capacity = False
 
     trainer_gpu = "H100"
     trainer_gpus_per_node = 1

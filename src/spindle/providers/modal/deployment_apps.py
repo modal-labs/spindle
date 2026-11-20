@@ -85,6 +85,8 @@ TRAINER_IMAGES = {
     "miles-v0.2.0-8c5de26": miles_v020_image.image_02_8c5de26,
     # https://github.com/modal-projects/miles/pull/49 Native canonical and routed-expert adapters, including Nemotron Nano
     "miles-v0.2.0-e814245": miles_v020_image.image_03_e814245,
+    # https://github.com/modal-projects/miles/pull/53 Native shared-prefix execution and bounded-memory LoRA
+    "miles-v0.2.0-7da41f2": miles_v020_image.image_04_7da41f2,
     # Upstream NVIDIA/Megatron-LM commit; no Spindle fork
     "megatron-2d1fa8d": megatron_image,
 }
@@ -167,15 +169,18 @@ def secrets_for(
     return result
 
 
-def trainer_experimental_options(
-    rdma: bool, platform: dict[str, Any]
+def gpu_experimental_options(
+    platform: dict[str, Any],
+    *,
+    rdma: bool = False,
+    exclude_reserved_capacity: bool = False,
 ) -> dict[str, bool]:
-    if not rdma:
-        return {}
-    options = {"efa_enabled": True}
-    # Modal accepts this option only on clustered functions.
-    if platform["modal"].get("exclude_reserved_capacity"):
-        options["exclude_reserved_capacity"] = True
+    options = {"efa_enabled": True} if rdma else {}
+    # A recipe can tighten the frontend-wide capacity policy.
+    if exclude_reserved_capacity or platform["modal"].get(
+        "exclude_reserved_capacity", False
+    ):
+        options.update(efa_enabled=True, exclude_reserved_capacity=True)
     return options
 
 
@@ -251,7 +256,10 @@ def build_trainer_app(
         run_trainer(saved, instance_id, platform)
 
     rdma = recipe.trainer_nodes > 1 or recipe.trainer_rdma
-    if rdma:
+    gpu_options = gpu_experimental_options(
+        platform, rdma=rdma, exclude_reserved_capacity=recipe.exclude_reserved_capacity
+    )
+    if rdma or gpu_options.get("exclude_reserved_capacity", False):
         trainer = modal.clustered(size=recipe.trainer_nodes, rdma=True)(trainer)
     trainer = app.function(
         name="trainer",
@@ -273,7 +281,7 @@ def build_trainer_app(
         volumes={**volumes_for(platform)},
         secrets=secrets_for(platform, training=True),
         env={**env},
-        experimental_options=trainer_experimental_options(rdma, platform),
+        experimental_options=gpu_options,
     )(trainer)
 
     return app, trainer
@@ -390,6 +398,15 @@ def build_rollout_app(
         maximum = maximum if pool.max_containers is None else pool.max_containers
         window = window if pool.scaledown_window is None else pool.scaledown_window
 
+    gpu_options = gpu_experimental_options(
+        platform, exclude_reserved_capacity=recipe.exclude_reserved_capacity
+    )
+
+    def capacity_cluster(cls: type) -> type:
+        if gpu_options.get("exclude_reserved_capacity", False):
+            return modal.clustered(size=1, rdma=True)(cls)
+        return cls
+
     @app.server(
         name="Server",
         serialized=True,
@@ -397,6 +414,7 @@ def build_rollout_app(
         if image is not None
         else image_for("sglang", recipe.inference_image),
         gpu=gpu_request(recipe.inference_gpu, recipe.inference_gpus_per_node),
+        experimental_options=gpu_options,
         cpu=recipe.inference_cpu,
         memory=recipe.inference_memory_mib,
         ephemeral_disk=recipe.inference_disk_mib or None,
@@ -428,6 +446,7 @@ def build_rollout_app(
         port=8000,
         **server_placement(platform["modal"]["region"]),
     )
+    @capacity_cluster
     class Server:
         @modal.enter()
         def start(self) -> None:

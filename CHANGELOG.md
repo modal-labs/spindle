@@ -4,6 +4,10 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ## Unreleased
 
+### Added
+
+- Miles v0.2.0 native LoRA has experimental shared-prefix training behind `miles_cfg.shared_prefix_training`. It is disabled by default; `glm53-flash-lora-shared-prefix-64k` provides the opt-in GLM Flash configuration on one 8×B300 node using `miles-v0.2.0-7da41f2`. Set `miles_cfg.shared_prefix_check_forward=True` to compare native and shared forwards during validation or debugging.
+
 ### Changed
 
 - Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.

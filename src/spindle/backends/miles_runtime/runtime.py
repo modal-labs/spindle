@@ -299,10 +299,21 @@ class MilesRuntime:
         os.environ.setdefault("CUDA_DEVICE_MAX_CONNECTIONS", "1")
         os.environ.setdefault("no_proxy", "127.0.0.1")
 
+        if self.config.shared_prefix_training:
+            from .prefix_checks import configure_prefix_environment
+
+            if self._v020 is None:
+                raise ValueError(
+                    "shared_prefix_training requires Miles v0.2.0 native LoRA"
+                )
+            configure_prefix_environment()
         install_bridge_replay(tinker_runtime)
         nemotron_h_omni.install(self.config.hf_checkpoint)
         if self._v020 is not None:
-            self._v020.configure_actor()
+            self._v020.configure_actor(
+                shared_prefix=self.config.shared_prefix_training,
+                check_prefix_forward=self.config.shared_prefix_check_forward,
+            )
         else:
             _configure_actor_spec(train_specs)
         if create_trainer_handles is None:
@@ -424,6 +435,12 @@ class MilesRuntime:
 
 
 _WORKER_ENV_VARS = (
+    "CUBLAS_WORKSPACE_CONFIG",
+    "NCCL_ALGO",
+    "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "PYTORCH_ALLOC_CONF",
     "SPINDLE_CHECKPOINT_VOLUME",
     "SPINDLE_BULLETIN_VOLUME",
     "SPINDLE_BULLETIN_ROOT",

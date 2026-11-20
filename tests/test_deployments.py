@@ -815,13 +815,17 @@ def test_megatron_cli_options_preserve_integration_contract(section, options, ma
         ),
     ],
 )
-@pytest.mark.parametrize("image", ["miles-v0.2.0-8c5de26", "miles-v0.2.0-e814245"])
+@pytest.mark.parametrize(
+    "image", ["miles-v0.2.0-8c5de26", "miles-v0.2.0-e814245", "miles-v0.2.0-7da41f2"]
+)
 def test_miles_v020_rejects_untested_trainer_layouts(changes, match, image):
     with pytest.raises(ValueError, match=match):
         backend_config(recipe(trainer_image=image, **changes))
 
 
-@pytest.mark.parametrize("image", ["miles-v0.2.0-8c5de26", "miles-v0.2.0-e814245"])
+@pytest.mark.parametrize(
+    "image", ["miles-v0.2.0-8c5de26", "miles-v0.2.0-e814245", "miles-v0.2.0-7da41f2"]
+)
 @pytest.mark.parametrize("mode,layout", [("raw", "canonical_lora"), ("bridge", "lora")])
 def test_miles_v020_accepts_supported_adapter_layouts(image, mode, layout):
     backend_config(
