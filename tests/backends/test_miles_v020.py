@@ -18,7 +18,15 @@ def api(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
         ),
         "miles.ray.placement_group": dict(create_trainer_handles=None),
         "miles.ray.specs.train": dict(
-            ACTOR_ROLE="actor", TrainerSpec=None, compute_trainer_configs=None
+            ACTOR_ROLE="actor",
+            TrainerSpec=None,
+            compute_trainer_configs=None,
+            TRAINER_CONCURRENCY_GROUPS={
+                "default": 1,
+                "heartbeat_status": 1,
+                "fault_injector": 1,
+                "kill_self": 1,
+            },
         ),
         "miles.ray.train.init_request": dict(TrainerControllerInitRequest=None),
         "miles.ray.wiring": dict(compute_backend_capability=None),
@@ -102,9 +110,9 @@ def test_native_publication_has_a_cpu_rpc_lane(
     api.configure_actor()
     spec = Spec.create(None)
     assert spec.worker_class == api.ACTOR_CLASS
-    assert spec.concurrency_groups == (groups or {"default": 1}) | {
-        "sampler_persistence": 1
-    }
+    assert spec.concurrency_groups == api.TRAINER_CONCURRENCY_GROUPS | (
+        groups or {}
+    ) | {"sampler_persistence": 1}
 
 
 def test_rejected_native_load_keeps_slot_configuration(api: ModuleType) -> None:

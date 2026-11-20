@@ -16,7 +16,12 @@ from miles.backends.training_utils.checkpoint.adapter.parametrization import (
     base_model_fingerprint,
 )
 from miles.ray.placement_group import create_trainer_handles
-from miles.ray.specs.train import ACTOR_ROLE, TrainerSpec, compute_trainer_configs
+from miles.ray.specs.train import (
+    ACTOR_ROLE,
+    TRAINER_CONCURRENCY_GROUPS,
+    TrainerSpec,
+    compute_trainer_configs,
+)
 from miles.ray.train.init_request import TrainerControllerInitRequest
 from miles.ray.wiring import compute_backend_capability
 from miles.utils.hf_utils.config import load_hf_config
@@ -44,7 +49,8 @@ def configure_actor() -> None:
             return spec.model_copy(
                 update={
                     "worker_class": ACTOR_CLASS,
-                    "concurrency_groups": (spec.concurrency_groups or {"default": 1})
+                    "concurrency_groups": TRAINER_CONCURRENCY_GROUPS
+                    | (spec.concurrency_groups or {})
                     | {"sampler_persistence": 1},
                 }
             )

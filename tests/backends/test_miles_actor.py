@@ -362,6 +362,7 @@ def test_v020_native_worker_starts_without_loading_the_bridge_provider(monkeypat
 
 def test_native_snapshot_remains_valid_after_slot_reuse(monkeypatch):
     _, actor = _load_native_actor(monkeypatch)
+    monkeypatch.setitem(sys.modules, "torch", torch)
     values = torch.arange(4, dtype=torch.bfloat16).reshape(2, 2)
     spec = types.SimpleNamespace(
         key="layer.lora_A",

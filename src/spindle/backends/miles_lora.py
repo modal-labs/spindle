@@ -470,23 +470,30 @@ class MilesCommandBackend(Backend):
     def publish_sampler_snapshot(self, capture_id: str) -> None:
         try:
             capture = self._sampler_captures[capture_id]
-            volume_name = os.environ.get("SPINDLE_BULLETIN_VOLUME")
-            bulletin = SnapshotBulletin(
-                os.environ["SPINDLE_BULLETIN_ROOT"],
-                commit=(
-                    (lambda: _commit_volume(volume_name))
-                    if volume_name is not None
-                    else None
-                ),
-            )
             publish_step = capture["optimizer_step"]
-            with self._timer.phase(
-                "publish_weights", publish_step, model_id=capture["model_id"]
+            with (
+                self._timer.phase(
+                    "publish_weights", publish_step, model_id=capture["model_id"]
+                ),
+                contextlib.ExitStack() as stack,
             ):
+                snapshot = (
+                    stack.enter_context(self.runtime.take_sampler_snapshot(capture_id))
+                    if capture["path"] is None
+                    else None
+                )
+                volume_name = os.environ.get("SPINDLE_BULLETIN_VOLUME")
+                bulletin = SnapshotBulletin(
+                    os.environ["SPINDLE_BULLETIN_ROOT"],
+                    commit=(
+                        (lambda: _commit_volume(volume_name))
+                        if volume_name is not None
+                        else None
+                    ),
+                )
                 ref = VersionRef(capture["model_id"], int(capture["publish_version"]))
-                if capture["path"] is None:
-                    with self.runtime.take_sampler_snapshot(capture_id) as snapshot:
-                        bulletin.publish_generated(ref, snapshot.write)
+                if snapshot is not None:
+                    bulletin.publish_generated(ref, snapshot.write)
                 else:
                     with self._volume_capture_io():
                         bulletin.publish(ref, capture["path"])
