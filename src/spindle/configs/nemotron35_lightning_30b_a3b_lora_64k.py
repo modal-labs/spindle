@@ -4,7 +4,7 @@ from spindle.configs.nemotron3_nano_30b_a3b_lora_64k import Config as Parent
 class Config(Parent):
     name = "nemotron35-lightning-30b-a3b-lora-64k"
     trainer_image = "miles-v0.1.1-52a7a99"
-    inference_image = "sglang-v0.5.23-c4182b2"
+    inference_image = "sglang-v0.5.23-61ceffc"
     model = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
     trainer_gpu = "B300"
     trainer_gpus_per_node = 2

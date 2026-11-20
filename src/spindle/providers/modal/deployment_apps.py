@@ -98,6 +98,8 @@ SAMPLER_IMAGES = {
     "sglang-v0.5.23-c4182b2": rollout_image.image_01_c4182b2,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks, with GLM-5.3 Flash sampler settings
     "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
+    # https://github.com/modal-projects/sglang/pull/105 Capture NemotronH hybrid prefill CUDA graphs on SM100
+    "sglang-v0.5.23-61ceffc": rollout_image.image_05_61ceffc,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {
