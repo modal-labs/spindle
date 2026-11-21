@@ -90,14 +90,3 @@ image_04_3db151a = runtime_image_for(
     revision="3db151a2820de088b278b79d016617e1886ef0da",
     core_packages=CORE_SAMPLER_PACKAGES,
 ).add_local_python_source("spindle", ignore=ignore_config_source)
-
-
-runtime_image_05_884f3978 = runtime_image_for(
-    image=SGLANG_IMAGE,
-    branch="codex/adapter-scoped-update",
-    revision="884f397815f8b3b6b2d98fd2a54590d16d04adc9",
-    core_packages=CORE_SAMPLER_PACKAGES,
-)
-image_05_884f3978 = runtime_image_05_884f3978.add_local_python_source(
-    "spindle", ignore=ignore_config_source
-)

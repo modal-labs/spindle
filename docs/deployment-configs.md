@@ -440,7 +440,9 @@ See [validation results](deployment-validation.md) for CPU coverage, live GPU ch
 
 To let active generations follow newer sampler weights, set
 `inference_env = {"SPINDLE_LORA_UPDATE_IN_PLACE": "1"}` and use
-`inference_image = "sglang-v0.5.23-884f3978"` (or its `-glm53` variant).
+`inference_image = "spindle.providers.modal.live_lora_image:image_01_884f397"`.
+For GLM Flash, use
+`"spindle.providers.modal.live_lora_image:glm53_image_01_884f397"`.
 This requires the adapter-update SGLang fork. It is off by default.
 
 Clients from `save_weights_and_get_sampling_client()` use a minimum version.

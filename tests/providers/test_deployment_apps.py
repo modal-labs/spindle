@@ -27,6 +27,7 @@ from spindle.providers.modal import (
     fft_pool,
     glm53_image,
     lora_pool,
+    live_lora_image,
     miles_v011_image,
     miles_v012_image,
     miles_v020_image,
@@ -573,6 +574,7 @@ FORK_IMAGE_MODULES = (
     rollout_image,
     deepseek_v41_image,
     glm53_image,
+    live_lora_image,
 )
 IMAGE_VARIABLE = re.compile(r"\w*image_(\d{2})_([0-9a-f]{7})")
 FULL_COMMIT = re.compile(r"[0-9a-f]{40}")
