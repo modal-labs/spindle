@@ -6,7 +6,8 @@ class Config(Parent):
     trainer_image = "miles-v0.2.0-e814245"
     inference_image = "sglang-v0.5.23-e003cf9"
     max_context_length = 131_072
-    trainer_gpu = "H200"
+    trainer_gpu = "B200"
+    trainer_gpus_per_node = 4
     inference_gpu = "H200"
     trainer_max_clients_per_instance = 8
     inference_min_replicas = 8
@@ -14,6 +15,7 @@ class Config(Parent):
     overrides = {
         "miles_cfg.megatron_to_hf_mode": "raw",
         "miles_cfg.lora_type": "canonical_lora",
+        "miles_cfg.tensor_model_parallel_size": 4,
         "miles_cfg.max_tokens_per_gpu": 131_072,
         "miles_cfg.max_lora_slots": 8,
         "sglang_cfg.max_running_requests": 32,

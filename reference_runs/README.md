@@ -8,7 +8,9 @@ reference_runs/
   configs/dapo_qwen35_4b.toml   # Immutable validation definition
   configs/dapo_qwen38_27b_multinode.toml
   configs/beam_blog_repro.toml
+  configs/guess_number_gpt_oss_20b_restore.toml
   scripts/dapo_math.py         # Dataset, grading and training settings
+  scripts/guess_number.py      # Multi-turn number guessing through Tinker
   scripts/beam_blog_repro.py    # Beam LoRA training with AIME25 evaluation
   run.py                      # Prepare config or launch the script
   index.toml                  # Execution provenance and output paths
@@ -25,25 +27,30 @@ is relative to the TOML file.
 config = "qwen35-4b-lora-32k"
 script = "../scripts/dapo_math.py"
 
-[tokenizer]
-model = "Qwen/Qwen3.5-4B"
-revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+[workload]
+tokenizer_model = "Qwen/Qwen3.5-4B"
+tokenizer_revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
 ```
 
 The existing H100 reference pins its hardware and client capacity in
 `[config_overrides]`, preserving the old Python reference recipe. Its fields
 are declared in `ConfigOverrides` in `run.py`; unknown fields and incorrect
 types are rejected. Omitted fields keep their deployment recipe values.
-Use `inference_gpu = "H100!"` to select exact H100 hardware, or the declared
+Use `inference_gpu = "H100!"` to select exact H100 hardware,
+`"sglang_cfg.tp_size"` to match sampler tensor parallelism to its GPU count, or the declared
 `"miles_cfg.max_lora_slots"` key to set adapter capacity. Optional
 `script_args = []` contains the workload's literal CLI arguments. The launcher
 does not forward extra arguments from its own command line. Dataset, grading,
 learning rate, batch size and seed stay in the Tinker script. Every definition
-requires a typed `tokenizer` with its Hugging Face model ID and full commit revision.
+requires a typed `workload` block with `tokenizer_model` and a full
+`tokenizer_revision`. It also accepts typed `total_steps`, `save_step` and
+`restore_step` fields, forwarded as workload flags when present.
+Existing `[tokenizer]` blocks migrate to `[workload]` with the fields renamed
+to `tokenizer_model` and `tokenizer_revision`.
 The launcher supplies `--tokenizer MODEL REVISION`, the output path, and
 `--base-model` with the resolved deployment name. Scripts use that deployment
 name in `create_lora_training_client` to select the exact recipe.
-Script arguments cannot override these values. Direct callers of
+Script arguments cannot override these values or the typed step flags. Direct callers of
 `dapo_math.py` must also pass `--tokenizer MODEL REVISION`; it has no default.
 
 `dapo_qwen38_27b_multinode.toml` uses the same workload with a pinned Qwen3.8-27B
@@ -68,7 +75,7 @@ learning curve. The `restore-probe`, `restore-expected` and `restore-replayed`
 checkpoints retain their states.
 
 `beam_blog_repro.toml` trains `reflection/Beam-1.0-501B-A23B` with BF16
-LoRA on the bundled `beam-501b-a23b-lora-5k` recipe: two eight-H200 trainer
+LoRA on the bundled `beam-501b-a23b-lora-64k` recipe: two eight-H200 trainer
 nodes and one eight-B300 sampler. Its script uses routing replay, CISPO with
 one update of rollout prefetch and a 400-update cosine learning-rate schedule,
 and evaluates on AIME25. It writes local evaluations, run identity, the replay
@@ -87,6 +94,103 @@ when changing its script selection, arguments or deployment overrides. Spindle
 commits and observed runtime image versions identify executions and belong in
 the index, not in the validation definition. Deployment recipes own image
 selection; record the images used for each execution in the index.
+
+## Guess-the-number regression
+
+`configs/guess_number_gpt_oss_20b_restore.toml` runs `scripts/guess_number.py` on
+`gpt-oss-20b-lora-32k`. It uses the recipe's selected images.
+It requests one H200 trainer instead of the
+recipe's eight data-parallel replicas and uses one H200 sampler with tensor parallel size one. Image versions belong to each execution's index entry.
+
+The task follows tinker-cookbook 0.6.1's multi-turn guess-number game: a hidden
+integer from 0 through 1023, at most ten guesses, higher/lower feedback, reward
+1 for a correct guess and -1 for each malformed answer. The script uses the
+stock Tinker SDK and a pinned tokenizer's chat template, without the cookbook
+training loop. It uses low reasoning effort for GPT-OSS. These measurements
+are a separate workload from the cookbook regression, not interchangeable baselines.
+
+The definition retains six GRPO updates. Each update uses eight hidden numbers and four independent trajectories
+per number, rank-32 LoRA, a 64-token response cap and learning rate 3e-5.
+Each trajectory's total reward is centered within its group and applied to
+its sampled tokens. Prior conversation tokens receive zero advantage.
+Eight held-out numbers are evaluated before training and after the last update.
+Each policy is published for sampling, and the final checkpoint is saved.
+
+The checkpoint schedule is:
+
+```toml
+[workload]
+tokenizer_model = "openai/gpt-oss-20b"
+tokenizer_revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
+total_steps = 6
+save_step = 2
+restore_step = 4
+```
+
+The script saves weights and optimizer state after step 2, trains through step 4,
+loads step 2 with `load_state_with_optimizer`, then trains steps 3 through 6.
+It runs eight optimizer updates in total, retaining six. A fixed prompt's token
+scores on published sampler snapshots must change before restore and match
+the saved scores afterward. Training-forward scores are not used because
+the training backend can return different scores without a weight change.
+This checks restored weights; optimizer state is loaded through the SDK's
+optimizer-restore API. The final checkpoint includes the continued optimizer state.
+The schedule requires `0 < save_step < restore_step < total_steps`.
+Direct callers use `--total-steps`, `--save-step` and `--restore-step`.
+
+Discarded updates remain in JSONL with `discarded = true`. `attempt` counts all
+optimizer updates; `step` is the policy's logical step and rewinds on restore.
+`restore_validation` records the rewind and score comparison. Plots show the
+retained trajectory as a solid line and the discarded branch as a dashed line,
+starting from the shared checkpoint. Every update records `update_seconds` for
+sampling, forward/backward and optimization, including the first resumed update.
+The timing plot uses these durations when all compared runs record them; otherwise
+it shows intervals between updates. Publication, checkpoint save and restore
+overhead are recorded separately in their events. `restore_validation.seconds`
+includes the score probes and publication; `load_seconds` measures the load API
+call alone. Sampler publication names stay unique across both passes. A restore failure fails the
+run and prevents index registration.
+
+Step 2 is already included in its checkpoint and is not trained twice. After
+restore, logical steps 3 and 4 select the same hidden-number batches and sampling
+seeds as their first pass. Their rollouts are generated again with the restored
+policy. The script does not cache or replay sampled responses; seeded sampling
+can still vary between executions. The first pass's weight and optimizer updates
+are undone by loading the checkpoint. The held-out numbers stay disjoint from
+all training batches.
+
+In evaluation and update records, `responses` counts games, `reward` is mean
+cumulative game reward, `response_tokens_mean` is per assistant turn, and
+`truncated_fraction` counts assistant turns that hit the response cap.
+`success_fraction` and `turns_mean` describe completed games.
+`kl_sample_train_v2` is the mean squared sample/train logprob difference divided
+by two, measured on all sampled tokens before the optimizer update.
+A successful run confirms the API path works; these short runs do not establish learning.
+
+Prepare and deploy this definition as below, then launch it with:
+
+```bash
+uv run python reference_runs/run.py reference_runs/configs/guess_number_gpt_oss_20b_restore.toml \
+  --output reference_runs/outputs/guess-number-gpt-oss-20b-restore.jsonl
+```
+
+To measure step-0 repeatability, add `--initial-evaluations 10` to the launcher.
+This creates one untrained adapter and publishes one fixed snapshot, evaluates
+that same snapshot ten times with the same held-out questions and sampling
+seeds, then exits without training or saving a training checkpoint. Evaluation
+records include the repetition number, per-game rewards and success, and a hash
+of the sampled tokens. These repeats measure variation within one warm sampler;
+they do not measure variation across independent sampler starts or adapter initializations.
+Use `--trainer-image` and `--inference-image` on the launcher for both
+`--write-config` and `--output` to compare image pairs without changing the TOML.
+The index records the selected overrides.
+
+Plot distributions of the repeated evaluations with:
+
+```bash
+uv run --no-sync python reference_runs/plot.py OLD_RUN_ID NEW_RUN_ID \
+  --labels "Miles v0.1.1" "Miles v0.2.0" --initial-distribution
+```
 
 ## Prepare and run
 
@@ -166,10 +270,11 @@ server-reported `spindle_commit` and `spindle_version` from the stock Tinker SDK
 identifies the frontend answering that request. Missing metadata is omitted; the
 launcher never substitutes its local source revision. The SDK request uses a raw
 response to retain fields its typed capability model discards.
+`trainer_image` and `inference_image` record the trainer and sampler image names.
 Image, hardware and region settings describe the resolved recipe; they do not
 attest the remote trainer's actual source, image or GPU identity. Observed runtime
 details can be added to the entry after verification. Historical entries may
-omit the server version.
+omit the server version or sampler image when they were not recorded.
 
 Concurrent runs reserve their IDs and output paths with process locks before
 starting. Completion updates use a short index lock and atomic replacement.
@@ -194,8 +299,11 @@ uv run python reference_runs/plot.py \
   reference_runs/outputs/my-run.jsonl dapo-qwen35-4b-miles-v011
 ```
 
-The chart shows held-out accuracy, training reward, response length and seconds
-between accepted updates. It supports partial files and writes
+Use `--labels "Baseline" "Candidate"` to give the runs shorter legend labels.
+
+The chart shows held-out accuracy, training reward, response length and update
+timing. It uses sampling-plus-training durations when every compared update
+records them, otherwise seconds between accepted updates. It supports partial files and writes
 `reference_runs/reference-runs.png`, which is ignored by Git. Compare the same
 workload settings and actual hardware, accounting for intentional deployment
 changes recorded in the index. Plots do not automatically establish regression

@@ -29,7 +29,7 @@ catalog = runpy.run_path(
     str(Path(__file__).parents[1] / "reference_runs" / "catalog.py")
 )
 
-BASE_MODEL = "beam-501b-a23b-lora-5k"
+BASE_MODEL = "beam-501b-a23b-lora-64k"
 TOKENIZER = ["reflection/Beam-1.0-501B-A23B", "a" * 40]
 
 

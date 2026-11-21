@@ -9,6 +9,7 @@ from typing import Any
 import torch
 from tinker import ForwardBackwardOutput, TensorData
 
+from spindle.backends.candidate_logprobs import CandidateLogProbs
 from spindle.backends.score_centering import (
     REPLAY_LOSSES,
     policy_objective,
@@ -183,17 +184,27 @@ def build_sequence_batches(
                 )
 
             target = datum.loss_fn_inputs.get("target_tokens")
-            labels = list(target.data) if target is not None else []
-            if not labels:
-                labels = input_ids[1:] + [-100]
+            if target is None:
+                labels = torch.tensor(input_ids[1:] + [-100], dtype=torch.long)
+            else:
+                shape = target.shape or [len(target.data)]
+                if len(shape) not in (1, 2) or any(size < 1 for size in shape):
+                    raise ValueError(
+                        "target_tokens must have shape [T] or [T, K] with K >= 1"
+                    )
+                labels = target.to_torch().long()
+            if labels.ndim == 2 and loss_name != "cross_entropy":
+                raise ValueError("multi-target scoring requires cross_entropy")
 
             sampling_logprobs = [0.0] * len(input_ids)
             advantages = [0.0] * len(input_ids)
             weights_input = datum.loss_fn_inputs.get("weights")
-            weights = list(weights_input.data) if weights_input is not None else []
-            if loss_name == "cross_entropy":
-                weights = weights or [1.0] * len(input_ids)
-            elif loss_name in RL_LOSSES:
+            weights = (
+                weights_input.to_torch().float()
+                if weights_input is not None
+                else torch.ones_like(labels, dtype=torch.float32)
+            )
+            if loss_name in RL_LOSSES:
                 logprobs = datum.loss_fn_inputs.get("logprobs")
                 advantage_input = datum.loss_fn_inputs.get("advantages")
                 sampling_logprobs = list(logprobs.data) if logprobs is not None else []
@@ -207,26 +218,35 @@ def build_sequence_batches(
                         "target_tokens, logprobs, and advantages must match "
                         "input_ids length"
                     )
-                weights = weights or [
-                    float(logprob != 0.0 or advantage != 0.0)
-                    for logprob, advantage in zip(
-                        sampling_logprobs,
-                        advantages,
-                        strict=True,
+                if weights_input is None:
+                    weights = torch.tensor(
+                        [
+                            float(logprob != 0.0 or advantage != 0.0)
+                            for logprob, advantage in zip(
+                                sampling_logprobs,
+                                advantages,
+                                strict=True,
+                            )
+                        ],
+                        dtype=torch.float32,
                     )
-                ]
 
-            if len(labels) != len(input_ids) or len(weights) != len(input_ids):
+            if labels.shape[0] != len(input_ids):
                 raise ValueError(
                     "target_tokens and weights must match input_ids length"
                 )
 
+            if weights.shape != labels.shape:
+                raise ValueError("weights must have the same shape as target_tokens")
+
             if telemetry.active.get() is not None:
                 telemetry.count(
                     "spindle.loss_tokens",
-                    sum(
-                        label != -100 and weight != 0
-                        for label, weight in zip(labels, weights, strict=True)
+                    int(
+                        ((labels != -100) & (weights != 0))
+                        .reshape(len(input_ids), -1)
+                        .any(dim=-1)
+                        .sum()
                     ),
                     model_id=item.model_id,
                 )
@@ -236,8 +256,8 @@ def build_sequence_batches(
                 "original_length": len(input_ids),
                 "is_dummy": False,
                 "tokens": torch.tensor(input_ids, dtype=torch.long),
-                "labels": torch.tensor(labels, dtype=torch.long),
-                "loss_mask": torch.tensor(weights, dtype=torch.float32),
+                "labels": labels,
+                "loss_mask": weights,
                 "sampling_logprobs": torch.tensor(
                     sampling_logprobs,
                     dtype=torch.float32,
@@ -250,8 +270,8 @@ def build_sequence_batches(
                 sequence.update(
                     validate_support(
                         datum.loss_fn_inputs,
-                        labels,
-                        weights,
+                        labels.tolist(),
+                        weights.tolist(),
                         centered=loss_name != "mis",
                     )
                 )
@@ -308,6 +328,10 @@ def pack_microbatches(
         padded_lengths = [
             math.ceil(length / pad_to_multiple) * pad_to_multiple for length in lengths
         ]
+        candidate_width = max(
+            item["labels"].shape[1] if item["labels"].ndim == 2 else 1 for item in items
+        )
+        multi_target = any(item["labels"].ndim == 2 for item in items)
         padded_offsets = [0]
         tokens = []
         labels = []
@@ -328,8 +352,14 @@ def pack_microbatches(
         ):
             padding = padded_length - length
             tokens.append(F.pad(item["tokens"], (0, padding), value=0))
-            labels.append(F.pad(item["labels"], (0, padding), value=-100))
-            loss_masks.append(F.pad(item["loss_mask"], (0, padding), value=0.0))
+            label, mask = item["labels"], item["loss_mask"]
+            if multi_target:
+                label, mask = label.reshape(length, -1), mask.reshape(length, -1)
+                pad = (0, candidate_width - label.shape[1], 0, padding)
+            else:
+                pad = (0, padding)
+            labels.append(F.pad(label, pad, value=-100))
+            loss_masks.append(F.pad(mask, pad, value=0.0))
             sampling_logprobs.append(
                 F.pad(item["sampling_logprobs"], (0, padding), value=0.0)
             )
@@ -348,8 +378,16 @@ def pack_microbatches(
         )
         if total_padding:
             tokens.append(torch.zeros(total_padding, dtype=tokens[0].dtype))
-            labels.append(torch.full((total_padding,), -100, dtype=labels[0].dtype))
-            loss_masks.append(torch.zeros(total_padding, dtype=loss_masks[0].dtype))
+            labels.append(
+                torch.full(
+                    (total_padding, *labels[0].shape[1:]), -100, dtype=labels[0].dtype
+                )
+            )
+            loss_masks.append(
+                torch.zeros(
+                    (total_padding, *loss_masks[0].shape[1:]), dtype=loss_masks[0].dtype
+                )
+            )
             sampling_logprobs.append(
                 torch.zeros(total_padding, dtype=sampling_logprobs[0].dtype)
             )
@@ -409,8 +447,12 @@ def _short_dummy(source: dict[str, Any], tokens: int) -> dict[str, Any]:
         "original_lengths": (tokens,),
         "is_dummy": (True,),
         "tokens": torch.zeros(tokens, dtype=source["tokens"].dtype),
-        "labels": torch.full((tokens,), -100, dtype=source["labels"].dtype),
-        "loss_mask": torch.zeros(tokens, dtype=source["loss_mask"].dtype),
+        "labels": torch.full(
+            (tokens, *source["labels"].shape[1:]), -100, dtype=source["labels"].dtype
+        ),
+        "loss_mask": torch.zeros(
+            (tokens, *source["loss_mask"].shape[1:]), dtype=source["loss_mask"].dtype
+        ),
         "sampling_logprobs": torch.zeros(
             tokens, dtype=source["sampling_logprobs"].dtype
         ),
@@ -505,13 +547,20 @@ def _vocab_parallel_logprobs(
     logits: torch.Tensor, labels: torch.Tensor
 ) -> torch.Tensor:
     from megatron.core import mpu
+
+    logits = logits.reshape(-1, logits.shape[-1])
+    labels = labels.to(logits.device)
+    valid = labels != -100
+    if labels.ndim == 2:
+        return CandidateLogProbs.apply(
+            logits.float(),
+            labels.masked_fill(~valid, 0),
+            mpu.get_tensor_model_parallel_group(),
+        ).masked_fill(~valid, 0)
     from megatron.core.fusions.fused_cross_entropy import (
         fused_vocab_parallel_cross_entropy,
     )
 
-    logits = logits.reshape(-1, logits.shape[-1])
-    labels = labels.reshape(-1).to(logits.device)
-    valid = labels != -100
     return (
         -fused_vocab_parallel_cross_entropy(
             logits.unsqueeze(1),
@@ -529,7 +578,7 @@ def _loss(
     logprobs: torch.Tensor,
     batch: dict[str, Any],
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    mask = batch["loss_mask"].to(logprobs.device).reshape(-1)
+    mask = batch["loss_mask"].to(logprobs.device).reshape_as(logprobs)
     loss_name = batch["loss_name"]
     if loss_name == "cross_entropy":
         loss = -(logprobs * mask).sum()
@@ -584,7 +633,7 @@ def _loss(
                 - 0.5 * beta * (logprobs - sampling_logprobs).square()
             )
         loss = -(objective * mask).sum()
-    return loss, mask.count_nonzero()
+    return loss, (mask != 0).reshape(mask.shape[0], -1).any(dim=-1).count_nonzero()
 
 
 def make_forward_step(
@@ -886,7 +935,7 @@ def build_outputs(
         sequences = metrics["sequences"]
         loss = metrics["loss"]
 
-        by_output_index: dict[int, list[tuple[int, float]]] = {}
+        by_output_index: dict[int, list[tuple[int, float | list[float]]]] = {}
         for output in output_collector.get(job_id, []):
             values = by_output_index.setdefault(output["output_index"], [])
             values.extend(
@@ -896,22 +945,25 @@ def build_outputs(
                     strict=True,
                 )
             )
-        loss_outputs = [
-            {
-                "logprobs": TensorData(
-                    data=[
-                        value
-                        for _, value in sorted(
-                            by_output_index[output_index],
-                            key=lambda item: item[0],
-                        )
-                    ],
-                    dtype="float32",
-                    shape=[len(by_output_index[output_index])],
-                )
-            }
-            for output_index in sorted(by_output_index)
-        ]
+        loss_outputs = []
+        for output_index, values in sorted(by_output_index.items()):
+            datum = batch.items[job_id].data[output_index]
+            target = datum.loss_fn_inputs.get("target_tokens")
+            shape = (target.shape if target is not None else None) or [len(values)]
+            scores = torch.tensor(
+                [value for _, value in sorted(values, key=lambda item: item[0])]
+            )
+            if scores.ndim == 2:
+                scores = scores[:, : shape[1]] if len(shape) == 2 else scores[:, 0]
+            loss_outputs.append(
+                {
+                    "logprobs": TensorData(
+                        data=scores.reshape(-1).tolist(),
+                        dtype="float32",
+                        shape=shape,
+                    )
+                }
+            )
         outputs.append(
             ForwardBackwardOutput(
                 loss_fn_output_type={

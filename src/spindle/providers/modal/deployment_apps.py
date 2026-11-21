@@ -97,6 +97,8 @@ SAMPLER_IMAGES = {
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks, with GLM-5.3 Flash sampler settings
     "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
     "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
+    # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches
+    "sglang-v0.5.23-3db151a": rollout_image.image_04_3db151a,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {
