@@ -192,7 +192,7 @@ async fn forward(s: &Service, mut g: Generate) -> Reply {
         let mut headers = HeaderMap::new();
         for (k, v) in s.headers.iter().chain(g.headers.iter()) {
             let owned = k.eq_ignore_ascii_case("modal-flash-upstream")
-                || (decision.upstream.is_some()
+                || ((decision.upstream.is_some() || attempt > 1)
                     && AFFINITY_HEADERS.iter().any(|h| k.eq_ignore_ascii_case(h)));
             if owned {
                 continue;

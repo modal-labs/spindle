@@ -64,15 +64,15 @@ class _ChunkedLogprobs(torch.autograd.Function):
     ) -> torch.Tensor:
         valid = labels != -100
         targets = labels.masked_fill(~valid, 0)
-        logprobs = torch.empty(hidden.shape[0], device=hidden.device)
-        lse = torch.empty_like(logprobs)
+        logprobs = torch.empty_like(labels, dtype=torch.float32)
+        lse = torch.empty(hidden.shape[0], device=hidden.device)
         logit_weight = weight.float() if fp32 else weight
         for start in range(0, hidden.shape[0], chunk):
             stop = start + chunk
             logits = _chunk_logits(hidden[start:stop], logit_weight, fp32, temperature)
             lse[start:stop] = torch.logsumexp(logits, dim=-1)
-            target = logits.gather(1, targets[start:stop, None]).squeeze(1)
-            logprobs[start:stop] = target - lse[start:stop]
+            target = logits.gather(1, targets[start:stop])
+            logprobs[start:stop] = target - lse[start:stop, None]
             del logits
         ctx.save_for_backward(hidden, weight, targets, valid, lse)
         ctx.chunk, ctx.fp32, ctx.temperature = chunk, fp32, temperature
@@ -95,14 +95,10 @@ class _ChunkedLogprobs(torch.autograd.Function):
             logits = _chunk_logits(
                 rows, weight_fp32 if fp32 else weight, fp32, temperature
             )
-            # d logprob / d logits = onehot(target) - softmax, scaled by grad.
-            probs = logits.sub_(lse[start:stop, None]).exp_().neg_()
-            probs.scatter_add_(
-                1,
-                targets[start:stop, None],
-                torch.ones_like(probs[:, :1]),
-            )
-            probs.mul_(grad[start:stop, None] / temperature)
+            probs = logits.sub_(lse[start:stop, None]).exp_()
+            probs.mul_(-grad[start:stop].sum(dim=-1, keepdim=True))
+            probs.scatter_add_(1, targets[start:stop], grad[start:stop])
+            probs.div_(temperature)
             grad_hidden[start:stop] = (probs @ weight_fp32).to(hidden.dtype)
             grad_weight.addmm_(probs.t(), rows.float())
             del logits, probs
@@ -120,8 +116,8 @@ def chunked_logprobs(
 ) -> torch.Tensor:
     hidden = hidden.reshape(-1, hidden.shape[-1])
     return _ChunkedLogprobs.apply(
-        hidden, weight, labels.reshape(-1), chunk, fp32, temperature
-    )
+        hidden, weight, labels.reshape(hidden.shape[0], -1), chunk, fp32, temperature
+    ).reshape(labels.shape)
 
 
 def materialize_logits(

@@ -81,3 +81,12 @@ image_03_e003cf9 = runtime_image_for(
     revision="e003cf90c44c78249ce4ed3db3cf2f768af724a8",
     core_packages=CORE_SAMPLER_PACKAGES,
 ).add_local_python_source("spindle", ignore=ignore_config_source)
+
+
+# Exact top-k replay capture in mixed speculative sampling/scoring batches.
+image_04_3db151a = runtime_image_for(
+    image=SGLANG_IMAGE,
+    branch=SGLANG_BRANCH,
+    revision="3db151a2820de088b278b79d016617e1886ef0da",
+    core_packages=CORE_SAMPLER_PACKAGES,
+).add_local_python_source("spindle", ignore=ignore_config_source)
