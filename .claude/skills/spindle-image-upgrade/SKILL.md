@@ -69,23 +69,16 @@ Clean branches touch different configs, so the only likely conflict is `referenc
 
 **Changed and failed PRs.** Open each from its worker's branch as it is, so the reviewer sees exactly what that config needed.
 
-**Plots.** PR descriptions can't take uploaded images, so push the charts to the `image-upgrade-plots` branch, which is never merged, and link them by commit:
+**Charts.** Attach each worker's chart with `gh pr create --attach` (gh 2.103 or later). Write the body next to the charts and reference them by relative path; gh uploads each attached file and rewrites the reference to the uploaded image:
 
 ```bash
-if git ls-remote --exit-code origin image-upgrade-plots >/dev/null; then
-  git fetch origin image-upgrade-plots && git worktree add /tmp/plots origin/image-upgrade-plots
-else
-  git worktree add --orphan -b image-upgrade-plots /tmp/plots
-fi
-mkdir -p /tmp/plots/$(date +%Y-%m-%d) && cp <worker plots> /tmp/plots/$(date +%Y-%m-%d)/
-git -C /tmp/plots add -A && git -C /tmp/plots commit -m "Image upgrade plots $(date +%Y-%m-%d)"
-git -C /tmp/plots push origin HEAD:image-upgrade-plots
-SHA=$(git -C /tmp/plots rev-parse HEAD)
-# Embed as ![<config>](https://github.com/<owner>/<repo>/blob/$SHA/<date>/<config>.png?raw=true)
-git worktree remove /tmp/plots
+cp <worker chart> /tmp/image-upgrade-plots/   # if the worker wrote it elsewhere
+# body.md in /tmp/image-upgrade-plots contains ![qwen3-8b-lora-32k](./qwen3-8b-lora-32k.png)
+gh pr create --base "$BASE" --title "..." --body-file /tmp/image-upgrade-plots/body.md \
+  --attach /tmp/image-upgrade-plots/qwen3-8b-lora-32k.png --assignee @me
 ```
 
-If a worker's plot path can't be read, check out its branch and rerun `reference_runs/plot.py` with the run IDs from its report.
+If a worker's chart can't be read, check out its branch and rerun `reference_runs/plot.py` with the run IDs from its report.
 
 **Descriptions** follow AGENTS.md. The clean PR has one row per config, then every config's chart under a heading with its name:
 
