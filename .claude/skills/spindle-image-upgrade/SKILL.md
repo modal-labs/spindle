@@ -11,7 +11,7 @@ You are the controller. You choose the configs, start one worker per config, wai
 
 Inputs, from the invocation or the user's agent instructions:
 
-- How many configs to attempt: `count`, a number of configs, or `fraction`, a share of all bundled configs. Default: `fraction` 0.2.
+- How many configs to attempt: `count`, a number of configs, or `fraction`, a share of all bundled configs. Default: `count` 5.
 - Modal environment for validation deployments. Workers deploy one app each, named `<app prefix>-<config name>`; the default prefix is `upgrade`.
 - `reviewer`: GitHub login to request review from. Default: assign the PRs to the account `gh` is logged in as.
 
@@ -23,7 +23,7 @@ Work from the branch you are on; call it the base branch. Workers branch from it
 BASE=$(git branch --show-current)
 git push -u origin "$BASE"   # skip if origin already has it
 uv sync --locked --python 3.12
-uv run --no-sync python .claude/skills/spindle-image-upgrade/select_configs.py --fraction 0.2   # or --count 5
+uv run --no-sync python .claude/skills/spindle-image-upgrade/select_configs.py --count 5   # or --fraction 0.2
 ```
 
 The script prints a JSON list. It orders configs by how many newer base images their pins are behind, breaks ties at random, and takes `count` configs, or `ceil(fraction * number of bundled configs)`. Each entry has the current and target pins and `validations`, the definitions in `reference_runs/configs/` that deploy that config. An empty list means every config is on the newest images: report that and stop.
