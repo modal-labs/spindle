@@ -36,6 +36,7 @@ New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context an
 
 ### Changed
 
+- Reference-run index entries now record the configured sampler image in `inference_image` and drop the redundant `miles_commit` field.
 - `gpt-oss-20b-lora-32k` trains on `miles-v0.2.0-e814245` and samples on `sglang-v0.5.23-e003cf9`. To restore a checkpoint saved on its previous Miles v0.1.1 image, set `trainer_image` back to `miles-v0.1.1-52a7a99`; Miles v0.2.0 uses a different checkpoint format.
 
 - `qwen35-9b-instruct-lora-16k` trains on one B200 instead of eight H100s, and samples on B200 only, with the `modal-labs/Qwen3.5-9B-DFlash` drafter. It no longer falls back to H200 samplers. Older checkpoints also need the old eight-H100 layout; see "Older Qwen3.5-9B instruct 16K checkpoints" in docs/deployment-configs.md.

@@ -4,7 +4,6 @@ import argparse
 import importlib.metadata
 import os
 import pprint
-import re
 import runpy
 import sys
 import tomllib
@@ -148,17 +147,12 @@ def main() -> None:
         parser.error(
             "--base-model, --output, --tokenizer and workload step flags are supplied by the launcher"
         )
-    commit = (
-        re.search(r"-([0-9a-f]{7,40})(?:-|$)", recipe.trainer_image)
-        if recipe.trainer_image.startswith("miles-")
-        else None
-    )
     entry = ReferenceRun(
         id=args.output.stem,
         validation=validation.stem,
         output=os.path.relpath(args.output.resolve(), args.index.resolve().parent),
         trainer_image=recipe.trainer_image,
-        miles_commit=commit.group(1) if commit else "unknown",
+        inference_image=recipe.inference_image,
         tinker_sdk=importlib.metadata.version("tinker"),
         hardware=(
             f"Configured trainers: {recipe.trainer_nodes} x "
@@ -169,8 +163,7 @@ def main() -> None:
         region=recipe.platform["modal"].get("region"),
         notes=(
             "Server metadata from get_server_capabilities; resolved recipe settings; "
-            "remote runtime and hardware are not attested. "
-            f"Configured sampler image: {recipe.inference_image}."
+            "remote runtime and hardware are not attested."
         ),
     )
     with record_run(args.index, entry, indexed=indexed) as output:

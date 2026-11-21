@@ -23,7 +23,7 @@ class ReferenceRun(BaseModel):
     spindle_commit: str | None = None
     spindle_version: str | None = None
     trainer_image: str | None = None
-    miles_commit: str | None = None
+    inference_image: str | None = None
     tinker_sdk: str | None = None
     hardware: str | None = None
     source: str | None = None
@@ -38,7 +38,6 @@ class ReferenceRun(BaseModel):
         """
         runtime = {
             "trainer_image": self.trainer_image,
-            "miles_commit": self.miles_commit,
             "tinker_sdk": self.tinker_sdk,
             "hardware": self.hardware,
         }
@@ -48,7 +47,12 @@ class ReferenceRun(BaseModel):
                 raise ValueError(f"Spindle execution is missing {', '.join(missing)}")
         elif any(
             value is not None
-            for value in (self.spindle_commit, self.spindle_version, *runtime.values())
+            for value in (
+                self.spindle_commit,
+                self.spindle_version,
+                self.inference_image,
+                *runtime.values(),
+            )
         ):
             raise ValueError(
                 "external execution records source, not Spindle provenance"
