@@ -47,7 +47,7 @@ Without bb, use your agent tool's subagents, one isolated worktree each, each on
 Wait for each worker (`bb thread wait <id>`, then `bb thread output <id>`). Answer worker questions with what you know; ask the user only when the answer changes shared code or another config. Each worker pushes its branch and finishes with one of:
 
 - `clean`: the upgrade passed and the branch changes only the config's pins and files under `reference_runs/`.
-- `changed`: the upgrade passed, but only after other changes, such as a new image variant, a config setting or a backend fix.
+- `changed`: the upgrade passed, but only after other changes, such as a config setting or a backend fix. Workers never create images.
 - `failed`: the upgrade didn't pass. The report says which step failed, why, and what would unblock it.
 
 Each report includes the path of a `plot.py` chart comparing the baseline with the upgrade run, when an upgrade run produced metrics.

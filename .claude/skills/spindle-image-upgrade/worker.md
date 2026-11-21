@@ -1,40 +1,41 @@
 # Image upgrade worker
 
-You move one bundled Spindle config to newer images and prove it still works. The JSON entry at the end of this message names the config, its current pins, the target pins and the validation definitions that already deploy it. The message also names the base branch. Follow AGENTS.md. Work only in your own worktree and your own Modal app.
+You move one bundled Spindle config to newer images and prove it still works. The JSON entry at the end of this message names the config, its current pins, the target pins and the validation definitions that already deploy it. The message also names the base branch, the Modal environment and your app. Follow AGENTS.md. Work only in your own worktree and your own Modal app.
 
 ## 1. Change the pins
 
 1. Create branch `image-upgrade/<config name>` from the base branch.
-2. In the config file, set `trainer_image` and `inference_image` to the targets. Change only the pins.
-3. If a current pin has a suffix, such as `-glm53`, the config needs model-specific build steps that the base target lacks. Add a new image that applies the same steps to the target base, named `<target>-<suffix>`, in a new module, right after the target in its registry. Never edit an existing image. A new image makes the result `changed`.
-4. Run `uv run --no-sync spindle config validate <config file>` and `uv run --no-sync pytest -q`.
+2. In the config file, set `trainer_image` and `inference_image` to the targets. Never create or edit an image: the targets are the newest registered images, and the only goal is to move the config onto them. That includes configs pinned to a model-specific image, such as one ending in `-glm53`.
+3. Run `uv run --no-sync spindle config validate <config file>` and `uv run --no-sync pytest -q`.
 
-If the target image rejects the config, for example `miles-v0.2.0` with `megatron_to_hf_mode` set to `raw`, you may change what it takes to make the config work: a config setting, a new image variant, or a backend fix. Any change outside the config's pins and `reference_runs/` makes the result `changed`. Keep each change as small as the fix allows, since its PR is reviewed on its own. Never edit an existing named image; add a new one.
+If the config doesn't work on the targets, you may change config settings or backend code to make it work. Any change outside the config's pins and `reference_runs/` makes the result `changed`. Keep each change as small as the fix allows, since its PR is reviewed on its own. If it would need a new image, report `failed`.
 
-## 2. Find or propose a validation run
+## 2. Find the validation and its baseline
 
-A validation run is a definition in `reference_runs/configs/<name>.toml` that names the config, a workload script in `reference_runs/scripts/` and fixed hardware, plus executions recorded in `reference_runs/index.toml` with their JSONL in `reference_runs/outputs/`. Read reference_runs/README.md first. Definitions don't select images; the deployed config's pins do.
+A validation is a definition in `reference_runs/configs/<name>.toml` that names the config, a workload script and fixed hardware. Its runs are logged in `reference_runs/index.toml`. Read reference_runs/README.md first.
 
-- **One exists** (`validations` in your entry is not empty): the baseline is the newest execution of that definition in `index.toml`.
-- **None exists:** propose one, then record a baseline on the current pins before you change anything:
-  1. Write `reference_runs/configs/<name>.toml` with `config` set to your config, `script = "../scripts/dapo_math.py"` (or `guess_number.py` for a model that suits it better) and a `[tokenizer]` with the model's Hugging Face ID and full commit revision. In `[config_overrides]`, fix the hardware with the fields `ConfigOverrides` in `run.py` declares: one trainer instance, one client, fixed sampler replicas, GPU types with `!` where Modal accepts them so it doesn't upgrade them.
-  2. If no script in `reference_runs/scripts/` suits the model, for example a base model that can't follow the chat prompt, stop and report `failed`: the config needs another workload script.
-  3. Run it as below before step 1.2, while the config still has its current pins. This is the baseline, and the next upgrade of this config reuses it.
+- **Definition.** Use the one in `validations` in your entry. If there is none, write one: `config` set to your config, `script = "../scripts/guess_number.py"`, and a `[workload]` with `tokenizer_model` and the full 40-character `tokenizer_revision`. In `[config_overrides]`, fix the hardware with the fields `ConfigOverrides` in `run.py` declares: one trainer instance, one client, fixed sampler replicas, GPU types with `!` where Modal accepts them. Use `dapo_math.py` only if guess-number doesn't suit the model.
+- **Baseline.** The newest run of the definition in `index.toml`. If none is logged, run the definition once on the current pins, as below with `--trainer-image` and `--inference-image` set to the current pins.
 
 ## 3. Run, compare, iterate
 
-Prepare and deploy the definition to your app, run the workload with the stock Tinker SDK, then stop the app:
+`spindle deploy` takes a Python config file, so `run.py --write-config` writes one from the definition: the bundled config plus the definition's hardware. Put it next to the run's output, in `reference_runs/outputs/<run id>/`, which Git ignores. Deploy it to your app, run the workload with the stock Tinker SDK, then stop the app:
 
 ```bash
-uv run python reference_runs/run.py reference_runs/configs/<name>.toml --write-config /tmp/<app>.py
-uv run spindle deploy /tmp/<app>.py --app <app> --env <env>
-# Set TINKER_BASE_URL and TINKER_API_KEY for <app>, then:
-uv run python reference_runs/run.py reference_runs/configs/<name>.toml \
-  --output reference_runs/outputs/<run id>.jsonl
+DEF=reference_runs/configs/<name>.toml
+RUN=reference_runs/outputs/<run id>
+mkdir -p $RUN
+uv run python reference_runs/run.py $DEF --write-config $RUN/deployment.py
+uv run spindle deploy $RUN/deployment.py --app <app> --env <env>
+export TINKER_BASE_URL=<server URL that spindle deploy printed>
+export TINKER_API_KEY=<the key in the environment's spindle-api secret>
+uv run python reference_runs/run.py $DEF --output $RUN.jsonl
 uv run spindle stop --app <app> --env <env>
 ```
 
-Compare the new run with the baseline, and keep the chart for your report:
+For the baseline, pass `--trainer-image <current> --inference-image <current>` to both `run.py` commands. If the server uses Modal proxy auth, run `run.py --output` through `examples/shared-server/with_proxy_auth.py`.
+
+Compare the run with the baseline, and keep the chart for your report:
 
 ```bash
 mkdir -p /tmp/image-upgrade-plots
@@ -45,10 +46,10 @@ uv run python reference_runs/plot.py <baseline id> <run id or JSONL> --labels Ba
 Only compare runs with the same definition and actual hardware. The upgrade is good when:
 
 - every step completes and every optimizer update is accepted;
-- the final evaluation accuracy is within the run-to-run noise of the baseline; when unsure, run the baseline again to see that noise;
-- the median time between updates is no more than 10% slower.
+- the final evaluation reward is within the run-to-run noise of the baseline; when unsure, run the baseline again to see that noise;
+- the median time per update is no more than 10% slower.
 
-If it isn't good, find the cause in the trainer and sampler logs, fix it within the rules above and rerun. `run.py` adds each completed run to `index.toml`. Commit the entries for the runs you report, and fill in `trainer_image` and `inference_image` with the image names, the actual hardware, and notes on the results against the baseline and what the run doesn't show. Failed runs aren't indexed; keep their partial JSONL out of Git but use it for the chart.
+If it isn't good, find the cause in the trainer and sampler logs, fix it within the rules above and rerun. `run.py` adds each completed run to `index.toml`. Commit the entries for the runs you report, with the actual hardware and notes on the results against the baseline and what the run doesn't show. Failed runs aren't indexed; keep their partial JSONL out of Git but use it for the chart.
 
 Confirm the app is stopped with zero containers before you finish, also after a failure.
 
