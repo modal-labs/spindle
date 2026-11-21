@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from spindle.deploy_wizard import bundled_config_paths
+from spindle.deployments import load
 from spindle.providers.modal.deployment_apps import SAMPLER_IMAGES, TRAINER_IMAGES
 
 SCRIPT = (
@@ -67,7 +69,13 @@ def test_select_takes_the_furthest_behind_then_picks_at_random() -> None:
     assert len({pick[2] for pick in picks}) > 1
 
 
-def test_selection_reads_every_bundled_config() -> None:
-    for upgrade in candidates():
-        assert upgrade.target_trainer_image in TRAINER_IMAGES
-        assert upgrade.target_inference_image in SAMPLER_IMAGES
+def test_every_bundled_pin_is_a_registered_image() -> None:
+    for upgrade in candidates(bundled_config_paths()):
+        assert upgrade.trainer_image in TRAINER_IMAGES
+        assert upgrade.inference_image in SAMPLER_IMAGES
+
+
+def test_worker_app_names_fit_modal_for_every_bundled_config() -> None:
+    app = select([Upgrade("c", "", 1, "", "", "", "", [])], 1, random.Random(0))[0].app
+    for path in bundled_config_paths():
+        assert len(f"{app}-inference-{load(path).name}") <= 64

@@ -3,9 +3,11 @@
 Configs whose pins are furthest behind come first; ties are broken at random.
 The script takes --count configs, or ceil(fraction * number of bundled configs), of the configs that
 are behind, prints them as JSON, and lists the reference-run validation
-definitions that already deploy each one.
+definitions that already deploy each one. Each pick gets a random suffix for its
+branch and a short Modal app name, so repeated runs don't collide and Spindle's
+derived app names stay under Modal's 64-character limit.
 
-    uv run --no-sync python .claude/skills/spindle-image-upgrade/select_configs.py --fraction 0.2
+    uv run --no-sync python .claude/skills/spindle-image-upgrade/select_configs.py --count 5
 """
 
 from __future__ import annotations
@@ -19,11 +21,11 @@ import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from spindle.deployments import config_path, load
+from spindle.deploy_wizard import bundled_config_paths
+from spindle.deployments import load
 from spindle.providers.modal.deployment_apps import SAMPLER_IMAGES, TRAINER_IMAGES
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-CONFIG_DIR = config_path("qwen3-8b-lora-32k").parent
 IMAGE_NAME = re.compile(
     r"(?P<family>[a-z]+)-(?:v[\d.]+-)?[0-9a-f]{7,40}(?P<variant>-[a-z0-9-]+)?"
 )
@@ -39,6 +41,8 @@ class Upgrade:
     target_trainer_image: str
     target_inference_image: str
     validations: list[str]
+    suffix: str = ""
+    app: str = ""
 
 
 def family(name: str) -> tuple[str, bool]:
@@ -71,11 +75,11 @@ def validations(config: str) -> list[str]:
     )
 
 
-def candidates(config_dir: Path = CONFIG_DIR) -> list[Upgrade]:
+def candidates(paths: list[Path]) -> list[Upgrade]:
     trainer_newer = newer_base_images(TRAINER_IMAGES)
     sampler_newer = newer_base_images(SAMPLER_IMAGES)
     upgrades = []
-    for path in sorted(config_dir.glob("[!_]*.py")):
+    for path in paths:
         recipe = load(path)
         trainer = trainer_newer[recipe.trainer_image]
         sampler = sampler_newer[recipe.inference_image]
@@ -101,6 +105,9 @@ def candidates(config_dir: Path = CONFIG_DIR) -> list[Upgrade]:
 def select(upgrades: list[Upgrade], count: int, rng: random.Random) -> list[Upgrade]:
     """Most images behind first, random among ties, count at most."""
     order = sorted(upgrades, key=lambda u: (-u.images_behind, rng.random()))
+    for upgrade in order[:count]:
+        upgrade.suffix = f"{rng.getrandbits(24):06x}"
+        upgrade.app = f"upg-{upgrade.suffix}"
     return order[:count]
 
 
@@ -109,11 +116,19 @@ def main() -> None:
     size = parser.add_mutually_exclusive_group()
     size.add_argument("--fraction", type=float, default=0.2)
     size.add_argument("--count", type=int)
+    parser.add_argument("--skip", action="append", default=[], metavar="CONFIG")
     parser.add_argument("--seed", type=int)
     args = parser.parse_args()
-    total = len(list(CONFIG_DIR.glob("[!_]*.py")))
-    count = args.count if args.count is not None else math.ceil(args.fraction * total)
-    chosen = select(candidates(), count, random.Random(args.seed))
+    if args.count is not None and args.count < 1:
+        parser.error("--count must be at least 1")
+    if not 0 < args.fraction <= 1:
+        parser.error("--fraction must be in (0, 1]")
+    paths = bundled_config_paths()
+    count = (
+        args.count if args.count is not None else math.ceil(args.fraction * len(paths))
+    )
+    upgrades = [u for u in candidates(paths) if u.config not in args.skip]
+    chosen = select(upgrades, count, random.Random(args.seed))
     print(json.dumps([asdict(upgrade) for upgrade in chosen], indent=2))
 
 
