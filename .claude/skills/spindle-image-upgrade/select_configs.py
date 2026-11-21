@@ -5,7 +5,7 @@ The script takes ceil(fraction * number of bundled configs) of the configs that
 are behind, prints them as JSON, and lists the reference-run validation
 definitions that already deploy each one.
 
-    uv run --no-sync python scripts/select_image_upgrades.py --fraction 0.2
+    uv run --no-sync python .claude/skills/spindle-image-upgrade/select_configs.py --fraction 0.2
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from pathlib import Path
 from spindle.deployments import config_path, load
 from spindle.providers.modal.deployment_apps import SAMPLER_IMAGES, TRAINER_IMAGES
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_DIR = config_path("qwen3-8b-lora-32k").parent
 IMAGE_NAME = re.compile(
     r"(?P<family>[a-z]+)-(?:v[\d.]+-)?[0-9a-f]{7,40}(?P<variant>-[a-z0-9-]+)?"

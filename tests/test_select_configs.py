@@ -1,16 +1,26 @@
+import importlib.util
 import random
 import re
+import sys
+from pathlib import Path
 
 import pytest
 
-from scripts.select_image_upgrades import (
-    Upgrade,
-    candidates,
-    family,
-    newer_base_images,
-    select,
-)
 from spindle.providers.modal.deployment_apps import SAMPLER_IMAGES, TRAINER_IMAGES
+
+SCRIPT = (
+    Path(__file__).parents[1] / ".claude/skills/spindle-image-upgrade/select_configs.py"
+)
+spec = importlib.util.spec_from_file_location("select_configs", SCRIPT)
+assert spec is not None and spec.loader is not None
+select_configs = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = select_configs
+spec.loader.exec_module(select_configs)
+Upgrade = select_configs.Upgrade
+candidates = select_configs.candidates
+family = select_configs.family
+newer_base_images = select_configs.newer_base_images
+select = select_configs.select
 
 
 @pytest.mark.parametrize("registry", [TRAINER_IMAGES, SAMPLER_IMAGES])

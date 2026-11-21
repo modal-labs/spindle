@@ -96,6 +96,7 @@ SAMPLER_IMAGES = {
     "sglang-v0.5.23-c4182b2": rollout_image.image_01_c4182b2,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks, with GLM-5.3 Flash sampler settings
     "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
+    # https://github.com/modal-projects/sglang/pull/100 Normalize Qwen3.5 GDN LoRA target aliases
     "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
     # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches
     "sglang-v0.5.23-3db151a": rollout_image.image_04_3db151a,

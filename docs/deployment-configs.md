@@ -260,7 +260,7 @@ Never change a named image in place. That includes its fork commit, base image, 
 
 To change an image:
 
-1. Add a new image under a new name, in a new module if the build differs. Name it after the release and the fork commit it installs, such as `sglang-v0.5.24-<commit>`. If only the build steps change, add a short suffix that says what changed. In `TRAINER_IMAGES` or `SAMPLER_IMAGES`, put it after the runtime's older releases and after earlier commits of the same release. `scripts/select_image_upgrades.py` moves configs to the last image of each runtime that has no suffix.
+1. Add a new image under a new name, in a new module if the build differs. Name it after the release and the fork commit it installs, such as `sglang-v0.5.24-<commit>`. If only the build steps change, add a short suffix that says what changed.
 2. Move configs to the new name one at a time. Record a reference run for each config you move.
 3. Once no bundled config, default or reference run uses the old name, remove it and the module that builds it.
 

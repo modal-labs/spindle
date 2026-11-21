@@ -21,7 +21,7 @@ Inputs, from the invocation or the user's agent instructions:
 git fetch origin main
 git switch -c image-upgrades/$(date +%Y-%m-%d) origin/main
 uv sync --locked --python 3.12
-uv run --no-sync python scripts/select_image_upgrades.py --fraction 0.2
+uv run --no-sync python .claude/skills/spindle-image-upgrade/select_configs.py --fraction 0.2
 ```
 
 The script prints a JSON list. It orders configs by how many newer base images their pins are behind, breaks ties at random, and takes `ceil(fraction * number of bundled configs)`. Each entry has the current and target pins and `validations`, the definitions in `reference_runs/configs/` that deploy that config. An empty list means every config is on the newest images: report that and stop.
