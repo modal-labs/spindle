@@ -185,15 +185,6 @@ Use `--trainer-image` and `--inference-image` on the launcher for both
 `--write-config` and `--output` to compare image pairs without changing the TOML.
 The index records the selected overrides.
 
-When credentials are stored in Modal, the checked-in credential launcher can
-supply them to the existing proxy-auth wrapper and run the workload locally:
-
-```bash
-MODAL_PROFILE=prod uv run --no-sync modal run --env dev reference_runs/modal_client.py \
-  --base-url "$SPINDLE_URL" \
-  --command 'reference_runs/run.py reference_runs/configs/guess_number_gpt_oss_20b_restore.toml --initial-evaluations 10 --output reference_runs/outputs/initial-repeats.jsonl'
-```
-
 Plot distributions of the repeated evaluations with:
 
 ```bash
