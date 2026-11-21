@@ -45,6 +45,7 @@ def create_app(
     upstream_url: str,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    update_lora_in_place: bool = False,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -59,6 +60,9 @@ def create_app(
         )
         app.state.adapter_lock = asyncio.Lock()
         app.state.registered_adapters = {}
+        app.state.update_lora_in_place = update_lora_in_place
+        app.state.live_adapters = {}
+        app.state.live_initial_versions = {}
         app.state.adapter_resolutions = {}
         app.state.routing_requests = {}
         app.state.request_work = {}
@@ -204,6 +208,8 @@ def create_app(
         constraint = VersionConstraint.from_payload(payload)
         payload.pop("weight_version", None)
         served_version = None
+        live_initial_version = None
+        live = update_lora_in_place and constraint.exact_version is None
         if run_id is not None:
             try:
                 ref, registration_error = await _prepare_adapter(
@@ -215,8 +221,12 @@ def create_app(
                         status_code=registration_error.status_code,
                         media_type=registration_error.headers.get("content-type"),
                     )
-                payload["lora_path"] = ref.identity
+                payload["lora_path"] = (
+                    _live_adapter_name(str(run_id)) if live else ref.identity
+                )
                 served_version = ref.version
+                if live:
+                    live_initial_version = app.state.live_initial_versions[str(run_id)]
             except (SnapshotNotFound, ValueError) as exc:
                 return JSONResponse(
                     {"error": f"adapter version is not ready: {exc}"},
@@ -225,6 +235,17 @@ def create_app(
 
         remember_request(payload, payload.get("lora_path", "base"))
         response = await _post_generate(app.state.client, payload)
+        if live and run_id is not None and _adapter_missing(response):
+            async with app.state.adapter_lock:
+                if app.state.live_adapters.get(str(run_id)) == ref:
+                    app.state.live_adapters.pop(str(run_id), None)
+                    app.state.live_initial_versions.pop(str(run_id), None)
+            ref, error = await _prepare_adapter(app, bulletin, str(run_id), constraint)
+            if error is not None:
+                return Response(content=error.content, status_code=error.status_code)
+            served_version = ref.version
+            live_initial_version = app.state.live_initial_versions[str(run_id)]
+            response = await _post_generate(app.state.client, payload)
         try:
             body = response.json()
         except ValueError:
@@ -235,8 +256,13 @@ def create_app(
             )
         if served_version is not None and isinstance(body, dict):
             metadata = body.setdefault("meta_info", {})
-            metadata["weight_version_start"] = served_version
-            metadata["weight_version_end"] = served_version
+            if live_initial_version is not None:
+                _live_version_metadata(
+                    metadata, str(run_id), live_initial_version, served_version
+                )
+            else:
+                metadata["weight_version_start"] = served_version
+                metadata["weight_version_end"] = served_version
         return JSONResponse(body, status_code=response.status_code)
 
     return app
@@ -253,6 +279,10 @@ async def _prepare_adapter(
         if constraint.exact_version is not None
         else None
     )
+    live = app.state.update_lora_in_place and ref is None
+    current = app.state.live_adapters.get(run_id) if live else None
+    if current is not None and current.version >= (constraint.min_version or 0):
+        return current, None
     if ref is not None and ref.identity in app.state.registered_adapters:
         return ref, None
     key = (run_id, constraint.exact_version, constraint.min_version)
@@ -287,26 +317,48 @@ async def _prepare_adapter(
                         raise SnapshotNotFound(
                             f"{run_id} latest={resolved.version} required={constraint.min_version}"
                         )
-                    if resolved.identity in app.state.registered_adapters:
+                    if not live and resolved.identity in app.state.registered_adapters:
                         return resolved, None
                     path = await asyncio.to_thread(bulletin.resolve, resolved)
-                response = await app.state.client.post(
-                    "/load_lora_adapter",
-                    json={
-                        "lora_name": resolved.identity,
-                        "lora_path": str(path),
-                        "pinned": False,
-                    },
-                )
+                name = _live_adapter_name(run_id) if live else resolved.identity
+                current = app.state.live_adapters.get(run_id) if live else None
+                if current is not None and current.version >= resolved.version:
+                    return current, None
+                endpoint = "/load_lora_adapter"
+                body = {"lora_name": name, "lora_path": str(path), "pinned": False}
+                if current is not None:
+                    endpoint = "/update_lora_adapter"
+                    initial = app.state.live_initial_versions[run_id]
+                    body.update(
+                        version=str(resolved.version),
+                        expected_version=name
+                        if current.version == initial
+                        else str(current.version),
+                    )
+                response = await app.state.client.post(endpoint, json=body)
+                if current is not None and _adapter_missing(response):
+                    response = await app.state.client.post(
+                        "/load_lora_adapter",
+                        json={
+                            "lora_name": name,
+                            "lora_path": str(path),
+                            "pinned": False,
+                        },
+                    )
+                    if not response.is_error:
+                        app.state.live_initial_versions[run_id] = resolved.version
                 if response.is_error and not await _adapter_is_registered(
-                    app.state.client, resolved.identity, str(path)
+                    app.state.client, name, str(path)
                 ):
                     return resolved, response
                 if not app.state.registered_adapters:
                     timeline("sampler-sidecar").mark(
                         "first_adapter_loaded", adapter=resolved.identity
                     )
-                app.state.registered_adapters[resolved.identity] = str(path)
+                app.state.registered_adapters[name] = str(path)
+                if live:
+                    app.state.live_initial_versions.setdefault(run_id, resolved.version)
+                    app.state.live_adapters[run_id] = resolved
                 return resolved, None
 
         task = asyncio.create_task(prepare())
@@ -323,6 +375,32 @@ async def _prepare_adapter(
     # Share only in-flight work. Later requests still resolve the latest version.
     # One disconnected request must not cancel registration for other callers.
     return await asyncio.shield(task)
+
+
+def _adapter_missing(response: httpx.Response) -> bool:
+    return response.status_code == 400 and "not loaded" in response.text.lower()
+
+
+def _live_adapter_name(run_id: str) -> str:
+    return f"live:{run_id}"
+
+
+def _live_version_metadata(
+    metadata: dict, run_id: str, initial_version: int, admitted_version: int
+) -> None:
+    spans = metadata.get("weight_versions") or []
+    for span in spans:
+        version = span["version"]
+        # Before its first replacement, an adapter reports the global version.
+        span["version"] = (
+            initial_version
+            if version in ("default", _live_adapter_name(run_id))
+            else int(version)
+        )
+    metadata["weight_version_start"] = (
+        spans[0]["version"] if spans else admitted_version
+    )
+    metadata["weight_version_end"] = spans[-1]["version"] if spans else admitted_version
 
 
 async def _adapter_is_registered(
@@ -379,7 +457,11 @@ def main() -> None:
         refresh = modal.Volume.from_name(args.bulletin_volume, version=2).reload
     bulletin = SnapshotBulletin(Path(args.bulletin_root), refresh=refresh)
     uvicorn.run(
-        create_app(bulletin, args.upstream_url),
+        create_app(
+            bulletin,
+            args.upstream_url,
+            update_lora_in_place=os.environ.get("SPINDLE_LORA_UPDATE_IN_PLACE") == "1",
+        ),
         host=args.host,
         port=args.port,
     )

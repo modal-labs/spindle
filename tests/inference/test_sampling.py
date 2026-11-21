@@ -780,7 +780,10 @@ def test_tokenizerless_sampler_accepts_stop_token_ids():
 
 
 @pytest.mark.parametrize("latest", [False, True])
-def test_versioned_sessions_route_by_their_session_version(latest) -> None:
+@pytest.mark.parametrize("update_in_place", [False, True])
+def test_versioned_sessions_route_by_their_session_version(
+    latest: bool, update_in_place: bool
+) -> None:
     from spindle.inference.native_router import RoutedResponse
 
     class Router:
@@ -794,9 +797,21 @@ def test_versioned_sessions_route_by_their_session_version(latest) -> None:
             return RoutedResponse(response(7), "replica", dict(wait_s=0.0))
 
     router = Router()
-    asyncio.run(sample_task(task(latest=latest), "http://rollout", router=router))
+    asyncio.run(
+        sample_task(
+            task(latest=latest),
+            "http://rollout",
+            router=router,
+            lora_update_in_place=update_in_place,
+        )
+    )
 
-    assert router.keys == [sampling.VersionRef("model-a", 7).identity]
+    expected_adapter = (
+        "live:model-a"
+        if latest and update_in_place
+        else sampling.VersionRef("model-a", 7).identity
+    )
+    assert router.keys == [expected_adapter]
     expected = (
         {"min_version": 7, "exact_version": None}
         if latest
