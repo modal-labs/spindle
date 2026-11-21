@@ -9,12 +9,12 @@ import runpy
 import sys
 import tomllib
 from pathlib import Path
-from typing import cast
+from typing import Self, cast
 
 import tinker
 from tinker._constants import RAW_RESPONSE_HEADER
 from tinker.lib.client_connection_pool_type import ClientConnectionPoolType
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from catalog import ReferenceRun, record_run
 
@@ -22,11 +22,30 @@ from spindle.configuration import BaseConfig
 from spindle.deployments import config_path, load
 
 
-class TokenizerConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class WorkloadConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    model: str = Field(min_length=1)
-    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    tokenizer_model: str = Field(min_length=1)
+    tokenizer_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    total_steps: int | None = Field(default=None, ge=1)
+    initial_evaluations: int | None = Field(default=None, ge=1)
+    save_step: int | None = Field(default=None, ge=1)
+    restore_step: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def checkpoint_schedule(self) -> Self:
+        if self.save_step is None and self.restore_step is None:
+            return self
+        if (
+            self.total_steps is None
+            or self.save_step is None
+            or self.restore_step is None
+            or not self.save_step < self.restore_step < self.total_steps
+        ):
+            raise ValueError(
+                "Checkpoint schedule requires 0 < save_step < restore_step < total_steps"
+            )
+        return self
 
 
 class ConfigOverrides(BaseModel):
@@ -42,6 +61,7 @@ class ConfigOverrides(BaseModel):
     inference_gpus_per_node: int | None = None
     inference_min_replicas: int | None = None
     inference_max_replicas: int | None = None
+    sglang_tp_size: int | None = Field(default=None, alias="sglang_cfg.tp_size")
     miles_max_lora_slots: int | None = Field(
         default=None, alias="miles_cfg.max_lora_slots"
     )
@@ -52,7 +72,7 @@ class ValidationRunConfig(BaseModel):
 
     config: str
     script: str
-    tokenizer: TokenizerConfig
+    workload: WorkloadConfig
     config_overrides: ConfigOverrides = Field(default_factory=ConfigOverrides)
     script_args: list[str] = Field(default_factory=list)
 
@@ -60,6 +80,11 @@ class ValidationRunConfig(BaseModel):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("validation", type=Path, help="validation TOML file")
+    parser.add_argument(
+        "--initial-evaluations",
+        type=int,
+        help="repeat step-0 evaluation on one fixed snapshot, then exit (guess-number only)",
+    )
     destination = parser.add_mutually_exclusive_group(required=True)
     destination.add_argument(
         "--write-config", type=Path, help="write a new deployment Python file and exit"
@@ -68,16 +93,26 @@ def main() -> None:
     parser.add_argument(
         "--index", type=Path, default=Path(__file__).with_name("index.toml")
     )
+    parser.add_argument("--trainer-image", help="override the recipe trainer image")
+    parser.add_argument("--inference-image", help="override the recipe sampler image")
     args = parser.parse_args()
     definition = ValidationRunConfig.model_validate(
         tomllib.loads(args.validation.read_text())
     )
+    if args.initial_evaluations is not None:
+        definition.workload = WorkloadConfig.model_validate(
+            {
+                **definition.workload.model_dump(),
+                "initial_evaluations": args.initial_evaluations,
+            }
+        )
     parent = args.validation.resolve().parent
+    overrides = definition.config_overrides.model_dump(by_alias=True, exclude_none=True)
+    for field in ("trainer_image", "inference_image"):
+        if value := getattr(args, field):
+            overrides[field] = value
     recipe = BaseConfig(
-        **vars(load(config_path(definition.config))),
-        overrides=definition.config_overrides.model_dump(
-            by_alias=True, exclude_none=True
-        ),
+        **vars(load(config_path(definition.config))), overrides=overrides
     )
     if args.write_config:
         with args.write_config.open("x") as stream:
@@ -98,11 +133,20 @@ def main() -> None:
             "use a scratch --output for other definitions"
         )
     if any(
-        arg.split("=", 1)[0] in {"--base-model", "--output", "--tokenizer"}
+        arg.split("=", 1)[0]
+        in {
+            "--base-model",
+            "--output",
+            "--tokenizer",
+            "--total-steps",
+            "--initial-evaluations",
+            "--save-step",
+            "--restore-step",
+        }
         for arg in definition.script_args
     ):
         parser.error(
-            "--base-model, --output and --tokenizer are supplied by the launcher"
+            "--base-model, --output, --tokenizer and workload step flags are supplied by the launcher"
         )
     commit = (
         re.search(r"-([0-9a-f]{7,40})(?:-|$)", recipe.trainer_image)
@@ -173,10 +217,14 @@ def launch(
         "--output",
         str(output),
         "--tokenizer",
-        definition.tokenizer.model,
-        definition.tokenizer.revision,
-        *definition.script_args,
+        definition.workload.tokenizer_model,
+        definition.workload.tokenizer_revision,
     ]
+    for field in ("total_steps", "save_step", "restore_step", "initial_evaluations"):
+        value = getattr(definition.workload, field)
+        if value is not None:
+            arguments.extend(["--" + field.replace("_", "-"), str(value)])
+    arguments.extend(definition.script_args)
     previous_argv, previous_path = sys.argv, sys.path[:]
     try:
         sys.argv = arguments
