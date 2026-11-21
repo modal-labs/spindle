@@ -11,7 +11,7 @@ You are the controller. You choose the configs, start one worker per config, wai
 
 Inputs, from the invocation or the user's agent instructions:
 
-- `fraction`: share of all bundled configs to attempt. Default `0.2`.
+- How many configs to attempt: `count`, a number of configs, or `fraction`, a share of all bundled configs. Default: `fraction` 0.2.
 - Modal environment for validation deployments. Workers deploy one app each, named `<app prefix>-<config name>`; the default prefix is `upgrade`.
 - `reviewer`: GitHub login to request review from. Default: assign the PR to the account `gh` is logged in as.
 
@@ -21,10 +21,10 @@ Inputs, from the invocation or the user's agent instructions:
 git fetch origin main
 git switch -c image-upgrades/$(date +%Y-%m-%d) origin/main
 uv sync --locked --python 3.12
-uv run --no-sync python .claude/skills/spindle-image-upgrade/select_configs.py --fraction 0.2
+uv run --no-sync python .claude/skills/spindle-image-upgrade/select_configs.py --fraction 0.2   # or --count 5
 ```
 
-The script prints a JSON list. It orders configs by how many newer base images their pins are behind, breaks ties at random, and takes `ceil(fraction * number of bundled configs)`. Each entry has the current and target pins and `validations`, the definitions in `reference_runs/configs/` that deploy that config. An empty list means every config is on the newest images: report that and stop.
+The script prints a JSON list. It orders configs by how many newer base images their pins are behind, breaks ties at random, and takes `count` configs, or `ceil(fraction * number of bundled configs)`. Each entry has the current and target pins and `validations`, the definitions in `reference_runs/configs/` that deploy that config. An empty list means every config is on the newest images: report that and stop.
 
 ## 2. Start one worker per config
 

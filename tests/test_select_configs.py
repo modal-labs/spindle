@@ -54,13 +54,13 @@ def test_variants_count_as_current_only_after_the_newest_base_image() -> None:
     }
 
 
-def test_select_takes_the_furthest_behind_then_a_random_share() -> None:
+def test_select_takes_the_furthest_behind_then_picks_at_random() -> None:
     upgrades = [
         Upgrade(f"c{i}", "", behind, "", "", "", "", [])
         for i, behind in enumerate([1, 2, 1, 1, 1, 3])
     ]
     picks = {
-        tuple(u.config for u in select(upgrades, 10, 0.3, random.Random(seed)))
+        tuple(u.config for u in select(upgrades, 3, random.Random(seed)))
         for seed in range(20)
     }
     assert all(pick[:2] == ("c5", "c1") and len(pick) == 3 for pick in picks)

@@ -1,7 +1,7 @@
 """Choose bundled configs to move to the newest trainer and sampler images.
 
 Configs whose pins are furthest behind come first; ties are broken at random.
-The script takes ceil(fraction * number of bundled configs) of the configs that
+The script takes --count configs, or ceil(fraction * number of bundled configs), of the configs that
 are behind, prints them as JSON, and lists the reference-run validation
 definitions that already deploy each one.
 
@@ -98,21 +98,22 @@ def candidates(config_dir: Path = CONFIG_DIR) -> list[Upgrade]:
     return upgrades
 
 
-def select(
-    upgrades: list[Upgrade], total: int, fraction: float, rng: random.Random
-) -> list[Upgrade]:
-    """Most images behind first, random among ties, ceil(fraction * total) at most."""
+def select(upgrades: list[Upgrade], count: int, rng: random.Random) -> list[Upgrade]:
+    """Most images behind first, random among ties, count at most."""
     order = sorted(upgrades, key=lambda u: (-u.images_behind, rng.random()))
-    return order[: math.ceil(fraction * total)]
+    return order[:count]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--fraction", type=float, default=0.2)
+    size = parser.add_mutually_exclusive_group()
+    size.add_argument("--fraction", type=float, default=0.2)
+    size.add_argument("--count", type=int)
     parser.add_argument("--seed", type=int)
     args = parser.parse_args()
     total = len(list(CONFIG_DIR.glob("[!_]*.py")))
-    chosen = select(candidates(), total, args.fraction, random.Random(args.seed))
+    count = args.count if args.count is not None else math.ceil(args.fraction * total)
+    chosen = select(candidates(), count, random.Random(args.seed))
     print(json.dumps([asdict(upgrade) for upgrade in chosen], indent=2))
 
 
