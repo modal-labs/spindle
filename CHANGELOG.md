@@ -10,6 +10,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
+- `gpt-oss-20b-lora-32k` and `gpt-oss-20b-lora-64k` train on `miles-v0.2.0-e814245` and sample on `sglang-v0.5.23-e003cf9`. To restore a checkpoint saved on their previous Miles v0.1.1 image, set `trainer_image` back to `miles-v0.1.1-52a7a99`; Miles v0.2.0 uses a different checkpoint format.
 - Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.
 
 ### Fixed
@@ -36,8 +37,6 @@ New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context an
 ### Changed
 
 - Reference-run index entries now record the configured sampler image in `inference_image` and drop the redundant `miles_commit` field.
-- `gpt-oss-20b-lora-32k` trains on `miles-v0.2.0-e814245` and samples on `sglang-v0.5.23-e003cf9`. To restore a checkpoint saved on its previous Miles v0.1.1 image, set `trainer_image` back to `miles-v0.1.1-52a7a99`; Miles v0.2.0 uses a different checkpoint format.
-
 - `qwen35-9b-instruct-lora-16k` trains on one B200 instead of eight H100s, and samples on B200 only, with the `modal-labs/Qwen3.5-9B-DFlash` drafter. It no longer falls back to H200 samplers. Older checkpoints also need the old eight-H100 layout; see "Older Qwen3.5-9B instruct 16K checkpoints" in docs/deployment-configs.md.
 - `qwen38-27b-lora-256k` uses `miles-v0.2.0-8c5de26` and local trainer compiler caches to avoid corrupt generated modules observed with shared caches. Checkpoints saved with the previous `miles-v0.1.1-52a7a99` default cannot restore with the new image. Set `trainer_image` back to `miles-v0.1.1-52a7a99` to restore those checkpoints.
 - Miles LoRA checkpoints restore on a trainer running a different Miles commit, as long as the checkpoint format, adapter layout, base model and LoRA settings match. Before, any commit change rejected the restore, so moving a config to a newer image stranded its saved training states. Training states saved with 0.1.7 or earlier now restore on the current v0.1.x images without setting `trainer_image`. Checkpoints saved on `miles-v0.1.x` images still don't restore on `miles-v0.2.0` images, which use a different checkpoint format.
