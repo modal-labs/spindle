@@ -434,3 +434,32 @@ LoRA pools are named `{frontend}-lora-{name}`. FFT pools are named `{frontend}-f
 `spindle stop --app my-spindle --env dev` stops the frontend and every app whose name starts with `my-spindle-trainer-`, `my-spindle-inference-`, `my-spindle-lora-`, or `my-spindle-fft-`, ending any runs on them. Deployments made with `--app` on Spindle 0.1.5 or older named their worker and pool apps `spindle-...`; stop those with `modal app stop` after upgrading. It also deletes the stopped frontend's folder from the registry Volume, leaving other frontends' folders alone: the next `spindle deploy` under that name creates a new frontend app with an empty registry, so it serves only the configs it lists.
 
 See [validation results](deployment-validation.md) for CPU coverage, live GPU checks, and their limits.
+
+
+### Updating live LoRA adapters in place
+
+To let active generations follow newer sampler weights, set
+`inference_env = {"SPINDLE_LORA_UPDATE_IN_PLACE": "1"}` and use
+`inference_image = "sglang-v0.5.23-884f3978"` (or its `-glm53` variant).
+This requires the adapter-update SGLang fork. It is off by default.
+
+Clients from `save_weights_and_get_sampling_client()` use a minimum version.
+When a request requires a newer version, the sidecar resolves the published
+snapshot and calls `/update_lora_adapter` on one stable adapter per training
+run. Active requests for that run then continue with the new weights. Requests
+with older minimums can use the already loaded newer version. Publication alone
+does not trigger an update: a request must require the new version.
+
+Exact checkpoint pins remain immutable and use separate adapters. Use those
+when a trajectory must stay on one policy. In-place updates retain sampled
+tokens and their behavior logprobs, and rebuild only the affected requests' KV.
+Other adapters keep their active KV, but upload bandwidth and replay compute
+can still increase their latency. More frequent updates can cost more than
+adapter consolidation saves. The sidecar reports the actual starting and ending
+versions and retains SGLang's policy-version token spans in response metadata.
+
+Use ordinary CUDA tensor-parallel serving. Pipeline/context parallelism,
+attention DP, speculative decoding, sessions, beam search and hierarchical
+cache are not supported by this endpoint. Rank, alpha, targets, tensor shapes
+and dtypes must stay fixed. A failed preparation preserves the previous version;
+a failed GPU rollback blocks that adapter until it is repaired.

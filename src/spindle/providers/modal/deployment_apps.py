@@ -89,6 +89,9 @@ TRAINER_IMAGES = {
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {
+    # https://github.com/modal-projects/sglang/pull/109 Adapter-scoped in-place updates
+    "sglang-v0.5.23-884f3978": rollout_image.image_05_884f3978,
+    "sglang-v0.5.23-884f3978-glm53": glm53_image.image_02_884f3978,
     # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches
     "sglang-v0.5.23-3db151a": rollout_image.image_04_3db151a,
     "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
