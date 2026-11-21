@@ -10,7 +10,6 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Changed
 
-- `gpt-oss-20b-lora-64k` trains on `miles-v0.2.0-e814245` and samples on `sglang-v0.5.23-e003cf9`, like `gpt-oss-20b-lora-32k`. To restore a checkpoint saved on its previous Miles v0.1.1 image, set `trainer_image` back to `miles-v0.1.1-52a7a99`; Miles v0.2.0 uses a different checkpoint format.
 - Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.
 
 ### Fixed
