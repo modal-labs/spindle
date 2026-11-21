@@ -1,0 +1,81 @@
+import importlib.util
+import random
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+from spindle.deploy_wizard import bundled_config_paths
+from spindle.deployments import load
+from spindle.providers.modal.deployment_apps import SAMPLER_IMAGES, TRAINER_IMAGES
+
+SCRIPT = (
+    Path(__file__).parents[1] / ".claude/skills/spindle-image-upgrade/select_configs.py"
+)
+spec = importlib.util.spec_from_file_location("select_configs", SCRIPT)
+assert spec is not None and spec.loader is not None
+select_configs = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = select_configs
+spec.loader.exec_module(select_configs)
+Upgrade = select_configs.Upgrade
+candidates = select_configs.candidates
+family = select_configs.family
+newer_base_images = select_configs.newer_base_images
+select = select_configs.select
+
+
+@pytest.mark.parametrize("registry", [TRAINER_IMAGES, SAMPLER_IMAGES])
+def test_registries_list_releases_in_upgrade_order(registry: dict[str, object]) -> None:
+    releases: dict[str, list[tuple[int, ...]]] = {}
+    for name in registry:
+        if match := re.match(r"[a-z]+-v([\d.]+)-", name):
+            version = tuple(int(part) for part in match[1].split("."))
+            releases.setdefault(family(name)[0], []).append(version)
+    assert all(versions == sorted(versions) for versions in releases.values())
+
+
+def test_variants_count_as_current_only_after_the_newest_base_image() -> None:
+    newer = newer_base_images(
+        dict.fromkeys(
+            [
+                "sglang-v0.5.21-aaaaaaa",
+                "sglang-v0.5.21-bbbbbbb-glm",
+                "megatron-1111111",
+                "sglang-v0.5.23-ccccccc",
+                "sglang-v0.5.23-ccccccc-glm",
+            ]
+        )
+    )
+    assert newer == {
+        "sglang-v0.5.21-aaaaaaa": ["sglang-v0.5.23-ccccccc"],
+        "sglang-v0.5.21-bbbbbbb-glm": ["sglang-v0.5.23-ccccccc"],
+        "megatron-1111111": [],
+        "sglang-v0.5.23-ccccccc": [],
+        "sglang-v0.5.23-ccccccc-glm": [],
+    }
+
+
+def test_select_takes_the_furthest_behind_then_picks_at_random() -> None:
+    upgrades = [
+        Upgrade(f"c{i}", "", behind, "", "", "", "", [])
+        for i, behind in enumerate([1, 2, 1, 1, 1, 3])
+    ]
+    picks = {
+        tuple(u.config for u in select(upgrades, 3, random.Random(seed)))
+        for seed in range(20)
+    }
+    assert all(pick[:2] == ("c5", "c1") and len(pick) == 3 for pick in picks)
+    assert len({pick[2] for pick in picks}) > 1
+
+
+def test_every_bundled_pin_is_a_registered_image() -> None:
+    for upgrade in candidates(bundled_config_paths()):
+        assert upgrade.trainer_image in TRAINER_IMAGES
+        assert upgrade.inference_image in SAMPLER_IMAGES
+
+
+def test_worker_app_names_fit_modal_for_every_bundled_config() -> None:
+    app = select([Upgrade("c", "", 1, "", "", "", "", [])], 1, random.Random(0))[0].app
+    for path in bundled_config_paths():
+        assert len(f"{app}-inference-{load(path).name}") <= 64

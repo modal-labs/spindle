@@ -66,6 +66,7 @@ from .usage import USAGE_ROOT, sample_meter, start_usage_meter, usage_volume
 
 # Named images are frozen: add a new name instead of editing one. See docs/deployment-configs.md#images.
 # Each entry notes the fork PR that last changed its commit.
+# Each runtime's images are in upgrade order: by release, then by fork commit.
 TRAINER_IMAGES = {
     # https://github.com/modal-projects/miles/pull/16 Support Tinker SDK 0.29+ in Miles' Tinker layer
     "miles-v0.1.1-fdd808c": miles_v011_image.image_01_fdd808c,
@@ -89,15 +90,16 @@ TRAINER_IMAGES = {
     "megatron-2d1fa8d": megatron_image,
 }
 SAMPLER_IMAGES = {
-    # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches
-    "sglang-v0.5.23-3db151a": rollout_image.image_04_3db151a,
-    "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
     # https://github.com/modal-projects/sglang/pull/81 Serve DeepSeek-V4 LoRA on quantized bases
     "sglang-v0.5.21-a3e0e17": deepseek_v41_image.image_01_a3e0e17,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks
     "sglang-v0.5.23-c4182b2": rollout_image.image_01_c4182b2,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks, with GLM-5.3 Flash sampler settings
     "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
+    # https://github.com/modal-projects/sglang/pull/100 Normalize Qwen3.5 GDN LoRA target aliases
+    "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
+    # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches
+    "sglang-v0.5.23-3db151a": rollout_image.image_04_3db151a,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {
