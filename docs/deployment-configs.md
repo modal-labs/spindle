@@ -439,7 +439,7 @@ See [validation results](deployment-validation.md) for CPU coverage, live GPU ch
 ### Updating live LoRA adapters in place
 
 To let active generations follow newer sampler weights, set
-`inference_env = {"SPINDLE_LORA_UPDATE_IN_PLACE": "1"}` and use
+`inference_lora_update_in_place = True` and use
 `inference_image = "spindle.providers.modal.live_lora_image:image_01_884f397"`.
 For GLM Flash, use
 `"spindle.providers.modal.live_lora_image:glm53_image_01_884f397"`.

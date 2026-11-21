@@ -6,7 +6,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
-- Latest-version LoRA sampling can opt into in-place updates with `SPINDLE_LORA_UPDATE_IN_PLACE=1` and the adapter-update sampler image. Active generations follow the new weights while exact checkpoint pins stay immutable.
+- Latest-version LoRA sampling can opt into in-place updates with `inference_lora_update_in_place=True` and the adapter-update sampler image. Active generations follow the new weights while exact checkpoint pins stay immutable.
 
 - Megatron full-parameter training accepts `[T, K]` candidate targets and weights, including mixed candidate counts in one batch, for scoring and custom losses. Candidate scores share one vocabulary softmax in both the chunked output head and tensor-parallel path.
 

@@ -249,6 +249,7 @@ class DeploymentConfig(BaseModel):
             recipe.inference_scaledown_window_s,
             recipe.inference_startup_timeout_s,
             recipe.inference_env,
+            recipe.inference_lora_update_in_place,
             # cache_wait pools publish routing observations; others do not.
             recipe.inference_lora_routing,
             self.inference_settings,

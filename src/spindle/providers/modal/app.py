@@ -543,10 +543,7 @@ async def _execute_sample(task: dict, stats: dict) -> dict:
             context_length=definition.max_context_length,
             stop_token_ids_only=stop_token_ids_only,
             router=router,
-            lora_update_in_place=definition.recipe.inference_env.get(
-                "SPINDLE_LORA_UPDATE_IN_PLACE"
-            )
-            == "1",
+            lora_update_in_place=definition.recipe.inference_lora_update_in_place,
             on_wait=keep_pool_ready,
             stats=stats,
         )
