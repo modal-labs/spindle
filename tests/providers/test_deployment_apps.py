@@ -21,7 +21,6 @@ from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.local import InMemoryKeyValueStore
 from tests.support import RoutedTestStore
 from spindle.providers.modal import (
-    deepseek_v41_dspark_image,
     deepseek_v41_image,
     deployment_apps,
     deployment_configs,
@@ -549,6 +548,8 @@ UNUSED_IMAGE_WHITELIST = {
     "miles-v0.1.2-464efc9-glm53",
     # DeepSeek-V4.1-Flash sampler image in Spindle 0.1.8 and earlier.
     "sglang-v0.5.21-a3e0e17",
+    # DeepSeek-V4.1-Flash DSPARK sampler image before the draft metadata fix.
+    "sglang-v0.5.23-3db151a",
 }
 
 
@@ -573,7 +574,6 @@ FORK_IMAGE_MODULES = (
     miles_v020_image,
     rollout_image,
     deepseek_v41_image,
-    deepseek_v41_dspark_image,
     glm53_image,
 )
 IMAGE_VARIABLE = re.compile(r"\w*image_(\d{2})_([0-9a-f]{7})")

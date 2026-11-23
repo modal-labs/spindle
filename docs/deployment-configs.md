@@ -162,6 +162,40 @@ checkpoint instead. The GLM recipe retains its parent's BF16 target weights and
 eight inference GPUs. Reference runs and benchmark artifacts are maintained
 separately from these deployment recipes.
 
+## Reopening a named sampling checkpoint on a fresh deployment
+
+Named exports saved with this version persist their metadata on
+`platform.storage.bulletin` (default: `spindle-snapshot-bulletin`). A path such as
+`tinker://<run>/sampler_weights/eval` resolves to
+`/bulletin/sampler_weights/<run>/eval/metadata.json`. This immutable metadata
+identifies the base model, engine definition, and exact snapshot version; the
+adapter weights remain in the existing bulletin snapshot directory.
+
+```python
+# Save once on the training deployment; wait for durable publication.
+checkpoint = trainer.save_weights_for_sampler("eval").result()
+
+# Later, connect to a fresh deployment using the same bulletin volume.
+service = tinker.ServiceClient(base_url=new_url, api_key=api_key)
+sampler = service.create_sampling_client(model_path=checkpoint.path)
+```
+
+The new deployment must use the same Modal workspace/environment and bulletin
+volume, have access to the base weights, and serve the checkpoint's engine
+definition. No original model session, trainer, or artifacts Dict entry is
+required for LoRA sampling. New named exports write their metadata only to the
+volume, and export retries read it there too. Expiration still applies when the
+export has a TTL.
+FFT publications retain their existing dependencies on the base and preceding
+delta snapshots. Ephemeral latest clients retain their existing lifecycle.
+
+Older exports without volume metadata continue to resolve through their original
+artifacts Dict; retrying the original named export with the updated server writes
+its durable metadata. A training checkpoint (`tinker://<run>/weights/<name>`,
+created by `save_state`) still needs to be restored and exported for sampling.
+The Tinker SDK interface is unchanged. Servers predating this storage format
+cannot reopen new named exports after a server downgrade.
+
 ## Recommended configuration for eval jobs
 
 The defaults suit training loops. An eval sends one short batch, and any replica it starts takes a few minutes to load, so it arrives after the work is done and then sits idle. For eval-only configs:
@@ -216,7 +250,7 @@ Native slots support dense projections, the output head and grouped expert proje
 
 ### Images
 
-`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53`, `miles-v0.1.2-99e1ebe-kpool-glm53`, `miles-v0.2.0-8c5de26`, `miles-v0.2.0-e814245` and `megatron-2d1fa8d` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-5b3b8c8`, `sglang-v0.5.23-c4182b2`, `sglang-v0.5.23-c4182b2-glm53` and `sglang-v0.5.23-e003cf9` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53`, `miles-v0.1.2-99e1ebe-kpool-glm53` and `miles-v0.2.0-8c5de26` support seeded LoRA initialization (`create_lora_training_client(seed=...)`), and `miles-v0.2.0-8c5de26` also adds Beam LoRA support. `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` (DeepSeek-V4.1) and `miles-v0.1.2-464efc9-glm53` (GLM-5.3 Flash) are the images Spindle 0.1.7 and earlier trained on. No bundled config uses them, and states saved on them restore on the newer image of the same release. Use a `module:attribute` path for an image you define in your own code.
+`trainer_image` and `inference_image` select the trainer and sampler images. Each takes a built-in name or a `module:attribute` path to a `modal.Image`. The names are listed in [deployment_apps.py](../src/spindle/providers/modal/deployment_apps.py): `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53`, `miles-v0.1.2-99e1ebe-kpool-glm53`, `miles-v0.2.0-8c5de26`, `miles-v0.2.0-e814245`, `megatron-2d1fa8d` and `megatron-2d1fa8d-fla06` for trainers, and `sglang-v0.5.21-a3e0e17`, `sglang-v0.5.23-c4182b2`, `sglang-v0.5.23-c4182b2-glm53`, `sglang-v0.5.23-e003cf9`, `sglang-v0.5.23-3db151a` and `sglang-v0.5.23-a1e4ba6` for samplers. A name is the upstream release followed by the short commit of the Spindle fork that the image installs. A suffix such as `-glm53` marks extra model-specific build steps. The Megatron image has no release, so its name has only the Megatron-LM commit. `miles-v0.1.1-52a7a99`, `miles-v0.1.2-99e1ebe`, `miles-v0.1.2-99e1ebe-glm53`, `miles-v0.1.2-99e1ebe-kpool-glm53` and `miles-v0.2.0-8c5de26` support seeded LoRA initialization (`create_lora_training_client(seed=...)`), and `miles-v0.2.0-8c5de26` also adds Beam LoRA support. `miles-v0.1.1-fdd808c`, `miles-v0.1.2-f2f8447` (DeepSeek-V4.1) and `miles-v0.1.2-464efc9-glm53` (GLM-5.3 Flash) are the images Spindle 0.1.7 and earlier trained on. No bundled config uses them, and states saved on them restore on the newer image of the same release. Use a `module:attribute` path for an image you define in your own code.
 
 Every bundled config sets both images itself rather than inheriting them, so upgrading SGLang or Miles for one config doesn't change any other. If you leave a field empty in your own config, it uses the backend default (`miles-v0.1.1-52a7a99`, `megatron-2d1fa8d` or `sglang-v0.5.23-c4182b2`), and that default can change in a later Spindle release. Set both fields to keep a config on the images it was tested with.
 

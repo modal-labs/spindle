@@ -10,7 +10,7 @@ class Config(BaseConfig):
 
     name = "deepseek-v41-flash-lora-8k"
     trainer_image = "miles-v0.1.2-99e1ebe"
-    inference_image = "sglang-v0.5.23-5b3b8c8"
+    inference_image = "sglang-v0.5.23-c4182b2"
     model = "deepseek-ai/DeepSeek-V4.1-Flash"
     # The FP8/FP4 release. The trainer dequantizes it to BF16 as it loads.
     weights_revision = "2cba9e42aa026125f3ed06c6d98c1db82f7ca027"
@@ -62,6 +62,8 @@ class Config(BaseConfig):
     trainer_env = {
         # Lazily loaded kernels can deadlock against in-flight cross-node expert all-to-alls.
         "CUDA_MODULE_LOADING": "EAGER",
+        # On B300, eager loading JIT-compiles more kernels than the default 1 GiB cache holds.
+        "CUDA_CACHE_MAXSIZE": "4294967296",
         # cuBLASLt still loads kernels while an expert all-to-all is in flight,
         # which can hang trainers.
         "TORCH_NCCL_BLOCKING_WAIT": "1",

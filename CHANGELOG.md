@@ -6,25 +6,49 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 ### Added
 
+- Megatron full-parameter training accepts `[T, K]` candidate targets and weights, including mixed candidate counts in one batch, for scoring and custom losses. Candidate scores share one vocabulary softmax in both the chunked output head and tensor-parallel path.
+
+### Changed
+
+- `gpt-oss-20b-lora-32k` and `gpt-oss-20b-lora-64k` train on `miles-v0.2.0-e814245` and sample on `sglang-v0.5.23-e003cf9`. To restore a checkpoint saved on their previous Miles v0.1.1 image, set `trainer_image` back to `miles-v0.1.1-52a7a99`; Miles v0.2.0 uses a different checkpoint format.
+- Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.
+- The DeepSeek-V4.1-Flash 32K and 64K recipes sample on `sglang-v0.5.23-a1e4ba6`. With DSPARK speculative decoding, their samplers used to give up on a CUDA graph for draft metadata on their first requests and prepare it more slowly for the rest of their life. Decode steps at small batch sizes take about 5% less time. Samplers switch over at their next deploy.
+- `qwen35-4b-fft-64k` trains on the new `megatron-2d1fa8d-fla06` image, which is `megatron-2d1fa8d` with flash-linear-attention 0.6.0 instead of 0.4.2. Losses are unchanged, and steps take the same time or slightly less. The other Megatron configs and the Megatron default stay on `megatron-2d1fa8d`.
+
+### Fixed
+
+- Named sampling checkpoints persist their metadata only on the configured bulletin volume, rather than duplicating it in the artifacts Dict. A fresh deployment using that volume can open their Tinker paths without the original artifacts Dict or trainer session.
+
+## 0.1.9 - 2026-11-19
+
+New LoRA recipes train Kimi K3, Beam 501B-A23B, GLM-5.3 Flash at 256K context and DeepSeek-V4.1-Flash-1017 at 64K context. Miles LoRA training states now restore after a trainer image update that keeps the same checkpoint format, and removing a config stops its sampler pools.
+
+### Added
+
+- A guess-the-number reference workload trains through the stock Tinker SDK and records game reward, success rate, timings and sampling/training KL. Its typed workload settings include the tokenizer pins and total steps. An optional save/train-ahead/restore schedule tests checkpoint continuation with optimizer state. Plots distinguish retained and discarded updates. An evaluation-only mode repeats the same seeded step-0 evaluation and plots its distribution across image pairs.
+
 - A two-node Qwen3.8-27B DAPO-Math reference definition uses the shared Tinker workload.
 - DAPO-Math references validate checkpoint restoration by replaying an Adam momentum step and sampling the restored adapter after the measured workload.
 - `glm53-flash-lora-256k`: GLM-5.3 Flash LoRA with 256K-token context on one 8×B300 node, with expert-routing replay. It trains on a new image, `miles-v0.1.2-99e1ebe-kpool-glm53`, which changes GLM's sparse-attention indexer so 256K sequences fit in GPU memory.
 - `deepseek-v41-flash-1017-lora-64k`: DeepSeek-V4.1-Flash-1017 LoRA with 64K context. Like `deepseek-v41-flash-lora-64k`, it trains on B300 or B200.
 - `kimi-k3-lora-32k` trains LoRA adapters on Moonshot AI Kimi K3 from the MXFP4 release weights, with a 2-node B300 trainer and a 1-node B300 sampler. Adapters train attention, the dense first layer and the shared experts; routed experts stay frozen.
-- `beam-501b-a23b-lora-5k` trains `reflection/Beam-1.0-501B-A23B` with BF16 LoRA on two eight-H200 trainer nodes and samples on one eight-B300 node. Attention and MLP gates are separate LoRA targets, and training uses routing replay. It trains on `miles-v0.2.0-8c5de26` and samples on the new `sglang-v0.5.23-568ab74` image, which serves Beam LoRA including its attention output gate. Its trainers use local compiler caches, like `qwen38-27b-lora-256k`.
-- The reference-run catalog has a Beam definition, `beam_blog_repro.toml`, that trains on DAPO-Math and evaluates on AIME25 to reproduce the published Beam LoRA run. The index holds an earlier 42-update execution and the published curve.
+- `beam-501b-a23b-lora-64k` trains `reflection/Beam-1.0-501B-A23B` with BF16 LoRA and 64K context on two eight-H200 trainer nodes and samples on one eight-B300 node. Attention and MLP gates are separate LoRA targets, and training uses routing replay. It trains on `miles-v0.2.0-8c5de26` and samples on the new `sglang-v0.5.23-568ab74` image, which serves Beam LoRA including its attention output gate. Its trainers use local compiler caches, like `qwen38-27b-lora-256k`.
+- The reference-run catalog has a Beam definition, `beam_blog_repro.toml`, that trains on DAPO-Math and evaluates on AIME25 to reproduce the published Beam LoRA run. The index holds the published curve, an earlier 42-update execution, and a 41-update execution of the 64K recipe with fused attention.
 - Every reference-run output follows one format, validated by `reference_runs/catalog.py` and described in `reference_runs/README.md`. Index entries for executions outside Spindle record `source` instead of Spindle provenance.
 
 ### Changed
 
+- Reference-run index entries now record the configured sampler image in `inference_image` and drop the redundant `miles_commit` field.
+- `qwen35-9b-instruct-lora-16k` trains on one B200 instead of eight H100s, and samples on B200 only, with the `modal-labs/Qwen3.5-9B-DFlash` drafter. It no longer falls back to H200 samplers. Older checkpoints also need the old eight-H100 layout; see "Older Qwen3.5-9B instruct 16K checkpoints" in docs/deployment-configs.md.
 - `qwen38-27b-lora-256k` uses `miles-v0.2.0-8c5de26` and local trainer compiler caches to avoid corrupt generated modules observed with shared caches. Checkpoints saved with the previous `miles-v0.1.1-52a7a99` default cannot restore with the new image. Set `trainer_image` back to `miles-v0.1.1-52a7a99` to restore those checkpoints.
 - Miles LoRA checkpoints restore on a trainer running a different Miles commit, as long as the checkpoint format, adapter layout, base model and LoRA settings match. Before, any commit change rejected the restore, so moving a config to a newer image stranded its saved training states. Training states saved with 0.1.7 or earlier now restore on the current v0.1.x images without setting `trainer_image`. Checkpoints saved on `miles-v0.1.x` images still don't restore on `miles-v0.2.0` images, which use a different checkpoint format.
 - A checkpoint that a Miles v0.2.0 trainer refuses to load, for example because its expert adapters don't match, now fails only that request. Before, it stopped the trainer and every model on it.
 - DeepSeek-V4.1-Flash samplers run SGLang v0.5.23 like every other sampler, with decoder SWA bounded replay turned off. On v0.5.23 that feature made LoRA samplers crash on long prompts, and its logprobs don't match a full prefill. The samplers switch over at their next deploy (#304).
-- DeepSeek-V4.1-Flash samplers with speculative decoding no longer fall back to slower eager metadata prep after their first request, which cost about 5% per decode step at small batch sizes. They use the new `sglang-v0.5.23-5b3b8c8` image and switch over at their next deploy.
 
 ### Fixed
 
+- `qwen35-9b-lora-64k` and `qwen35-9b-lora-128k` start again. They split the model across four GPUs (tensor parallel size 4) instead of eight, because the Miles native adapters they use since 0.1.8 reject eight for Qwen3.5-9B. `qwen35-9b-lora-128k` and the shared-server recipe built on it train on four B200s instead of eight H200s.
+- Removing a config with `spindle remove` or `DELETE /api/v1/spindle/deployments/{name}` also stops its LoRA and full fine-tuning sampler pools. Before, they kept running, and billing for warm replicas, until stopped by hand.
 - Miles v0.2.0 trainers can gather checkpoint and sampler captures across nodes without racing checkpoint persistence.
 - Reference plots leave gaps for missing measurements instead of joining timing points across a restart.
 - Long-sequence training requests with expert-routing replay no longer fail with intermittent 503 errors.
@@ -46,7 +70,6 @@ Qwen3.5 LoRA recipes now train the linear-attention layers, and the dense Qwen a
 
 ### Changed
 
-- `qwen35-9b-instruct-lora-16k` trains on one B200 instead of eight H100s, and samples on B200 only, with the `modal-labs/Qwen3.5-9B-DFlash` drafter. It no longer falls back to H200 samplers. Older checkpoints also need the old eight-H100 layout; see "Older Qwen3.5-9B instruct 16K checkpoints" in docs/deployment-configs.md.
 - The Qwen3.5-2B, Qwen3.5-4B and Qwen3.5-9B-Base LoRA recipes now also train the linear-attention layers, which make up three of every four layers. Checkpoints these recipes saved before this change can't be loaded into them. To keep using one, load it into a variant with the old targets, as described in [Older Qwen3.5 LoRA checkpoints](docs/deployment-configs.md#older-qwen35-lora-checkpoints).
 - Single-node dense Qwen2.5, Qwen3, Qwen3.5, Qwen3.8 and Nemotron-3 Nano LoRA recipes use Miles native canonical adapters with independent projection factors and a sampler image supporting canonical GDN targets. Nano uses FP32 expert reductions and deterministic kernels so repeated scores and optimizer replay agree. Older checkpoints require their original trainer image and adapter layout.
 - Miles multi-target scoring shares one vocabulary softmax across mixed candidate counts in supported scoring modes, preserving each datum's output shape and batch order.

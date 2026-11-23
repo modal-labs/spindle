@@ -35,7 +35,6 @@ from spindle.usage import ContainerUsage, poll_busy
 
 from .app_tags import app_tags
 from . import (
-    deepseek_v41_dspark_image,
     deepseek_v41_image,
     glm53_image,
     miles_v011_image,
@@ -60,6 +59,7 @@ from .kernel_cache import (
 from .kv import shared_kv
 from .lora_pool import LoraPoolSpec
 from .lora_pool import deploy_pool as deploy_lora
+from .megatron_image import fla_image as megatron_fla_image
 from .megatron_image import image as megatron_image
 from .ray_cluster import start_trainer_cluster
 from .serve import run_engine_with_backend
@@ -88,8 +88,13 @@ TRAINER_IMAGES = {
     "miles-v0.2.0-e814245": miles_v020_image.image_03_e814245,
     # Upstream NVIDIA/Megatron-LM commit; no Spindle fork
     "megatron-2d1fa8d": megatron_image,
+    "megatron-2d1fa8d-fla06": megatron_fla_image,
 }
 SAMPLER_IMAGES = {
+    # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches
+    "sglang-v0.5.23-3db151a": rollout_image.image_04_3db151a,
+    # https://github.com/modal-projects/sglang/pull/103 Build the DSPARK draft block metadata without host sequence lengths
+    "sglang-v0.5.23-a1e4ba6": rollout_image.image_05_a1e4ba6,
     "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
     # https://github.com/modal-projects/sglang/pull/81 Serve DeepSeek-V4 LoRA on quantized bases
     "sglang-v0.5.21-a3e0e17": deepseek_v41_image.image_01_a3e0e17,
@@ -97,8 +102,6 @@ SAMPLER_IMAGES = {
     "sglang-v0.5.23-c4182b2": rollout_image.image_01_c4182b2,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks, with GLM-5.3 Flash sampler settings
     "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
-    # https://github.com/modal-projects/sglang/pull/103 Build the DSPARK draft block metadata without host sequence lengths
-    "sglang-v0.5.23-5b3b8c8": deepseek_v41_dspark_image.image_01_5b3b8c8,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {

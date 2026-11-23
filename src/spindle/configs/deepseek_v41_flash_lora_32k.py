@@ -6,7 +6,7 @@ class Config(Parent):
 
     name = "deepseek-v41-flash-lora-32k"
     trainer_image = "miles-v0.1.2-99e1ebe"
-    inference_image = "sglang-v0.5.23-5b3b8c8"
+    inference_image = "sglang-v0.5.23-a1e4ba6"
     max_context_length = 32768
     overrides = {
         "miles_cfg.tensor_model_parallel_size": 4,
@@ -15,6 +15,8 @@ class Config(Parent):
         "sglang_cfg.speculative_algorithm": "DSPARK",
         "sglang_cfg.speculative_dspark_block_size": 5,
         "sglang_cfg.cuda_graph_max_bs_decode": 64,
+        "sglang_cfg.max_running_requests": 64,
+        "sglang_cfg.max_queued_requests": 8,
     }
 
 

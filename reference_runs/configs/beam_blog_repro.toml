@@ -1,6 +1,6 @@
-config = "beam-501b-a23b-lora-5k"
+config = "beam-501b-a23b-lora-64k"
 script = "../scripts/beam_blog_repro.py"
 
-[tokenizer]
-model = "reflection/Beam-1.0-501B-A23B"
-revision = "12950ae640b48cbbe9b5bb7735bf197507d6383f"
+[workload]
+tokenizer_model = "reflection/Beam-1.0-501B-A23B"
+tokenizer_revision = "12950ae640b48cbbe9b5bb7735bf197507d6383f"
