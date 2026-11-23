@@ -77,7 +77,6 @@ def test_recording_concurrent_runs_preserves_index(
         "output": "first.jsonl",
         "spindle_commit": "a" * 40,
         "trainer_image": "test-image",
-        "miles_commit": "b" * 40,
         "tinker_sdk": "0.26.0",
         "hardware": "test hardware",
     }
@@ -125,7 +124,6 @@ def test_failed_run_keeps_partial_metrics_without_indexing(tmp_path: Path) -> No
         output="partial.jsonl",
         spindle_commit="a" * 40,
         trainer_image="test",
-        miles_commit="b" * 40,
         tinker_sdk="0.26.0",
         hardware="test",
     )
@@ -178,17 +176,29 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     definition.write_text(
         'config = "qwen35-4b-lora-32k"\nscript = "workload.py"\n'
         'script_args = ["--literal", "a value with spaces"]\n'
-        f'tokenizer = {{ model = "test/tokenizer", revision = "{revision}" }}\n'
+        f'workload = {{ tokenizer_model = "test/tokenizer", tokenizer_revision = "{revision}", total_steps = 6, save_step = 2, restore_step = 4 }}\n'
         '[config_overrides]\nname = "reference-test"\ntrainer_gpu = "H100!"\n'
         '"miles_cfg.max_lora_slots" = 2\n'
     )
+    image_arguments = [
+        "--trainer-image",
+        "miles-v0.1.1-52a7a99",
+        "--inference-image",
+        "sglang-v0.5.23-c4182b2",
+        "--initial-evaluations",
+        "3",
+    ]
     deployment = tmp_path / "deployment.py"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        sys, "argv", ["run", str(definition), "--write-config", str(deployment)]
+        sys,
+        "argv",
+        ["run", str(definition), "--write-config", str(deployment), *image_arguments],
     )
     launcher.main()
     prepared = load(deployment)
+    assert prepared.trainer_image == "miles-v0.1.1-52a7a99"
+    assert prepared.inference_image == "sglang-v0.5.23-c4182b2"
     assert prepared.name == "reference-test"
     assert prepared.trainer_gpu == "H100!"
     assert prepared.miles_cfg["max_lora_slots"] == 2
@@ -216,7 +226,7 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     if not indexed:
         index.parent.mkdir(parents=True, exist_ok=True)
         index.write_text("scratch runs must not read or modify this catalog")
-    arguments = ["run", str(definition), "--output", str(output)]
+    arguments = ["run", str(definition), "--output", str(output), *image_arguments]
     if custom_index:
         arguments.extend(["--index", str(index)])
     monkeypatch.setattr(sys, "argv", arguments)
@@ -231,6 +241,14 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         "--tokenizer",
         "test/tokenizer",
         revision,
+        "--total-steps",
+        "6",
+        "--save-step",
+        "2",
+        "--restore-step",
+        "4",
+        "--initial-evaluations",
+        "3",
         "--literal",
         "a value with spaces",
     ]
@@ -256,7 +274,7 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
     assert entry.spindle_commit == "c" * 40
     assert entry.spindle_version == "0.1.8"
     assert entry.trainer_image == prepared.trainer_image
-    assert entry.miles_commit in prepared.trainer_image
+    assert entry.inference_image == prepared.inference_image
     assert "not attested" in entry.notes
     with pytest.raises(ValueError, match="already indexed"):
         launcher.main()
@@ -269,6 +287,9 @@ def test_prepare_and_launch_share_overrides_from_another_directory(
         ["--output=other.jsonl"],
         ["--tokenizer", "wrong", "a" * 40],
         ["--tokenizer=wrong"],
+        ["--total-steps", "99"],
+        ["--save-step=1"],
+        ["--restore-step", "2"],
     ],
 )
 def test_script_arguments_cannot_replace_selected_config_values(
@@ -325,9 +346,9 @@ def test_launcher_rejects_extra_cli_arguments(
     "tokenizer",
     [
         None,
-        {"model": "model"},
-        {"model": "model", "revision": "main"},
-        {"model": "model", "revision": "a" * 40, "typo": True},
+        {"tokenizer_model": "model"},
+        {"tokenizer_model": "model", "tokenizer_revision": "main"},
+        {"tokenizer_model": "model", "tokenizer_revision": "a" * 40, "typo": True},
     ],
 )
 def test_reference_requires_pinned_tokenizer(tokenizer: dict | None) -> None:
@@ -336,8 +357,8 @@ def test_reference_requires_pinned_tokenizer(tokenizer: dict | None) -> None:
         "script": "workload.py",
     }
     if tokenizer is not None:
-        data["tokenizer"] = tokenizer
-    with pytest.raises(ValidationError, match="tokenizer"):
+        data["workload"] = tokenizer
+    with pytest.raises(ValidationError, match="workload"):
         launcher.ValidationRunConfig.model_validate(data)
 
 
@@ -404,15 +425,61 @@ def test_catalog_outputs_plot_as_ids_and_partial_files(
     partial.write_text("".join(json.dumps(row) + "\n" for row in records) + '{"event":')
     picture = tmp_path / "comparison.png"
     monkeypatch.setattr(
-        sys, "argv", ["plot", catalog[0].id, str(partial), "--output", str(picture)]
+        sys,
+        "argv",
+        [
+            "plot",
+            catalog[0].id,
+            str(partial),
+            "--labels",
+            "Indexed run",
+            "Partial run",
+            "--output",
+            str(picture),
+        ],
     )
     runpy.run_path(str(ROOT / "plot.py"), run_name="__main__")
     assert picture.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     interval = plotter["pyplot"].gcf().axes[3].lines[-1]
+    assert interval.get_label() == "Partial run"
     assert interval.get_xdata().tolist() == [1, 2, 3]
     assert interval.get_ydata()[0] == 500.0
     assert np.isnan(interval.get_ydata()[1])
     assert interval.get_ydata()[2] == 510.0
+
+
+def test_plot_keeps_each_run_color_when_another_run_lacks_a_panel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    execution = tmp_path / "execution.jsonl"
+    records = [
+        {"event": "evaluation", "time": 0.0, "step": 0},
+        {
+            "event": "update",
+            "time": 1.0,
+            "step": 1,
+            "seconds_since_previous_update": 1.0,
+        },
+    ]
+    for row in records:
+        row.update(
+            responses=1, reward=0.5, response_tokens_mean=4.0, truncated_fraction=0.0
+        )
+    execution.write_text("".join(json.dumps(row) + "\n" for row in records))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "plot",
+            "beam-blog-digitized",
+            str(execution),
+            "--output",
+            str(tmp_path / "p.png"),
+        ],
+    )
+    runpy.run_path(str(ROOT / "plot.py"), run_name="__main__")
+    axes = plotter["pyplot"].gcf().axes
+    assert {axis.lines[-1].get_color() for axis in axes} == {"C1"}
 
 
 @pytest.mark.parametrize(
@@ -450,9 +517,10 @@ def test_index_accepts_spindle_run_without_reported_commit() -> None:
     [
         ("missing_output", "output"),
         ("invalid_commit", "spindle_commit"),
-        ("missing_provenance", "missing miles_commit"),
+        ("missing_provenance", "missing trainer_image"),
         ("external_with_provenance", "external execution records source"),
         ("external_with_version", "external execution records source"),
+        ("external_with_sampler", "external execution records source"),
         ("unknown_entry_field", "extra_forbidden"),
         ("unknown_index_field", "extra_forbidden"),
         ("duplicate_id", "duplicate run IDs in index"),
@@ -465,12 +533,15 @@ def test_index_rejects_invalid_provenance(problem: str, message: str) -> None:
     elif problem == "invalid_commit":
         data["runs"][0]["spindle_commit"] = 123
     elif problem == "missing_provenance":
-        del data["runs"][0]["miles_commit"]
+        del data["runs"][0]["trainer_image"]
     elif problem == "external_with_provenance":
         data["runs"][0]["source"] = "https://example.com/run"
     elif problem == "external_with_version":
         external = next(run for run in data["runs"] if "source" in run)
         external["spindle_version"] = "0.1.8"
+    elif problem == "external_with_sampler":
+        external = next(run for run in data["runs"] if "source" in run)
+        external["inference_image"] = "sglang-v0.5.23-c4182b2"
     elif problem == "unknown_entry_field":
         data["runs"][0]["trainer_iamge"] = "typo"
     elif problem == "unknown_index_field":
@@ -601,8 +672,8 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     expected_model = recipe.model
 
     def load_tokenizer(model: str, *, revision: str) -> SimpleNamespace:
-        assert model == expected_model == definition.tokenizer.model
-        assert revision == definition.tokenizer.revision
+        assert model == expected_model == definition.workload.tokenizer_model
+        assert revision == definition.workload.tokenizer_revision
         return tokenizer
 
     monkeypatch.setattr(
@@ -649,7 +720,10 @@ def test_reference_smoke_records_selected_tokenizer_and_updates(
     launcher.main()
     records = plotter["read_output"](output)
     assert records[0]["config"]["model"] == expected_model
-    assert records[0]["config"]["tokenizer_revision"] == definition.tokenizer.revision
+    assert (
+        records[0]["config"]["tokenizer_revision"]
+        == definition.workload.tokenizer_revision
+    )
     assert records[0]["config"]["updates"] == 2
     assert records[0]["recipe"] == definition.config_overrides.name
     assert [r["step"] for r in records if r["event"] == "update"] == [1, 2]

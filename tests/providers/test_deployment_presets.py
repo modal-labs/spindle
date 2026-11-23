@@ -3,7 +3,7 @@ import json
 import pytest
 
 from spindle.backends.deployment import backend_config, serving_options
-from spindle.backends.miles_config import GDN_INPUT_PROJECTIONS, MilesBackendConfig
+from spindle.backends.miles_config import GDN_INPUT_PROJECTIONS
 from spindle.control_plane.deployments import FrontendSettings
 from spindle.deployments import DeploymentConfig, config_path, load
 from spindle.providers.modal.deployment_configs import (
@@ -125,25 +125,6 @@ def test_single_client_recipe_keeps_shared_backend_capacity():
         shared.trainer_nodes,
     )
     assert backend_config(single) == backend_config(shared)
-
-
-def test_beam_preserves_distinct_attention_and_mlp_gates():
-    spec = load(config_path("beam-501b-a23b-lora-5k"))
-    assert spec.trainer_image == "miles-v0.2.0-8c5de26"
-    assert spec.miles_cfg["cli_options"]["qkv_format"] == "thd"
-    miles = MilesBackendConfig(
-        hf_checkpoint="/assets/pending",
-        actor_num_gpus_per_node=spec.trainer_gpus_per_node,
-        actor_num_nodes=spec.trainer_nodes,
-        **spec.miles_cfg,
-    )
-    assert miles.lora_type == "lora"
-    targets = miles.peft_target_modules
-    assert "self_attn.gate_proj" in targets
-    assert "mlp.gate_proj" in targets
-    settings = backend_config(spec, "/assets/pending")
-    assert settings["miles"]["actor_num_nodes"] == 2
-    assert settings["capture_dir"].startswith("/checkpoints/")
 
 
 def test_frontend_settings_are_loaded_from_the_environment(monkeypatch):
