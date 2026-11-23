@@ -43,3 +43,25 @@ def pin_fla_block_counts() -> None:
             # fla-core 0.6 keeps these module paths but removed NB from the conv kernels.
             if kernel is not None and "NB" in getattr(kernel, "arg_names", ()):
                 setattr(module, name, _PinnedBlockCount(kernel))
+
+
+def restrict_fla_recurrence_warps() -> None:
+    """Triton <= 3.7 races these kernels on Blackwell with num_warps > 2 (fla#945)."""
+    import torch
+
+    if not torch.cuda.is_available() or torch.cuda.get_device_capability()[0] < 10:
+        return
+    try:
+        module = importlib.import_module("fla.ops.common.chunk_delta_h")
+    except ImportError:
+        return
+    for name in (
+        "chunk_gated_delta_rule_fwd_kernel_h_blockdim64",
+        "chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64",
+    ):
+        tuner = getattr(module, name, None)
+        while tuner is not None and not hasattr(tuner, "configs"):
+            tuner = getattr(tuner, "fn", None)
+        if tuner is not None:
+            tuner.configs = [c for c in tuner.configs if c.num_warps <= 2]
+            tuner.cache.clear()

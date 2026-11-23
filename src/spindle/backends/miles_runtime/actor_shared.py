@@ -14,7 +14,10 @@ from miles.ray import train_actor
 from miles.utils import distributed_utils
 from miles.utils.replay_base import all_replay_managers
 
-from spindle.backends.fla_kernels import pin_fla_block_counts
+from spindle.backends.fla_kernels import (
+    pin_fla_block_counts,
+    restrict_fla_recurrence_warps,
+)
 from spindle.patching import same_signature
 from spindle.startup_timing import timeline
 
@@ -69,6 +72,7 @@ def pin_fla_kernels_if_loaded() -> None:
     """Call after the model is built: models with linear attention have imported fla by then."""
     if "fla" in sys.modules:
         pin_fla_block_counts()
+        restrict_fla_recurrence_warps()
 
 
 def mark_actor_initialized() -> None:
