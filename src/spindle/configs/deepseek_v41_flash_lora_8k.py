@@ -62,6 +62,8 @@ class Config(BaseConfig):
     trainer_env = {
         # Lazily loaded kernels can deadlock against in-flight cross-node expert all-to-alls.
         "CUDA_MODULE_LOADING": "EAGER",
+        # On B300, eager loading JIT-compiles more kernels than the default 1 GiB cache holds.
+        "CUDA_CACHE_MAXSIZE": "4294967296",
         # cuBLASLt still loads kernels while an expert all-to-all is in flight,
         # which can hang trainers.
         "TORCH_NCCL_BLOCKING_WAIT": "1",
