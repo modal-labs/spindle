@@ -59,6 +59,7 @@ from .kernel_cache import (
 from .kv import shared_kv
 from .lora_pool import LoraPoolSpec
 from .lora_pool import deploy_pool as deploy_lora
+from .megatron_image import fla_image as megatron_fla_image
 from .megatron_image import image as megatron_image
 from .ray_cluster import start_trainer_cluster
 from .serve import run_engine_with_backend
@@ -87,6 +88,7 @@ TRAINER_IMAGES = {
     "miles-v0.2.0-e814245": miles_v020_image.image_03_e814245,
     # Upstream NVIDIA/Megatron-LM commit; no Spindle fork
     "megatron-2d1fa8d": megatron_image,
+    "megatron-2d1fa8d-fla06": megatron_fla_image,
 }
 SAMPLER_IMAGES = {
     # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches

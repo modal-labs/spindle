@@ -3,7 +3,7 @@ from spindle.configuration import BaseConfig
 
 class Config(BaseConfig):
     name = "qwen35-4b-fft-64k"
-    trainer_image = "megatron-2d1fa8d"
+    trainer_image = "megatron-2d1fa8d-fla06"
     inference_image = "sglang-v0.5.23-c4182b2"
     parameterization = "full"
     model = "Qwen/Qwen3.5-4B"

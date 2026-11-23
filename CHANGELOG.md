@@ -12,6 +12,7 @@ Notable changes to Spindle, following [Keep a Changelog](https://keepachangelog.
 
 - `gpt-oss-20b-lora-32k` and `gpt-oss-20b-lora-64k` train on `miles-v0.2.0-e814245` and sample on `sglang-v0.5.23-e003cf9`. To restore a checkpoint saved on their previous Miles v0.1.1 image, set `trainer_image` back to `miles-v0.1.1-52a7a99`; Miles v0.2.0 uses a different checkpoint format.
 - Tinker SDK clients now use the SDK's default pyqwest HTTP transport. Spindle used to switch them to httpx's HTTP/2 client, which received long-polled sampling results up to a second late when many requests were in flight.
+- `qwen35-4b-fft-64k` trains on the new `megatron-2d1fa8d-fla06` image, which is `megatron-2d1fa8d` with flash-linear-attention 0.6.0 instead of 0.4.2. Losses are unchanged, and steps take the same time or slightly less. The other Megatron configs and the Megatron default stay on `megatron-2d1fa8d`.
 
 ### Fixed
 
