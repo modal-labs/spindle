@@ -59,7 +59,6 @@ from .kernel_cache import (
 from .kv import shared_kv
 from .lora_pool import LoraPoolSpec
 from .lora_pool import deploy_pool as deploy_lora
-from .megatron_image import fla_image as megatron_fla_image
 from .megatron_image import image as megatron_image
 from .ray_cluster import start_trainer_cluster
 from .serve import run_engine_with_backend
@@ -87,8 +86,7 @@ TRAINER_IMAGES = {
     # https://github.com/modal-projects/miles/pull/49 Native canonical and routed-expert adapters, including Nemotron Nano
     "miles-v0.2.0-e814245": miles_v020_image.image_03_e814245,
     # Upstream NVIDIA/Megatron-LM commit; no Spindle fork
-    "megatron-2d1fa8d": megatron_image,
-    "megatron-2d1fa8d-fla06": megatron_fla_image,
+    "megatron-2d1fa8d-fla06": megatron_image,
 }
 SAMPLER_IMAGES = {
     # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches
@@ -104,7 +102,7 @@ SAMPLER_IMAGES = {
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {
     "miles": "miles-v0.1.1-52a7a99",
-    "megatron": "megatron-2d1fa8d",
+    "megatron": "megatron-2d1fa8d-fla06",
     "sglang": "sglang-v0.5.23-c4182b2",
 }
 
