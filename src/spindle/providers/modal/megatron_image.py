@@ -46,9 +46,7 @@ runtime_image = (
     .pip_install(*MEGATRON_RUNTIME_PACKAGES)
     .run_commands(MEGATRON_RUNTIME_CHECK)
 )
-image = runtime_image.add_local_python_source("spindle", ignore=ignore_config_source)
-
-fla_image = (
+image = (
     runtime_image.pip_install("fla-core==0.6.0", "flash-linear-attention==0.6.0")
     # Megatron's gated_delta_net imports; fail at build, not at trainer start.
     .run_commands(
