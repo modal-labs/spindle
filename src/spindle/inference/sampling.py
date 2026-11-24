@@ -65,6 +65,7 @@ async def sample_task(
     session_id: str | None = None,
     on_event: Callable[[dict], None] | None = None,
     router: Router | None = None,
+    lora_update_in_place: bool = False,
 ) -> dict[str, Any]:
     request = task["payload"]
     prompt = _prompt_tokens(request["prompt"])
@@ -130,8 +131,7 @@ async def sample_task(
             headers=headers,
         )
     )
-    # Latest sessions route by the version they were created at: the
-    # version the trainer just published for that sampling client.
+    # Live sessions share a routing identity; exact pins keep their snapshot identity.
     if model_id is None or version is None:
         router = None
     async with client_context as active_client:
@@ -144,6 +144,9 @@ async def sample_task(
                     model_id=model_id,
                     version=version,
                     latest=latest,
+                    routing_adapter=f"live:{model_id}"
+                    if lora_update_in_place and latest
+                    else None,
                     index=index,
                     request_id=request_id,
                     routing_session_id=routing_session_id,
@@ -220,6 +223,7 @@ async def _sample_one(
     model_id: str | None,
     version: int | None,
     latest: bool,
+    routing_adapter: str | None,
     index: int,
     request_id: str,
     routing_session_id: str,
@@ -335,7 +339,7 @@ async def _sample_one(
         try:
             if router is not None:
                 dispatched = await router.dispatch(
-                    VersionRef(str(model_id), int(version)).identity,  # ty: ignore[invalid-argument-type]
+                    routing_adapter or VersionRef(str(model_id), int(version)).identity,  # ty: ignore[invalid-argument-type]
                     routing_session_id,
                     request_id=observation.id,
                     body=body,

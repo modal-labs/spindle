@@ -27,6 +27,7 @@ from spindle.providers.modal import (
     fft_pool,
     glm53_image,
     lora_pool,
+    live_lora_image,
     miles_v011_image,
     miles_v012_image,
     miles_v020_image,
@@ -573,6 +574,7 @@ FORK_IMAGE_MODULES = (
     rollout_image,
     deepseek_v41_image,
     glm53_image,
+    live_lora_image,
 )
 IMAGE_VARIABLE = re.compile(r"\w*image_(\d{2})_([0-9a-f]{7})")
 FULL_COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -861,3 +863,20 @@ def test_launchers_do_not_reparse_backend_config(builders, monkeypatch):
     deployment_apps.build_rollout_app(
         row, LoraPoolSpec(row.definition_id), image="test"
     )
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_live_lora_setting_reaches_the_sidecar_and_inference_identity(
+    builders, enabled: bool
+) -> None:
+    before = deployment()
+    after = deepcopy(before)
+    after.recipe.inference_lora_update_in_place = enabled
+    restored = DeploymentConfig.model_validate_json(after.model_dump_json())
+    app, _ = deployment_apps.build_rollout_app(
+        restored, LoraPoolSpec(restored.definition_id), image="test"
+    )
+    server = app.servers["Server"][0]
+    assert server["env"]["SPINDLE_LORA_UPDATE_IN_PLACE"] == ("1" if enabled else "0")
+    assert restored.trainer_identity() == before.trainer_identity()
+    assert (restored.inference_identity() != before.inference_identity()) == enabled

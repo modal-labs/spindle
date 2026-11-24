@@ -417,7 +417,10 @@ def build_rollout_app(
                     if lora and recipe.inference_lora_routing == "cache_wait"
                     else {}
                 )
-            )
+            ),
+            SPINDLE_LORA_UPDATE_IN_PLACE="1"
+            if recipe.inference_lora_update_in_place
+            else "0",
         ),
         min_containers=minimum,
         max_containers=maximum,
