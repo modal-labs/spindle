@@ -7,7 +7,7 @@ class Config(Parent):
 
     name = "deepseek-v41-flash-1017-lora-64k"
     trainer_image = "miles-v0.1.2-99e1ebe"
-    inference_image = "sglang-v0.5.23-3db151a"
+    inference_image = "sglang-v0.5.23-a1e4ba6"
     model = Weights.model
     weights_revision = Weights.weights_revision
 

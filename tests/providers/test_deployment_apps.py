@@ -548,6 +548,8 @@ UNUSED_IMAGE_WHITELIST = {
     "miles-v0.1.2-464efc9-glm53",
     # DeepSeek-V4.1-Flash sampler image in Spindle 0.1.8 and earlier.
     "sglang-v0.5.21-a3e0e17",
+    # DeepSeek-V4.1-Flash DSPARK sampler image before the draft metadata fix.
+    "sglang-v0.5.23-3db151a",
 }
 
 

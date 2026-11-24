@@ -93,6 +93,8 @@ TRAINER_IMAGES = {
 SAMPLER_IMAGES = {
     # https://github.com/modal-projects/sglang/pull/104 Exact speculative top-k replay in mixed scoring batches
     "sglang-v0.5.23-3db151a": rollout_image.image_04_3db151a,
+    # https://github.com/modal-projects/sglang/pull/103 Build the DSPARK draft block metadata without host sequence lengths
+    "sglang-v0.5.23-a1e4ba6": rollout_image.image_05_a1e4ba6,
     "sglang-v0.5.23-e003cf9": rollout_image.image_03_e003cf9,
     # https://github.com/modal-projects/sglang/pull/81 Serve DeepSeek-V4 LoRA on quantized bases
     "sglang-v0.5.21-a3e0e17": deepseek_v41_image.image_01_a3e0e17,
