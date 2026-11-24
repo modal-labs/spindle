@@ -14,6 +14,7 @@ class Config(Parent):
         "miles_cfg.cli_options.recompute_method": "uniform",
         "miles_cfg.cli_options.recompute_num_layers": 1,
         "sglang_cfg.max_mamba_cache_size": 448,
+        "sglang_cfg.cuda_graph_backend_prefill": None,
     }
 
 

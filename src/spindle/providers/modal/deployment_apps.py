@@ -102,6 +102,9 @@ SAMPLER_IMAGES = {
     "sglang-v0.5.23-c4182b2": rollout_image.image_01_c4182b2,
     # https://github.com/modal-projects/sglang/pull/98 Honor the earliest stop in speculative token blocks, with GLM-5.3 Flash sampler settings
     "sglang-v0.5.23-c4182b2-glm53": glm53_image.image_01_c4182b2,
+    # https://github.com/modal-projects/sglang/pull/110 NemotronH hybrid prefill CUDA graphs on SM100, opt-in as upstream (on top of #105)
+    # https://github.com/modal-projects/sglang/pull/106 B200 Triton configs for the virtual-expert MoE LoRA stages
+    "sglang-v0.5.23-3bcc277": rollout_image.image_06_3bcc277,
 }
 # Used only by configs that leave trainer_image or inference_image empty.
 DEFAULT_IMAGES = {

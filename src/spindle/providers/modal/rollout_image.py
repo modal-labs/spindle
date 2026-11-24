@@ -98,3 +98,12 @@ image_05_a1e4ba6 = runtime_image_for(
     revision="a1e4ba6ea335223e909e19c851c7ec4fa86c2eeb",
     core_packages=CORE_SAMPLER_PACKAGES,
 ).add_local_python_source("spindle", ignore=ignore_config_source)
+
+# NemotronH captures hybrid prefill CUDA graphs on SM100 with --cuda-graph-backend-prefill breakable,
+# plus B200 Triton configs for the virtual-expert MoE LoRA stages.
+image_06_3bcc277 = runtime_image_for(
+    image=SGLANG_IMAGE,
+    branch=SGLANG_BRANCH,
+    revision="3bcc277ad3483d667c553c72c22a1c8727248641",
+    core_packages=CORE_SAMPLER_PACKAGES,
+).add_local_python_source("spindle", ignore=ignore_config_source)
