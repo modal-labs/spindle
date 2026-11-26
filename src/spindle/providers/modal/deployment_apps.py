@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterable, Mapping
 from typing import Any, TypedDict, cast
@@ -23,12 +24,14 @@ from modal.config import config
 from spindle.deployments import DeploymentConfig
 from spindle.inference.serving import (
     SGLANG_ENV,
+    retire_container,
     sglang_busy,
     start_fft_sidecar,
     start_lora_sidecar,
     supervise_children,
     terminate,
     wait_http,
+    watch_health,
 )
 from spindle.startup_timing import SAMPLER_COMPONENT, TRAINER_COMPONENT, timeline
 from spindle.usage import ContainerUsage, poll_busy
@@ -441,6 +444,7 @@ def build_rollout_app(
             self.sidecar = None
             self.sglang = None
             self.busy_poll = None
+            self.shutdown = threading.Event()
             log_scheduled_gpus("sampler")
             startup = timeline(SAMPLER_COMPONENT, pool=pool.app_name)
             startup.mark("server_enter")
@@ -477,7 +481,12 @@ def build_rollout_app(
                         pinned_version=None if pool.latest else pool.version,
                     )
                 )
-                self.supervisor = supervise_children(self.sglang, self.sidecar)
+                self.supervisor = supervise_children(
+                    self.sglang,
+                    self.sidecar,
+                    stop=self.shutdown,
+                    on_exit=retire_container,
+                )
                 wait_http(
                     "http://127.0.0.1:8000/health",
                     self.sidecar,
@@ -485,6 +494,7 @@ def build_rollout_app(
                 )
                 startup.mark("sidecar_healthy")
             except BaseException:
+                self.shutdown.set()
                 terminate(self.sidecar)
                 terminate(self.sglang)
                 raise
@@ -506,9 +516,19 @@ def build_rollout_app(
                         started_at=startup.origin,
                     )
                     self.busy_poll = poll_busy(usage, busy)
+            if lora:
+                # FFT sidecars run Stitch's commit-aware watchdog; LoRA sidecars do not.
+                watch_health(
+                    "http://127.0.0.1:8001/health",
+                    sidecar=self.sidecar,
+                    engine=self.sglang,
+                    stop=self.shutdown,
+                    on_unhealthy=retire_container,
+                )
 
         @modal.exit()
         def stop(self) -> None:
+            self.shutdown.set()
             if self.busy_poll is not None:
                 self.busy_poll.set()
             terminate(self.sidecar)
