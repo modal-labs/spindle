@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from dataclasses import asdict, replace
@@ -21,6 +22,7 @@ from spindle.engines import Engine, gpu_count
 from spindle.inference.sampling import sample_task
 from spindle.inference.serving import (
     SGLANG_ENV,
+    retire_container,
     start_fft_sidecar,
     start_sglang,
     supervise_children,
@@ -101,9 +103,11 @@ def register_sampler(
     class Sampler:
         sidecar = None
         sglang = None
+        shutdown = None
 
         @modal.enter()
         def start(self):
+            self.shutdown = threading.Event()
             run_id = model_id
             if slot is not None:
                 run_id = modal.Dict.from_name(registry_name)[f"slot:{slot}"]
@@ -131,11 +135,18 @@ def register_sampler(
                 pinned_version=version,
                 scoped_registry=registry_name if slot is not None else None,
             )
-            self.supervisor = supervise_children(self.sglang, self.sidecar)
+            self.supervisor = supervise_children(
+                self.sglang,
+                self.sidecar,
+                stop=self.shutdown,
+                on_exit=retire_container,
+            )
             wait_http("http://127.0.0.1:8000/health", self.sidecar, 1800)
 
         @modal.exit()
         def stop(self):
+            if self.shutdown is not None:
+                self.shutdown.set()
             terminate(self.sidecar)
             terminate(self.sglang)
 

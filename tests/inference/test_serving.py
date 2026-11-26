@@ -1,4 +1,8 @@
+import contextlib
 import io
+import threading
+import urllib.error
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -8,6 +12,8 @@ from spindle.inference.serving import (
     start_fft_sidecar,
     start_sglang,
     supervise_children,
+    terminate,
+    watch_health,
 )
 
 
@@ -58,18 +64,29 @@ def test_sglang_supports_hybrid_moe_parallelism() -> None:
     assert "--enable-dp-attention" in command
 
 
-def test_child_supervisor_terminates_sibling() -> None:
+def test_child_supervisor_terminates_sibling_and_retires_unexpected_exit() -> None:
     exited = Mock()
     exited.poll.return_value = 1
     sibling = Mock()
     sibling.poll.return_value = None
+    retired = threading.Event()
 
     with patch("spindle.inference.serving.terminate") as terminate:
-        supervisor = supervise_children(exited, sibling)
+        supervisor = supervise_children(exited, sibling, on_exit=retired.set)
         supervisor.join(timeout=1)
 
     assert not supervisor.is_alive()
     terminate.assert_called_once_with(sibling)
+    assert retired.is_set()
+
+    stop = threading.Event()
+    stop.set()
+    retired.clear()
+    with patch("spindle.inference.serving.terminate") as terminate:
+        supervisor = supervise_children(exited, sibling, stop=stop, on_exit=retired.set)
+        supervisor.join(timeout=1)
+    assert not retired.is_set()
+    terminate.assert_not_called()
 
 
 def test_fft_sidecar_receives_store_scope() -> None:
@@ -111,3 +128,108 @@ def test_sglang_without_request_metrics_is_an_error_not_idle() -> None:
         pytest.raises(ValueError, match="num_running_reqs"),
     ):
         sglang_busy(8001)()
+
+
+def test_watch_health_resets_on_recovery_and_retires_after_consecutive_failures() -> (
+    None
+):
+    sidecar = Mock(spec=["poll"])
+    sidecar.poll.return_value = None
+    sglang = Mock(spec=["poll"])
+    sglang.poll.return_value = None
+
+    stop = threading.Event()
+    events: list[tuple[str, object]] = []
+    outcomes = iter(
+        [
+            urllib.error.HTTPError("http://x/health", 503, "unhealthy", {}, None),
+            contextlib.nullcontext(SimpleNamespace(status=200)),
+            TimeoutError("timed out"),
+            urllib.error.HTTPError("http://x/health", 503, "unhealthy", {}, None),
+        ]
+    )
+
+    def urlopen(url: str, timeout: float) -> object:
+        item = next(outcomes)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    with (
+        patch("urllib.request.urlopen", side_effect=urlopen),
+        patch("spindle.inference.serving._log_gpu_state"),
+        patch(
+            "spindle.inference.serving.terminate",
+            side_effect=lambda proc: events.append(("terminate", proc)),
+        ),
+    ):
+        thread = watch_health(
+            "http://127.0.0.1:8001/health",
+            sidecar=sidecar,
+            engine=sglang,
+            stop=stop,
+            interval=0.005,
+            probe_timeout=1.0,
+            max_failures=2,
+            on_unhealthy=lambda: events.append(("retire", stop.is_set())),
+        )
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert stop.is_set()
+    assert events == [
+        ("terminate", sidecar),
+        ("retire", True),
+    ]
+
+
+@pytest.mark.parametrize("reason", ["stop_set", "child_exited"])
+def test_watch_health_skips_retirement_on_shutdown_race(reason: str) -> None:
+    sidecar = Mock(spec=["poll"])
+    sidecar.poll.return_value = None
+    sglang = Mock(spec=["poll"])
+    sglang.poll.return_value = None
+
+    stop = threading.Event()
+    probe_started = threading.Event()
+    release_probe = threading.Event()
+    terminated: list[object] = []
+    retired = threading.Event()
+
+    def urlopen(url: str, timeout: float) -> object:
+        probe_started.set()
+        release_probe.wait(timeout=2)
+        raise TimeoutError("interrupted by shutdown")
+
+    with (
+        patch("urllib.request.urlopen", side_effect=urlopen),
+        patch("spindle.inference.serving.terminate", side_effect=terminated.append),
+    ):
+        thread = watch_health(
+            "http://127.0.0.1:8001/health",
+            sidecar=sidecar,
+            engine=sglang,
+            stop=stop,
+            interval=0.005,
+            probe_timeout=1.0,
+            max_failures=1,
+            on_unhealthy=retired.set,
+        )
+        assert probe_started.wait(timeout=2)
+        if reason == "stop_set":
+            stop.set()
+        else:
+            sglang.poll.return_value = 0
+        release_probe.set()
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert terminated == []
+    assert not retired.is_set()
+
+
+def test_terminate_ignores_already_exited_process_group() -> None:
+    process = Mock(pid=4242)
+    process.poll.return_value = None
+    with patch("os.killpg", side_effect=ProcessLookupError):
+        terminate(process)

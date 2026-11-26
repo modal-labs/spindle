@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
@@ -11,6 +12,8 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
+
+logger = logging.getLogger(__name__)
 
 SGLANG_ENV = {"SGLANG_RETURN_ORIGINAL_LOGPROB": "1"}
 
@@ -266,26 +269,149 @@ def terminate(process: subprocess.Popen | None) -> None:
         return
     try:
         os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
         process.wait(timeout=20)
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _probe_health(url: str, timeout: float) -> tuple[bool, str]:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return True, f"HTTP {response.status}"
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}"
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return False, str(exc)
+
+
+def _log_gpu_state() -> None:
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,utilization.gpu,memory.used,power.draw",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    if result.stdout.strip():
+        logger.error("GPU state before sampler termination:\n%s", result.stdout.strip())
+
+
+def retire_container() -> None:
+    """Signal PID 1 to exit so the platform replaces an unhealthy replica."""
+    logger.error("Retiring unhealthy sampler container")
+    os.kill(1, signal.SIGTERM)
+
+
+def watch_health(
+    url: str,
+    *,
+    sidecar: subprocess.Popen,
+    engine: subprocess.Popen,
+    stop: threading.Event | None = None,
+    interval: float = 30.0,
+    probe_timeout: float | None = None,
+    max_failures: int = 4,
+    on_unhealthy: Callable[[], None] | None = None,
+) -> threading.Thread:
+    """Retire a sampler replica after consecutive health check failures."""
+    done = stop or threading.Event()
+    if probe_timeout is None:
+        sglang_timeout = float(os.environ.get("SGLANG_HEALTH_CHECK_TIMEOUT", "20"))
+        probe_timeout = max(30.0, sglang_timeout + 10.0)
+
+    def monitor() -> None:
+        failures = 0
+        while not done.wait(interval):
+            if sidecar.poll() is not None or engine.poll() is not None:
+                return
+            ok, detail = _probe_health(url, probe_timeout)
+            if done.is_set() or sidecar.poll() is not None or engine.poll() is not None:
+                return
+            if ok:
+                failures = 0
+                continue
+            failures += 1
+            logger.warning(
+                "Sampler health check %s failed (%d/%d): %s",
+                url,
+                failures,
+                max_failures,
+                detail,
+            )
+            if failures < max_failures:
+                continue
+            logger.error(
+                "Sampler health check %s failed %d consecutive times (%s); "
+                "retiring unhealthy replica",
+                url,
+                failures,
+                detail,
+            )
+            _log_gpu_state()
+            if done.is_set() or sidecar.poll() is not None or engine.poll() is not None:
+                return
+            done.set()
+            # Close the proxy port first so in-flight callers retry instead of
+            # waiting out exit_grace_period, then retire immediately.
+            terminate(sidecar)
+            if on_unhealthy is not None:
+                try:
+                    on_unhealthy()
+                except Exception:
+                    logger.exception("Unhealthy sampler callback failed")
+            else:
+                terminate(engine)
+            return
+
+    thread = threading.Thread(
+        target=monitor,
+        name="tinker-rollout-health-watchdog",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def supervise_children(
     first: subprocess.Popen,
     second: subprocess.Popen,
+    *,
+    stop: threading.Event | None = None,
+    on_exit: Callable[[], None] | None = None,
 ) -> threading.Thread:
-    """Terminate the sibling when either serving process exits."""
+    """Terminate the sibling when either serving process exits unexpectedly."""
+    done = stop or threading.Event()
 
     def monitor() -> None:
-        while True:
+        while not done.is_set():
             if first.poll() is not None:
                 terminate(second)
+                if on_exit is not None and not done.is_set():
+                    on_exit()
                 return
             if second.poll() is not None:
                 terminate(first)
+                if on_exit is not None and not done.is_set():
+                    on_exit()
                 return
-            time.sleep(1)
+            done.wait(1)
 
     thread = threading.Thread(
         target=monitor,

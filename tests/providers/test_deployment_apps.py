@@ -155,14 +155,23 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     assert "compute_region" not in settings
     assert "routing_region" not in settings
 
-    calls, commands, stops = [], [], []
+    calls, commands, stops, watches, supervisors = [], [], [], [], []
     process = object()
     monkeypatch.setattr(
         subprocess, "Popen", lambda argv, **kw: commands.append(argv) or process
     )
     monkeypatch.setattr(deployment_apps, "log_scheduled_gpus", lambda role: None)
     monkeypatch.setattr(deployment_apps, "wait_http", lambda *args: None)
-    monkeypatch.setattr(deployment_apps, "supervise_children", lambda *args: None)
+    monkeypatch.setattr(
+        deployment_apps,
+        "supervise_children",
+        lambda *args, **kw: supervisors.append((args, kw)),
+    )
+    monkeypatch.setattr(
+        deployment_apps,
+        "watch_health",
+        lambda *args, **kw: watches.append((args, kw)),
+    )
     monkeypatch.setattr(
         deployment_apps,
         "start_lora_sidecar",
@@ -176,6 +185,29 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
     monkeypatch.setattr(deployment_apps, "terminate", stops.append)
     replica = server()
     replica.start()
+    assert supervisors == [
+        (
+            (process, process),
+            {
+                "stop": replica.shutdown,
+                "on_exit": deployment_apps.retire_container,
+            },
+        )
+    ]
+    if kind == "lora":
+        assert watches == [
+            (
+                ("http://127.0.0.1:8001/health",),
+                {
+                    "sidecar": process,
+                    "engine": process,
+                    "stop": replica.shutdown,
+                    "on_unhealthy": deployment_apps.retire_container,
+                },
+            )
+        ]
+    else:
+        assert watches == []
     assert commands[0][2] == "spindle.inference.sglang"
     assert commands[0][3] == row.asset_path
     native = json.loads(commands[0][4])
@@ -203,6 +235,7 @@ def test_pool_starts_native_server_and_correct_sidecar(builders, monkeypatch, ki
             None if kind == "latest" else 0 if kind == "base" else 7
         )
     replica.stop()
+    assert replica.shutdown.is_set()
     assert stops == [process, process]
 
 
