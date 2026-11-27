@@ -1,5 +1,15 @@
-"""Server-side stability info capture, storage, and configuration."""
+"""Server-side stability info capture, storage, and training-time assembly."""
 
+from .assemble import (
+    ALL_CAPTURES,
+    MEGATRON_CAPTURES,
+    assemble_payload,
+    datum_provenance_spans,
+    fetch_and_assemble_payload,
+    fields_to_fetch,
+    payload_sequence_ids,
+    required_fields_for_loss,
+)
 from .codec import (
     DEFAULT_CHUNK_BYTES,
     FORMAT_VERSION,
@@ -32,6 +42,7 @@ from .config import (
 from .store import CaptureStore, InMemoryCaptureStore, WriteStats
 
 __all__ = [
+    "ALL_CAPTURES",
     "CapturedSequence",
     "CapturePlan",
     "CaptureStore",
@@ -40,6 +51,7 @@ __all__ = [
     "DEFAULT_CHUNK_BYTES",
     "FORMAT_VERSION",
     "InMemoryCaptureStore",
+    "MEGATRON_CAPTURES",
     "PackedCapture",
     "RECORDED_FIELDS",
     "RecipeStabilityConfig",
@@ -51,11 +63,17 @@ __all__ = [
     "StabilityRequest",
     "StabilityStoreKind",
     "WriteStats",
+    "assemble_payload",
+    "datum_provenance_spans",
     "extract_captured_sequence",
+    "fetch_and_assemble_payload",
+    "fields_to_fetch",
     "needed_chunk_keys",
     "pack_bits_u16",
     "pack_capture",
     "parse_stability_request",
+    "payload_sequence_ids",
+    "required_fields_for_loss",
     "resolve_capture_plan",
     "serialize_stability_request",
     "unpack_bits_u16",

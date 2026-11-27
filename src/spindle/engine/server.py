@@ -20,6 +20,12 @@ from spindle.errors import (
     TrainerOutOfMemory,
 )
 from spindle.request_timing import mark
+from spindle.stability import (
+    ALL_CAPTURES,
+    CaptureStore,
+    fetch_and_assemble_payload,
+    payload_sequence_ids,
+)
 from spindle.usage import ContainerUsage
 from spindle.usage.meter import WINDOW_S
 
@@ -97,6 +103,7 @@ class Operation:
     payload: OperationPayload
     encoded_payload: bytes | None = field(default=None, compare=False, repr=False)
     queued_at: float = field(default_factory=time.monotonic, compare=False, repr=False)
+    capture_error: str | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -121,8 +128,10 @@ class _UnloadOperation:
 @dataclass
 class _ModelState:
     spec: object
+    session_id: str | None = None
     next_seq: int = 1
     buffered: dict[int, Operation] = field(default_factory=dict)
+    capture_pending: dict[int, asyncio.Task[None]] = field(default_factory=dict)
     fingerprints: dict[int, str] = field(default_factory=dict)
     done: deque[int] = field(default_factory=deque)
     retrieved: set[int] = field(default_factory=set)
@@ -148,6 +157,11 @@ class Engine:
         max_forward_backward_batch: int | None = None,
         max_forward_backward_models: int | None = None,
         usage: ContainerUsage | None = None,
+        capture_store: CaptureStore | None = None,
+        supported_captures: frozenset[str] = ALL_CAPTURES,
+        auto_apply_mask: bool = True,
+        max_capture_concurrency: int = 16,
+        capture_fetch_timeout_s: float = 60.0,
     ) -> None:
         if sampler_persistence_concurrency < 1:
             raise ValueError("sampler_persistence_concurrency must be positive")
@@ -157,9 +171,18 @@ class Engine:
             raise ValueError("max_forward_backward_batch must be positive")
         if max_forward_backward_models is not None and max_forward_backward_models < 1:
             raise ValueError("max_forward_backward_models must be positive")
+        if max_capture_concurrency < 1:
+            raise ValueError("max_capture_concurrency must be positive")
+        if capture_fetch_timeout_s <= 0:
+            raise ValueError("capture_fetch_timeout_s must be positive")
         self.executor = executor
         self.observer = observer
         self.usage = usage
+        self.capture_store = capture_store
+        self.supported_captures = frozenset(supported_captures)
+        self.auto_apply_mask = auto_apply_mask
+        self._capture_sem = asyncio.Semaphore(max_capture_concurrency)
+        self.capture_fetch_timeout_s = capture_fetch_timeout_s
         self._persistence_active: dict[str, int] = {}
         self.max_models = max_models
         self.max_buffered = max_buffered
@@ -192,8 +215,17 @@ class Engine:
                 if self.observer is not None:
                     self.observer.register_model(model_id, spec)
                 registration = asyncio.get_running_loop().create_future()
+                raw_session_id = (
+                    spec.get("session_id") if isinstance(spec, Mapping) else None
+                )
+                session_id = (
+                    raw_session_id
+                    if isinstance(raw_session_id, str) and raw_session_id
+                    else None
+                )
                 model = self._models[model_id] = _ModelState(
                     spec=spec,
+                    session_id=session_id,
                     registration=registration,
                 )
                 self._lifecycle.append(_AcceptOperation(model_id, spec, registration))
@@ -346,6 +378,9 @@ class Engine:
                                 self.observer.finish(
                                     pending, FutureState(FutureStatus.FAILED)
                                 )
+                        for task in model.capture_pending.values():
+                            task.cancel()
+                        model.capture_pending.clear()
                         model.buffered.clear()
                         for seq_id in model.fingerprints:
                             self._futures.pop(f"{model_id}:{seq_id}", None)
@@ -360,13 +395,21 @@ class Engine:
             await ready.wait()
 
     async def close(self) -> None:
+        capture_tasks: list[asyncio.Task[None]] = []
         async with self._lock:
             if self._closing:
                 return
             self._closing = True
             self.draining = True
             tasks, self._tasks = self._tasks, ()
+            for model in self._models.values():
+                for task in model.capture_pending.values():
+                    task.cancel()
+                    capture_tasks.append(task)
+                model.capture_pending.clear()
             self._work.notify_all()
+        if capture_tasks:
+            await asyncio.gather(*capture_tasks, return_exceptions=True)
         if tasks:
             command_task, *persistence_tasks = tasks
             await asyncio.gather(command_task, return_exceptions=True)
@@ -391,9 +434,16 @@ class Engine:
         payload: OperationPayload,
     ) -> str:
         fingerprint_started = time.perf_counter()
+        needs_capture = isinstance(payload, ForwardBackwardInput) and bool(
+            payload_sequence_ids(payload)
+        )
+        if needs_capture and self.capture_store is None:
+            raise ValueError(
+                "stability info capture store is not configured on this trainer"
+            )
 
         def prepare():
-            if isinstance(payload, ForwardBackwardInput):
+            if isinstance(payload, ForwardBackwardInput) and not needs_capture:
                 encoded = encode_payload(payload)
                 digest = hashlib.sha256()
                 digest.update(kind.value.encode() + b"\0")
@@ -433,8 +483,13 @@ class Engine:
             model.fingerprints[operation.seq_id] = mark_
             model.buffered[operation.seq_id] = operation
             self._futures[operation.request_id] = FutureState(FutureStatus.PENDING)
+            if needs_capture:
+                model.capture_pending[operation.seq_id] = asyncio.create_task(
+                    self._fetch_captures(operation, model.session_id)
+                )
             self._start_tasks()
-            self._work.notify_all()
+            if not needs_capture:
+                self._work.notify_all()
         mark(
             "engine.op.submitted",
             request_id=operation.request_id,
@@ -442,6 +497,64 @@ class Engine:
             fingerprint_s=fingerprint_s,
         )
         return operation.request_id
+
+    async def _fetch_captures(
+        self, operation: Operation, session_id: str | None
+    ) -> None:
+        assert self.capture_store is not None
+        assert isinstance(operation.payload, ForwardBackwardInput)
+        current = asyncio.current_task()
+        try:
+            async with (
+                self._capture_sem,
+                asyncio.timeout(self.capture_fetch_timeout_s),
+            ):
+                enriched = await fetch_and_assemble_payload(
+                    operation.payload,
+                    store=self.capture_store,
+                    session_id=session_id,
+                    supported_captures=self.supported_captures,
+                    auto_apply_mask=self.auto_apply_mask,
+                )
+            encoded = await asyncio.to_thread(encode_payload, enriched)
+            resolved = Operation(
+                request_id=operation.request_id,
+                model_id=operation.model_id,
+                seq_id=operation.seq_id,
+                kind=operation.kind,
+                payload=enriched,
+                encoded_payload=encoded,
+                queued_at=operation.queued_at,
+            )
+        except asyncio.CancelledError:
+            async with self._lock:
+                model = self._models.get(operation.model_id)
+                if (
+                    model is not None
+                    and model.capture_pending.get(operation.seq_id) is current
+                ):
+                    model.capture_pending.pop(operation.seq_id, None)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            resolved = Operation(
+                request_id=operation.request_id,
+                model_id=operation.model_id,
+                seq_id=operation.seq_id,
+                kind=operation.kind,
+                payload=operation.payload,
+                encoded_payload=None,
+                queued_at=operation.queued_at,
+                capture_error=_failure(exc, f"capture_fetch:{operation.request_id}"),
+            )
+        async with self._lock:
+            model = self._models.get(operation.model_id)
+            if model is None:
+                return
+            if model.capture_pending.get(operation.seq_id) is current:
+                model.capture_pending.pop(operation.seq_id, None)
+            if model.buffered.get(operation.seq_id) is operation:
+                model.buffered[operation.seq_id] = resolved
+                self._work.notify_all()
 
     def _start_tasks(self) -> None:
         if self._tasks or self._closing:
@@ -512,6 +625,13 @@ class Engine:
                     self._finish(
                         operation,
                         FutureState(FutureStatus.FAILED, error=operation.payload.error),
+                    )
+                continue
+            if operation.capture_error is not None:
+                async with self._lock:
+                    self._finish(
+                        operation,
+                        FutureState(FutureStatus.FAILED, error=operation.capture_error),
                     )
                 continue
             if operation.kind in PERSISTED_OPERATIONS:
@@ -834,6 +954,8 @@ class Engine:
                 continue
             operation = model.buffered.get(model.next_seq)
             if operation is not None:
+                if operation.seq_id in model.capture_pending:
+                    continue
                 if operation.kind in self._serial_persistence_inflight:
                     continue
                 if (
@@ -859,6 +981,8 @@ class Engine:
         )
 
         selected = [ready[0]]
+        if ready[0].capture_error is not None:
+            return (ready[0],)
         if ready[0].kind in BATCHED_OPERATIONS:
             limit = self.max_forward_backward_batch
             models = self.max_forward_backward_models
@@ -869,16 +993,20 @@ class Engine:
                 if models is not None and len(selected) >= models:
                     break
                 if (
-                    operation.kind in BATCHED_OPERATIONS
+                    operation.capture_error is None
+                    and operation.kind in BATCHED_OPERATIONS
                     and self._forward_backward_batch_key(operation) == key
                 ):
                     selected.append(operation)
             for operation in tuple(selected):
-                buffered = self._models[operation.model_id].buffered
+                model_state = self._models[operation.model_id]
+                buffered = model_state.buffered
                 seq_id = operation.seq_id + 1
                 while (
                     (limit is None or len(selected) < limit)
+                    and seq_id not in model_state.capture_pending
                     and (queued := buffered.get(seq_id)) is not None
+                    and queued.capture_error is None
                     and queued.kind in BATCHED_OPERATIONS
                     and self._forward_backward_batch_key(queued) == key
                 ):
