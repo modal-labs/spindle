@@ -90,6 +90,7 @@ class BaseConfig:
     miles_cfg = {}
     megatron_cfg = {}
     sglang_cfg = {}
+    stability_info = {}
     session_idle_timeout_s = 300
     pool_idle_timeout_s = 300
     sweep_interval_s = 300
