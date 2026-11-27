@@ -50,7 +50,9 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
             raise ValueError(
                 f"{name} must be a dense int64 tensor with a matching shape"
             )
-        if hasattr(tensor, "to_numpy"):
+        if hasattr(tensor, "to_numpy_compact"):
+            values = np.asarray(tensor.to_numpy_compact()).reshape(-1)
+        elif hasattr(tensor, "to_numpy"):
             values = np.asarray(tensor.to_numpy()).reshape(-1)
         else:
             data = tensor.data
@@ -75,7 +77,10 @@ def replay_row(inputs, targets: np.ndarray) -> dict:
                     "routed_experts must have shape [input_tokens, layers, experts_per_token]"
                 )
             # Range checks precede narrowing; admission owns the resulting array.
-            row[name] = {"values": values.astype(np.int32), "shape": shape}
+            route_dtype = (
+                np.int16 if not values.size or values.max() <= 32767 else np.int32
+            )
+            row[name] = {"values": values.astype(route_dtype), "shape": shape}
         else:
             if shape != [len(values)]:
                 raise ValueError(f"{name} must be one-dimensional")
@@ -202,15 +207,42 @@ def validate_routed_experts(
             )
 
 
-def add_replay_to_train_data(train_data: dict, datums: list[dict]) -> None:
+def _miles_route_dtype(runtime) -> np.dtype:
+    """Use int16 only when the installed Miles runtime explicitly advertises int16 routes."""
+    dtypes = vars(runtime).get("ROLLOUT_DATA_TENSOR_DTYPES")
+    if not isinstance(dtypes, dict):
+        try:
+            # Optional GPU-only Miles package; absent in CPU tests.
+            from miles.ray.rollout.train_data_conversion import (
+                ROLLOUT_DATA_TENSOR_DTYPES,
+            )
+
+            dtypes = ROLLOUT_DATA_TENSOR_DTYPES
+        except ImportError:
+            dtypes = None
+    if isinstance(dtypes, dict) and dtypes.get("rollout_routed_experts") == "int16":
+        return np.dtype(np.int16)
+    return np.dtype(np.int32)
+
+
+def add_replay_to_train_data(
+    train_data: dict,
+    datums: list[dict],
+    *,
+    route_dtype: np.dtype | type | None = None,
+) -> None:
     routes = [datum.get("routed_experts") for datum in datums]
     if any(r is not None for r in routes):
         if not all(r is not None for r in routes):
             raise ValueError(
                 "router replay must be supplied for every datum in a batch"
             )
+        target_dtype = np.dtype(np.int32 if route_dtype is None else route_dtype)
+        if any(np.asarray(r["values"]).dtype == np.int32 for r in routes):
+            target_dtype = np.dtype(np.int32)
         train_data["rollout_routed_experts"] = [
-            np.asarray(r["values"], dtype=np.int32).reshape(r["shape"]) for r in routes
+            np.asarray(r["values"], dtype=target_dtype).reshape(r["shape"])
+            for r in routes
         ]
     if any("sampling_mask_ids" in d for d in datums):
         train_data["rollout_sampling_mask_ids"] = [
@@ -238,9 +270,15 @@ def install_bridge_replay(runtime) -> None:
     if original is _replay_builder:
         return
 
+    route_dtype = _miles_route_dtype(runtime)
+
     def build(slot_datums):
         result = original(slot_datums)
-        add_replay_to_train_data(result, [datum for _, datum in slot_datums])
+        add_replay_to_train_data(
+            result,
+            [datum for _, datum in slot_datums],
+            route_dtype=route_dtype,
+        )
         return result
 
     _replay_builder = build

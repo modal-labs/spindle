@@ -14,12 +14,12 @@ from collections.abc import Iterable
 import numpy as np
 from tinker import ModelInput
 from tinker.types._pydantic_types.datum import Datum
-from tinker.types._pydantic_types.tensor_data import TensorData
 from tinker.types.encoded_text_chunk import EncodedTextChunk
 from tinker.types.forward_backward_input import ForwardBackwardInput
 
 from spindle.encoding import canonical_json
 from spindle.proto.responses import EncodedResult, encode_forward_backward_exact
+from spindle.tensor_data import ArrayTensorData
 
 from .api import BATCHED_OPERATIONS, Command, OperationKind
 
@@ -27,6 +27,30 @@ TRAINING_BATCH_CONTENT_TYPE = "application/vnd.spindle.training.v1"
 FORWARD_RESULTS_CONTENT_TYPE = "application/vnd.spindle.forward-results.v1"
 _MAGIC = b"SPND1\0"
 _SIZE = struct.Struct("<Q")
+_SUPPORTED_ARRAY_DTYPES = frozenset({"<i2", "<i4", "<i8", "<f8"})
+_INT16_MIN, _INT16_MAX = -32768, 32767
+_INT32_MIN, _INT32_MAX = -(2**31), 2**31 - 1
+
+
+def _tensor_raw_values(tensor) -> object:
+    state = getattr(tensor, "__dict__", {})
+    if "data" not in state and state.get("_array") is not None:
+        return state["_array"]
+    if state.get("_numpy") is not None:
+        return state["_numpy"]
+    return tensor.data
+
+
+def _compact_int_dtype(packed: np.ndarray) -> str:
+    if packed.size == 0:
+        return "<i8"
+    low = int(packed.min())
+    high = int(packed.max())
+    if _INT16_MIN <= low and high <= _INT16_MAX:
+        return "<i2"
+    if _INT32_MIN <= low and high <= _INT32_MAX:
+        return "<i4"
+    return "<i8"
 
 
 def _bundle(parts: Iterable[bytes]) -> bytes:
@@ -70,7 +94,7 @@ def encode_payload(payload: ForwardBackwardInput) -> bytes:
                     and packed.max() > np.iinfo(np.int64).max
                 ):
                     raise ValueError("training integer exceeds int64")
-                dtype = "<i8"
+                dtype = _compact_int_dtype(packed)
             elif packed.dtype.kind == "f":
                 dtype = "<f8"
             else:
@@ -78,6 +102,8 @@ def encode_payload(payload: ForwardBackwardInput) -> bytes:
             packed = packed.astype(dtype, copy=False)
         else:
             packed = np.asarray(values, dtype=dtype)
+        if packed.ndim != 1:
+            packed = packed.reshape(-1) if isinstance(values, np.ndarray) else packed
         if packed.ndim != 1:
             raise ValueError("training tensor data must be flat")
         if packed.dtype.kind == "f" and not np.isfinite(packed).all():
@@ -104,7 +130,7 @@ def encode_payload(payload: ForwardBackwardInput) -> bytes:
             if tensor.dtype not in {"int64", "float32"}:
                 raise ValueError(f"unsupported training dtype: {tensor.dtype}")
             inputs[name] = {
-                "data": array(tensor.data),
+                "data": array(_tensor_raw_values(tensor)),
                 "dtype": tensor.dtype,
                 "shape": tensor.shape,
                 "sparse_crow_indices": None
@@ -131,19 +157,21 @@ def decode_payload(body: bytes | memoryview) -> ForwardBackwardInput:
         raise ValueError("missing training metadata")
     metadata = json.loads(bytes(parts[0]))
 
-    def array(value):
+    def raw_array(value) -> np.ndarray | None:
         if value is None:
             return None
         index, dtype = value["buffer"], value["dtype"]
         if (
             not isinstance(index, int)
             or not 0 < index < len(parts)
-            or dtype not in {"<i8", "<f8"}
+            or dtype not in _SUPPORTED_ARRAY_DTYPES
         ):
             raise ValueError("invalid training buffer reference")
-        # Lists match the validated Pydantic tensor representation used by the
-        # existing backend. No text-number parsing or second schema walk.
-        return np.frombuffer(parts[index], dtype=dtype).tolist()
+        return np.frombuffer(parts[index], dtype=dtype).copy()
+
+    def array(value):
+        arr = raw_array(value)
+        return None if arr is None else arr.tolist()
 
     data = []
     for value in metadata["data"]:
@@ -158,16 +186,18 @@ def decode_payload(body: bytes | memoryview) -> ForwardBackwardInput:
             else:
                 chunks.extend(ModelInput.model_validate({"chunks": [chunk]}).chunks)
         model_input = ModelInput.model_construct(chunks=chunks)
-        inputs = {
-            name: TensorData.model_construct(
-                data=array(tensor["data"]),
+        inputs = {}
+        for name, tensor in value["inputs"].items():
+            raw = raw_array(tensor["data"])
+            if raw is None:
+                raise ValueError(f"missing training tensor data for {name}")
+            inputs[name] = ArrayTensorData.from_array(
+                raw,
                 dtype=tensor["dtype"],
                 shape=tensor["shape"],
                 sparse_crow_indices=array(tensor["sparse_crow_indices"]),
                 sparse_col_indices=array(tensor["sparse_col_indices"]),
             )
-            for name, tensor in value["inputs"].items()
-        }
         data.append(
             Datum.model_construct(model_input=model_input, loss_fn_inputs=inputs)
         )
