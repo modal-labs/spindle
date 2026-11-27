@@ -19,6 +19,7 @@ import uvicorn
 from spindle.engine import Engine
 from spindle.engine.backend_http import HttpBackendClient
 from spindle.engine.http import create_engine_app
+from spindle.stability import ALL_CAPTURES, CaptureStore
 from spindle.usage import ContainerUsage
 from spindle.startup_timing import TRAINER_COMPONENT, timeline
 from spindle.telemetry.trainer import TrainerTelemetry
@@ -153,6 +154,9 @@ def run_engine_with_backend(
     notify_reconciler: bool = True,
     on_startup_error: Callable[[Exception], Awaitable[None]] | None = None,
     usage: Callable[[], ContainerUsage] | None = None,
+    capture_store: CaptureStore | None = None,
+    supported_captures: frozenset[str] = ALL_CAPTURES,
+    auto_apply_mask: bool = True,
 ) -> None:
     if sampler_persistence_concurrency > 1 and nproc != 1:
         raise ValueError(
@@ -232,6 +236,9 @@ def run_engine_with_backend(
                                 max_forward_backward_batch=max_forward_backward_batch,
                                 max_forward_backward_models=max_forward_backward_models,
                                 usage=usage() if usage is not None else None,
+                                capture_store=capture_store,
+                                supported_captures=supported_captures,
+                                auto_apply_mask=auto_apply_mask,
                             )
                     except httpx.TransportError:
                         pass

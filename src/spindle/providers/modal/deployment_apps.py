@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any, TypedDict, cast
 
 import modal
@@ -31,9 +32,19 @@ from spindle.inference.serving import (
     wait_http,
 )
 from spindle.startup_timing import SAMPLER_COMPONENT, TRAINER_COMPONENT, timeline
+from spindle.stability import (
+    ALL_CAPTURES,
+    MEGATRON_CAPTURES,
+    RecipeStabilityConfig,
+)
 from spindle.usage import ContainerUsage, poll_busy
 
 from .app_tags import app_tags
+from .capture_store import (
+    DEFAULT_CAPTURE_MOUNT_ROOT,
+    DEFAULT_CAPTURE_VOLUME_NAME,
+    build_modal_capture_store,
+)
 from . import (
     deepseek_v41_image,
     glm53_image,
@@ -152,6 +163,11 @@ def volumes_for(platform: dict[str, Any]) -> dict[str, modal.Volume]:
         ),
         "/bulletin": modal.Volume.from_name(
             storage["bulletin"], create_if_missing=True, version=2
+        ),
+        DEFAULT_CAPTURE_MOUNT_ROOT: modal.Volume.from_name(
+            storage.get("captures", DEFAULT_CAPTURE_VOLUME_NAME),
+            create_if_missing=True,
+            version=2,
         ),
         USAGE_ROOT: usage_volume(platform["frontend"]),
     }
@@ -339,6 +355,26 @@ def run_trainer(
             {"error": str(error), "instance_id": instance_id, "failed_at": time.time()},
         )
 
+    stability_cfg = RecipeStabilityConfig.model_validate(recipe.stability_info)
+    frontend_app_id = os.environ.get("SPINDLE_FRONTEND_APP_ID")
+    capture_store = (
+        build_modal_capture_store(
+            stability_cfg.store,
+            app_id=frontend_app_id,
+            volume_name=platform["storage"].get(
+                "captures", DEFAULT_CAPTURE_VOLUME_NAME
+            ),
+            mount_root=DEFAULT_CAPTURE_MOUNT_ROOT,
+            environment_name=platform["modal"]["environment"],
+            ttl_seconds=stability_cfg.ttl_seconds,
+        )
+        if frontend_app_id
+        else None
+    )
+    supported_captures = (
+        ALL_CAPTURES if recipe.backend == "miles" else MEGATRON_CAPTURES
+    )
+
     run_engine_with_backend(
         shared_kv(),  # ty: ignore[invalid-argument-type]
         executor,
@@ -351,6 +387,9 @@ def run_trainer(
         sampler_persistence_concurrency=recipe.sampler_persistence_concurrency,
         max_forward_backward_models=recipe.trainer_max_clients_per_batch,
         on_startup_error=failed,
+        capture_store=capture_store,
+        supported_captures=supported_captures,
+        auto_apply_mask=recipe.backend == "miles",
         usage=lambda: ContainerUsage(
             start_usage_meter(platform["frontend"]),
             app_name=deployment.trainer_app_name,
@@ -368,6 +407,28 @@ def _warm_lora_pool(frontend: str, definition_id: str) -> None:
         )
     except Exception:
         logging.getLogger(__name__).exception("warm LoRA pool %s", definition_id)
+
+
+def _model_route_dimensions(asset_path: str) -> tuple[int | None, int | None]:
+    """Read (num_hidden_layers, num_experts_per_tok) from the model's config.json."""
+    config_file = Path(asset_path) / "config.json"
+    try:
+        raw = json.loads(config_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(raw, dict):
+        return None, None
+    cfg = raw.get("text_config") if isinstance(raw.get("text_config"), dict) else raw
+    layers = cfg.get("num_hidden_layers")
+    topk = (
+        cfg.get("num_experts_per_tok")
+        or cfg.get("moe_num_experts_per_tok")
+        or cfg.get("num_selected_experts")
+    )
+    return (
+        int(layers) if isinstance(layers, int) and layers > 0 else None,
+        int(topk) if isinstance(topk, int) and topk > 0 else None,
+    )
 
 
 def build_rollout_app(
@@ -409,8 +470,8 @@ def build_rollout_app(
         ephemeral_disk=recipe.inference_disk_mib or None,
         volumes={**volumes_for(platform)},
         secrets=secrets_for(platform),
-        env=dict(
-            deployment_env(
+        env={
+            **deployment_env(
                 SGLANG_ENV
                 # Split-K speeds up decode-sized LoRA batches on H200 and B200.
                 | ({"SGLANG_ENABLE_LORA_CSGMV_SPLIT_K": "1"} if lora else {})
@@ -422,8 +483,13 @@ def build_rollout_app(
                     if lora and recipe.inference_lora_routing == "cache_wait"
                     else {}
                 )
-            )
-        ),
+            ),
+            **(
+                {"SPINDLE_FRONTEND_APP_ID": os.environ["SPINDLE_FRONTEND_APP_ID"]}
+                if "SPINDLE_FRONTEND_APP_ID" in os.environ
+                else {}
+            ),
+        },
         min_containers=minimum,
         max_containers=maximum,
         target_concurrency=recipe.inference_target_concurrency
@@ -462,14 +528,34 @@ def build_rollout_app(
                     recipe.inference_startup_timeout_s,
                 )
                 startup.mark("sglang_healthy")
+                stability_cfg = RecipeStabilityConfig.model_validate(
+                    recipe.stability_info
+                )
                 kwargs = dict(
                     port=8000,
                     sglang_port=8001,
                     bulletin_root="/bulletin",
                     bulletin_volume=platform["storage"]["bulletin"],
                 )
+                lora_capture_kwargs: dict[str, Any] = {}
+                if lora:
+                    frontend_app_id = os.environ.get("SPINDLE_FRONTEND_APP_ID")
+                    if frontend_app_id:
+                        num_layers, experts_per_token = _model_route_dimensions(
+                            deployment.asset_path
+                        )
+                        lora_capture_kwargs = {
+                            "capture_store": stability_cfg.store,
+                            "capture_app_id": frontend_app_id,
+                            "capture_volume": platform["storage"].get(
+                                "captures", DEFAULT_CAPTURE_VOLUME_NAME
+                            ),
+                            "capture_root": DEFAULT_CAPTURE_MOUNT_ROOT,
+                            "capture_num_layers": num_layers,
+                            "capture_experts_per_token": experts_per_token,
+                        }
                 self.sidecar = (
-                    start_lora_sidecar(**kwargs)  # ty: ignore[invalid-argument-type]
+                    start_lora_sidecar(**kwargs, **lora_capture_kwargs)  # ty: ignore[invalid-argument-type]
                     if lora
                     else start_fft_sidecar(
                         **kwargs,  # ty: ignore[invalid-argument-type]
@@ -543,12 +629,18 @@ def build_inference_app(
     inference_name = deployment.name
 
     @app.function(name="provision", image=image, serialized=True, timeout=1800)
-    def provision(config_json: str, pool_data: dict[str, Any]) -> str:
+    def provision(
+        config_json: str,
+        pool_data: dict[str, Any],
+        frontend_app_id: str | None = None,
+    ) -> str:
         saved = DeploymentConfig.model_validate_json(config_json)
         if saved.name != inference_name:
             raise ValueError("inference settings do not match the deployed app")
         if pool_data["definition_id"] != saved.definition_id:
             raise ValueError("pool definition does not match deployment")
+        if frontend_app_id:
+            os.environ["SPINDLE_FRONTEND_APP_ID"] = frontend_app_id
         if saved.parameterization == "lora":
             return deploy_lora(
                 LoraPoolSpec.from_dict(pool_data), config=saved, platform=platform

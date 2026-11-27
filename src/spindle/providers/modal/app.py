@@ -26,11 +26,17 @@ from spindle.providers.contracts import (
     SamplingTask,
 )
 from spindle.startup_timing import StartupTimeline
+from spindle.stability import DEFAULT_CAPTURE_TTL_SECONDS
 from spindle.telemetry.otlp import sample_trace
 from spindle.usage import label_keys_from_env, meter_sample, usage_window
 from spindle.version import COMMIT_ENV, deployment_tag, source_commit
 
 from .app_tags import app_tags
+from .capture_store import (
+    DEFAULT_CAPTURE_VOLUME_NAME,
+    ModalDictCaptureStore,
+    ModalVolumeCaptureStore,
+)
 from .checkpoint_storage import (
     CHECKPOINT_ROOT,
     ModalCheckpointStorage,
@@ -280,6 +286,10 @@ async def ensure_fft_pool(spec: dict) -> str:
 
 @app.function(image=image, max_containers=1, timeout=20 * 60, retries=2)
 async def ensure_lora_pool(spec: dict) -> str:
+    try:
+        os.environ["SPINDLE_FRONTEND_APP_ID"] = current_app_id()
+    except RuntimeError:
+        pass
     pool = LoraPoolSpec.from_dict(spec)
     gateway = await asyncio.to_thread(deploy_lora_pool, pool)
     await shared_kv().put(
@@ -741,9 +751,55 @@ async def clear_deployment_failure(definition_id: str) -> None:
     await kick_trainer_reconciler(definition_id)
 
 
+def _capture_stores():
+    try:
+        app_id = current_app_id()
+    except RuntimeError:
+        return ()
+    environment = PLATFORM["modal"]["environment"]
+    dict_store = ModalDictCaptureStore(app_id=app_id, environment_name=environment)
+    volume_store = ModalVolumeCaptureStore(
+        modal.Volume.from_name(
+            PLATFORM["storage"].get("captures", DEFAULT_CAPTURE_VOLUME_NAME),
+            environment_name=environment,
+            create_if_missing=True,
+            version=2,
+        ),
+        app_id=app_id,
+        mode="api",
+    )
+    return (dict_store, volume_store)
+
+
+class _CompositeCaptureCleanup:
+    """Clean up session captures across both Dict and v2 Volume stores."""
+
+    def __init__(self, *stores) -> None:
+        self._stores = stores
+
+    async def write_sequence(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def read_sequence(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def delete_session(self, session_id: str) -> None:
+        await asyncio.gather(
+            *(store.delete_session(session_id) for store in self._stores)
+        )
+
+    async def expire_before(self, cutoff: float) -> int:
+        counts = await asyncio.gather(
+            *(store.expire_before(cutoff) for store in self._stores)
+        )
+        return sum(counts)
+
+
 def _plane():
     kv = shared_kv()
     task_stores = ModalSessionKeyValueStores()
+    stores = _capture_stores()
+    capture_cleanup = _CompositeCaptureCleanup(*stores) if stores else None
     engines = ModalEnginePlatform(kv, _spawn_engine)
 
     async def spawn_sampling(task: SamplingTask) -> str:
@@ -823,6 +879,7 @@ def _plane():
         downloading_weights=_weights_download,
         creation_error=deployment_error,
         sampling_task_stores=task_stores,
+        capture_store=capture_cleanup,
         read_checkpoint_metadata=_read_checkpoint_metadata,
         read_sampler_artifact=sampler_storage.read,
         write_sampler_artifact=sampler_storage.write,
@@ -1146,6 +1203,15 @@ def cleaner():
         await _lose_undefined_models()
         await _cleanup_fft_pools()
         await _cleanup_lora_pools()
+        # Run capture TTL sweep after idle GPU sweeps with a bounded time budget.
+        if plane.capture_store is not None:
+            try:
+                async with asyncio.timeout(60.0):
+                    await plane.capture_store.expire_before(
+                        plane.clock() - DEFAULT_CAPTURE_TTL_SECONDS
+                    )
+            except Exception:
+                logging.getLogger(__name__).exception("expire stability captures")
 
     try:
         asyncio.run(run())
