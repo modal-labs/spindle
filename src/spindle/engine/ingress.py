@@ -5,14 +5,14 @@ from collections.abc import Mapping
 
 import numpy as np
 from tinker import ModelInput
-from tinker.types._pydantic_types.datum import Datum
 from tinker.types._pydantic_types.tensor_data import TensorData
 from tinker.types.forward_backward_input import ForwardBackwardInput
+from tinker.types.provenance_spans import PromptProvenanceSpan, SampledProvenanceSpan
 
 from spindle.proto import tinker_public_pb2
 
 from .api import OperationKind
-from .operations import OperationPayload, parse_operation_payload
+from .operations import DatumWithProvenance, OperationPayload, parse_operation_payload
 
 _ENVELOPE_FIELDS = {"model_id", "seq_id", "type"}
 _PROTO_DTYPES = {
@@ -103,14 +103,49 @@ def _payload(request: Mapping[str, object]) -> dict[str, object]:
     return {key: value for key, value in request.items() if key not in _ENVELOPE_FIELDS}
 
 
-def _decode_proto_datum(value) -> Datum:
-    return Datum(
+def _decode_proto_datum(value) -> DatumWithProvenance:
+    model_spans = _decode_proto_spans(value.model_input_spans)
+    loss_spans = _decode_proto_spans(value.loss_fn_input_spans)
+    return DatumWithProvenance(
         model_input=_decode_proto_model_input(value.model_input),
         loss_fn_inputs={
             name: _decode_proto_tensor(tensor)
             for name, tensor in value.loss_fn_inputs.items()
         },
+        model_input_spans=model_spans,
+        loss_fn_input_spans=loss_spans,
     )
+
+
+def _decode_proto_spans(
+    spans,
+) -> list[PromptProvenanceSpan | SampledProvenanceSpan] | None:
+    if not spans:
+        return None
+    result: list[PromptProvenanceSpan | SampledProvenanceSpan] = []
+    for item in spans:
+        kind = item.WhichOneof("span")
+        if kind == "prompt_tokens":
+            arm = item.prompt_tokens
+            result.append(
+                PromptProvenanceSpan(
+                    sequence_id=arm.sequence_id,
+                    offset=int(arm.offset),
+                    length=int(arm.length),
+                )
+            )
+        elif kind == "sampled_tokens":
+            arm = item.sampled_tokens
+            result.append(
+                SampledProvenanceSpan(
+                    sequence_id=arm.sequence_id,
+                    offset=int(arm.offset),
+                    length=int(arm.length),
+                )
+            )
+        else:
+            raise ValueError("unsupported protobuf provenance span")
+    return result
 
 
 def _decode_proto_model_input(value) -> ModelInput:

@@ -4,7 +4,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from tinker import AdamParams, LoraConfig
 from tinker.types._pydantic_types.datum import Datum as DatumModel
 from tinker.types._pydantic_types.forward_backward_input import (
@@ -12,6 +12,7 @@ from tinker.types._pydantic_types.forward_backward_input import (
 )
 from tinker.types._pydantic_types.tensor_data import TensorData as TensorDataModel
 from tinker.types.forward_backward_input import ForwardBackwardInput
+from tinker.types.provenance_spans import PromptProvenanceSpan, SampledProvenanceSpan
 
 from spindle.backends.contract import LossFn, ModelSpec
 
@@ -19,8 +20,82 @@ from .api import OperationKind
 
 log = logging.getLogger(__name__)
 
+ProvenanceSpan = PromptProvenanceSpan | SampledProvenanceSpan
+
+
+def _coerce_span(item: object) -> ProvenanceSpan:
+    if isinstance(item, (PromptProvenanceSpan, SampledProvenanceSpan)):
+        return item
+    if isinstance(item, Mapping):
+        if "prompt_tokens" in item and isinstance(item["prompt_tokens"], Mapping):
+            inner = item["prompt_tokens"]
+            return PromptProvenanceSpan(
+                sequence_id=str(inner["sequence_id"]),
+                offset=int(inner.get("offset", 0)),
+                length=int(inner["length"]),
+            )
+        if "sampled_tokens" in item and isinstance(item["sampled_tokens"], Mapping):
+            inner = item["sampled_tokens"]
+            return SampledProvenanceSpan(
+                sequence_id=str(inner["sequence_id"]),
+                offset=int(inner.get("offset", 0)),
+                length=int(inner["length"]),
+            )
+        kind = item.get("type") or item.get("kind")
+        if kind in {"prompt", "prompt_tokens"}:
+            return PromptProvenanceSpan(
+                sequence_id=str(item["sequence_id"]),
+                offset=int(item.get("offset", 0)),
+                length=int(item["length"]),
+            )
+        if kind in {"sampled", "sampled_tokens"}:
+            return SampledProvenanceSpan(
+                sequence_id=str(item["sequence_id"]),
+                offset=int(item.get("offset", 0)),
+                length=int(item["length"]),
+            )
+    raise ValueError(f"invalid provenance span: {item!r}")
+
+
+def _serialize_span(span: ProvenanceSpan) -> dict[str, object]:
+    key = (
+        "prompt_tokens" if isinstance(span, PromptProvenanceSpan) else "sampled_tokens"
+    )
+    return {
+        key: {
+            "sequence_id": span.sequence_id,
+            "offset": span.offset,
+            "length": span.length,
+        }
+    }
+
+
+class DatumWithProvenance(DatumModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    model_input_spans: list[ProvenanceSpan] | None = None
+    loss_fn_input_spans: list[ProvenanceSpan] | None = None
+
+    @field_validator("model_input_spans", "loss_fn_input_spans", mode="before")
+    @classmethod
+    def _parse_spans(cls, value: object) -> list[ProvenanceSpan] | None:
+        if value is None:
+            return None
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("provenance spans must be a list")
+        return [_coerce_span(item) for item in value]
+
+    @model_validator(mode="after")
+    def _paired_spans(self) -> DatumWithProvenance:
+        if (self.model_input_spans is None) != (self.loss_fn_input_spans is None):
+            raise ValueError(
+                "provenance requires both model_input_spans and loss_fn_input_spans"
+            )
+        return self
+
 
 class ForwardBackwardInputModel(TinkerForwardBackwardInputModel):
+    data: list[DatumWithProvenance]  # type: ignore[assignment]
     loss_fn: LossFn  # type: ignore[assignment]
 
 
@@ -190,7 +265,7 @@ def _reject_non_adam_params(raw: Mapping[str, Any]) -> None:
 
 def serialize_operation_payload(payload: OperationPayload) -> dict[str, Any]:
     if isinstance(payload, ForwardBackwardInput):
-        return ForwardBackwardInputModel.model_construct(
+        dumped = ForwardBackwardInputModel.model_construct(
             data=[
                 DatumModel.model_construct(
                     model_input=datum.model_input,
@@ -213,6 +288,20 @@ def serialize_operation_payload(payload: OperationPayload) -> dict[str, Any]:
             mode="json",
             exclude_defaults=True,
         )
+        for serialized_datum, datum in zip(
+            dumped.get("data", ()), payload.data, strict=True
+        ):
+            model_spans = getattr(datum, "model_input_spans", None)
+            loss_spans = getattr(datum, "loss_fn_input_spans", None)
+            if model_spans is not None:
+                serialized_datum["model_input_spans"] = [
+                    _serialize_span(span) for span in model_spans
+                ]
+            if loss_spans is not None:
+                serialized_datum["loss_fn_input_spans"] = [
+                    _serialize_span(span) for span in loss_spans
+                ]
+        return dumped
     if isinstance(payload, AdamParams):
         return {"adam_params": payload.model_dump(mode="json", exclude_defaults=True)}
     return payload.model_dump(mode="json", exclude_defaults=True)

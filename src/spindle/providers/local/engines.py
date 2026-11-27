@@ -7,6 +7,7 @@ from dataclasses import replace
 from spindle.engine.api import EngineApi, Executor
 from spindle.engine.server import Engine
 from spindle.errors import RecordNotFound
+from spindle.stability import ALL_CAPTURES, CaptureStore
 
 from ..contracts import EngineInstance, EngineState
 
@@ -19,11 +20,17 @@ class LocalEnginePlatform:
         *,
         max_models: int = 8,
         revision: str | None = None,
+        capture_store: CaptureStore | None = None,
+        supported_captures: frozenset[str] = ALL_CAPTURES,
+        auto_apply_mask: bool = True,
     ) -> None:
         self.definition_id = definition_id
         self.executor_factory = executor_factory
         self.max_models = max_models
         self.revision = revision
+        self.capture_store = capture_store
+        self.supported_captures = supported_captures
+        self.auto_apply_mask = auto_apply_mask
         self._instances: dict[str, EngineInstance] = {}
         self._servers: dict[str, Engine] = {}
         self._current: str | None = None
@@ -123,5 +130,8 @@ class LocalEnginePlatform:
         self._servers[instance.instance_id] = Engine(
             self.executor_factory(),
             max_models=self.max_models,
+            capture_store=self.capture_store,
+            supported_captures=self.supported_captures,
+            auto_apply_mask=self.auto_apply_mask,
         )
         return instance
