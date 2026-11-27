@@ -17,6 +17,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from stitch.types import VersionConstraint, VersionRef
 
+from spindle.stability import (
+    CapturePlan,
+    CaptureStore,
+    extract_captured_sequence,
+)
 from spindle.startup_timing import timeline
 
 from .bulletin import SnapshotBulletin, SnapshotNotFound
@@ -45,6 +50,9 @@ def create_app(
     upstream_url: str,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    capture_store: CaptureStore | None = None,
+    capture_num_layers: int | None = None,
+    capture_experts_per_token: int | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -200,6 +208,7 @@ def create_app(
                 app.state.request_work.pop(rid, None)
 
     async def generate_response(payload: dict) -> Response:
+        capture_spec = payload.pop("_spindle_capture", None)
         run_id = payload.pop("weight_run_id", None)
         constraint = VersionConstraint.from_payload(payload)
         payload.pop("weight_version", None)
@@ -237,6 +246,29 @@ def create_app(
             metadata = body.setdefault("meta_info", {})
             metadata["weight_version_start"] = served_version
             metadata["weight_version_end"] = served_version
+        if (
+            capture_spec is not None
+            and response.status_code < 400
+            and isinstance(body, dict)
+        ):
+            if capture_store is None:
+                return JSONResponse(
+                    {
+                        "error": "stability capture store is not configured on this replica"
+                    },
+                    status_code=500,
+                )
+            try:
+                await _persist_capture(
+                    capture_store,
+                    body,
+                    payload.get("input_ids") or (),
+                    capture_spec,
+                    num_layers=capture_num_layers,
+                    experts_per_token=capture_experts_per_token,
+                )
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
         return JSONResponse(body, status_code=response.status_code)
 
     return app
@@ -365,6 +397,44 @@ async def _abort(client: httpx.AsyncClient, rid) -> None:
         pass
 
 
+def _response_tokens(body: dict) -> list[int]:
+    meta = body.get("meta_info") or {}
+    token_logprobs = meta.get("output_token_logprobs")
+    if token_logprobs:
+        return [
+            int(item["token_id"]) if isinstance(item, dict) else int(item[1])
+            for item in token_logprobs
+        ]
+    return [int(token) for token in (body.get("output_ids") or ())]
+
+
+async def _persist_capture(
+    store: CaptureStore,
+    body: dict,
+    input_ids: list[int] | tuple[int, ...],
+    spec: dict,
+    *,
+    num_layers: int | None = None,
+    experts_per_token: int | None = None,
+) -> None:
+    meta = body.setdefault("meta_info", {})
+    plan = CapturePlan.model_validate(spec["plan"])
+    captured = await asyncio.to_thread(
+        extract_captured_sequence,
+        meta,
+        [int(t) for t in input_ids],
+        _response_tokens(body),
+        session_id=str(spec["session_id"]),
+        sequence_id=str(spec["sequence_id"]),
+        temperature=float(spec.get("temperature", 1.0)),
+        plan=plan,
+        num_layers=num_layers,
+        experts_per_token=experts_per_token,
+        strip_meta=True,
+    )
+    await store.write_sequence(captured)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
@@ -372,14 +442,46 @@ def main() -> None:
     parser.add_argument("--upstream-url", required=True)
     parser.add_argument("--bulletin-root", required=True)
     parser.add_argument("--bulletin-volume", default="")
+    parser.add_argument(
+        "--capture-store", choices=("none", "dict", "volume"), default="none"
+    )
+    parser.add_argument("--capture-app-id", default="")
+    parser.add_argument("--capture-volume", default="")
+    parser.add_argument("--capture-root", default="/captures")
+    parser.add_argument(
+        "--capture-volume-mode", choices=("mount", "api"), default="mount"
+    )
+    parser.add_argument("--capture-num-layers", type=int, default=None)
+    parser.add_argument("--capture-experts-per-token", type=int, default=None)
     args = parser.parse_args()
 
     refresh = None
     if args.bulletin_volume:
         refresh = modal.Volume.from_name(args.bulletin_volume, version=2).reload
     bulletin = SnapshotBulletin(Path(args.bulletin_root), refresh=refresh)
+    capture_store: CaptureStore | None = None
+    if args.capture_store != "none":
+        # Avoid importing provider-specific Modal store when capture is disabled.
+        from spindle.providers.modal.capture_store import (
+            DEFAULT_CAPTURE_VOLUME_NAME,
+            build_modal_capture_store,
+        )
+
+        capture_store = build_modal_capture_store(
+            args.capture_store,
+            app_id=args.capture_app_id or None,
+            volume_name=args.capture_volume or DEFAULT_CAPTURE_VOLUME_NAME,
+            mount_root=args.capture_root,
+            volume_mode=args.capture_volume_mode,
+        )
     uvicorn.run(
-        create_app(bulletin, args.upstream_url),
+        create_app(
+            bulletin,
+            args.upstream_url,
+            capture_store=capture_store,
+            capture_num_layers=args.capture_num_layers,
+            capture_experts_per_token=args.capture_experts_per_token,
+        ),
         host=args.host,
         port=args.port,
     )

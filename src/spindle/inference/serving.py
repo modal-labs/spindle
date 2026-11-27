@@ -197,6 +197,13 @@ def start_lora_sidecar(
     sglang_port: int,
     bulletin_root: str,
     bulletin_volume: str,
+    capture_store: str | None = None,
+    capture_app_id: str | None = None,
+    capture_volume: str | None = None,
+    capture_root: str | None = None,
+    capture_volume_mode: str | None = None,
+    capture_num_layers: int | None = None,
+    capture_experts_per_token: int | None = None,
 ) -> subprocess.Popen:
     command = [
         sys.executable,
@@ -211,6 +218,20 @@ def start_lora_sidecar(
         "--bulletin-volume",
         bulletin_volume,
     ]
+    if capture_store:
+        command.extend(["--capture-store", capture_store])
+    if capture_app_id:
+        command.extend(["--capture-app-id", capture_app_id])
+    if capture_volume:
+        command.extend(["--capture-volume", capture_volume])
+    if capture_root:
+        command.extend(["--capture-root", capture_root])
+    if capture_volume_mode:
+        command.extend(["--capture-volume-mode", capture_volume_mode])
+    if capture_num_layers is not None:
+        command.extend(["--capture-num-layers", str(capture_num_layers)])
+    if capture_experts_per_token is not None:
+        command.extend(["--capture-experts-per-token", str(capture_experts_per_token)])
     return subprocess.Popen(command, start_new_session=True)
 
 

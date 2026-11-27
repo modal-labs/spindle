@@ -29,6 +29,7 @@ from spindle.providers.contracts import (
     SamplingTaskStatus,
     SessionKeyValueStores,
 )
+from spindle.stability import CaptureStore
 from spindle.telemetry.metadata import experiment_tags
 
 from .keys import (
@@ -220,6 +221,7 @@ class ControlPlane:
         trainer_gpu_wait: Callable[[str], Awaitable[str | None]] | None = None,
         trainer_slots: Callable[[str], int | None] = lambda _: None,
         usage: SessionUsageWriter | None = None,
+        capture_store: CaptureStore | None = None,
     ) -> None:
         self.kv = kv
         self.engines = engines
@@ -243,6 +245,7 @@ class ControlPlane:
         self.trainer_gpu_wait = trainer_gpu_wait
         self.trainer_slots = trainer_slots
         self.usage = usage
+        self.capture_store = capture_store
         self._queue = SharedSnapshot(
             lambda _: read_queues(self.kv, self.engines),
             lambda: self.clock(),
@@ -814,7 +817,9 @@ class ControlPlane:
         if self.ensure_sampling_pool is not None:
             await self.ensure_sampling_pool(session)
 
-    async def submit_sample(self, request: dict) -> str:
+    async def submit_sample(
+        self, request: dict, *, capture_plan: dict | None = None
+    ) -> str:
         if self.sampling_tasks is None:
             raise RecordUnavailable("sampling", "tasks", "unconfigured")
         sampling_session_id = str(request["sampling_session_id"])
@@ -856,6 +861,7 @@ class ControlPlane:
                 latest=session.latest,
                 accepted_at=stored.created_at,
                 telemetry_tags=session.telemetry_tags,
+                capture_plan=capture_plan,
             )
         )
         await task_store.put(
@@ -1556,8 +1562,13 @@ class ControlPlane:
         held_back = ahead > 0 and ahead >= free
         for instance in [] if held_back else instances:
             try:
+                spec = (
+                    {**model.spec, "session_id": model.session_id}
+                    if isinstance(model.spec, Mapping)
+                    else model.spec
+                )
                 accepted = await self.engines.client(instance.instance_id).accept_model(
-                    model.model_id, model.spec
+                    model.model_id, spec
                 )
             except ValueError:
                 raise
@@ -1590,9 +1601,14 @@ class ControlPlane:
                 if not reclaimed:
                     continue
                 try:
+                    spec = (
+                        {**model.spec, "session_id": model.session_id}
+                        if isinstance(model.spec, Mapping)
+                        else model.spec
+                    )
                     accepted = await self.engines.client(
                         instance.instance_id
-                    ).accept_model(model.model_id, model.spec)
+                    ).accept_model(model.model_id, spec)
                 except ValueError:
                     raise
                 except Exception:
@@ -1783,6 +1799,8 @@ class ControlPlane:
                 continue
             if self.sampling_task_stores is not None:
                 await self.sampling_task_stores.delete_session(session_id)
+            if self.capture_store is not None:
+                await self.capture_store.delete_session(session_id)
             for model in models:
                 await self.kv.delete(model_key(model.model_id))
                 await self._forget_demand(model.model_id)

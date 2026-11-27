@@ -34,6 +34,7 @@ from spindle.proto.responses import PROTOBUF_MEDIA_TYPE, EncodedResult, encode_r
 from spindle.providers.contracts import Parameterization
 from spindle.request_timing import enabled as request_timing_enabled
 from spindle.request_timing import mark
+from spindle.stability import resolve_capture_plan
 from spindle.telemetry.trainer import CommandMiddleware
 from spindle.usage import DirectorySink, TooMuchUsage, billing_usage, usage_window
 from spindle.version import __version__, source_commit
@@ -646,8 +647,38 @@ def create_control_plane_app(
         request = body.model_dump(mode="json")
         if body.cache_affinity_key is None:
             request.pop("cache_affinity_key")
+        # Never trust client-supplied internal fields.
+        request.pop("_stability_capture_plan", None)
         validate_sample_request(request)
-        request_id = await control_plane.submit_sample(request)
+        capture_plan: dict[str, object] | None = None
+        record_stability = request.get("record_stability_info")
+        if record_stability not in (None, False):
+            sampling_session = await control_plane.get_sampling_session(
+                body.sampling_session_id
+            )
+            definition = (
+                await routes.get(sampling_session.engine_definition_id)
+                if sampling_session.engine_definition_id
+                else await routes.select(sampling_session.base_model)
+            )
+            if getattr(definition, "parameterization", None) == "full":
+                raise ValueError(
+                    "record_stability_info is not supported for full-parameter rollout pools"
+                )
+            recipe = getattr(definition, "recipe", None)
+            recipe_stability = (
+                getattr(recipe, "stability_info", None)
+                if recipe is not None
+                else getattr(definition, "stability_info", None)
+            )
+            plan = resolve_capture_plan(record_stability, recipe_stability)
+            if plan is not None:
+                capture_plan = plan.model_dump(mode="json")
+        request_id = (
+            await control_plane.submit_sample(request, capture_plan=capture_plan)
+            if capture_plan is not None
+            else await control_plane.submit_sample(request)
+        )
         # Return one sequence id per sample, derived from the idempotent request
         # id so a resubmitted sample gets the same ids. Tinker SDK 0.26 and
         # later require them.
