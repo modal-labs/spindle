@@ -18,6 +18,7 @@ from spindle.backends.deployment import (
     resolve_draft_asset_path,
 )
 from spindle.configuration import BaseConfig
+from spindle.stability import RecipeStabilityConfig
 
 # Modal's smallest ephemeral disk request.
 MIN_EPHEMERAL_DISK_MIB = 524_288
@@ -104,6 +105,7 @@ class DeploymentConfig(BaseModel):
         """Copy the recipe and attach backend settings."""
         _validate_recipe(recipe)
         pinned = BaseConfig(**_jsonable(vars(recipe)))
+        RecipeStabilityConfig.model_validate(pinned.stability_info)
         for field in ("trainer_disk_mib", "inference_disk_mib"):
             disk = getattr(pinned, field)
             if disk and disk < MIN_EPHEMERAL_DISK_MIB:
@@ -220,6 +222,7 @@ class DeploymentConfig(BaseModel):
             recipe.trainer_timeout_s,
             recipe.trainer_env,
             recipe.trainer_image,
+            recipe.stability_info,
             self.trainer_settings,
             self.spindle_version,
         )
@@ -251,6 +254,7 @@ class DeploymentConfig(BaseModel):
             recipe.inference_env,
             # cache_wait pools publish routing observations; others do not.
             recipe.inference_lora_routing,
+            recipe.stability_info,
             self.inference_settings,
             self.spindle_version,
         )
