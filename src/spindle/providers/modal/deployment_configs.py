@@ -117,10 +117,16 @@ def pool_config(definition_id):
     return None if row is None else DeploymentConfig.from_registry(row)
 
 
-def provision_pool(deployment, pool, platform):
+def provision_pool(deployment, pool, platform, *, frontend_app_id=None):
     provision = modal.Function.from_name(
         deployment.inference_app_name,
         "provision",
         environment_name=platform["modal"]["environment"],
     )
+    if frontend_app_id is not None:
+        return provision.remote(
+            deployment.model_dump_json(),
+            pool.as_dict(),
+            frontend_app_id=frontend_app_id,
+        )
     return provision.remote(deployment.model_dump_json(), pool.as_dict())

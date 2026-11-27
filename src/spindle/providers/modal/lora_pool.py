@@ -68,6 +68,14 @@ def deploy_pool(spec: LoraPoolSpec, *, config=None, platform=None) -> str:
         saved = pool_config(spec.definition_id)
         if saved is None:
             raise ValueError(f"missing deployment config: {spec.definition_id}")
+        frontend_app_id = os.environ.get("SPINDLE_FRONTEND_APP_ID")
+        if frontend_app_id:
+            return provision_pool(
+                saved,
+                spec,
+                platform or platform_from_env(),
+                frontend_app_id=frontend_app_id,
+            )
         return provision_pool(saved, spec, platform or platform_from_env())
     modal_cli = shutil.which("modal")
     if modal_cli is None:
