@@ -5,6 +5,7 @@ import struct
 import numpy as np
 import pytest
 from tinker import types
+from tinker.types._pydantic_types.datum import Datum as DatumModel
 
 try:
     from tinker.lib._pydantic_conv import to_pydantic_request
@@ -20,6 +21,7 @@ from spindle.engine.operations import (
     serialize_operation_payload,
 )
 from spindle.engine.training_transport import (
+    ArrayTensorData,
     decode_batch,
     decode_payload,
     encode_batch,
@@ -263,3 +265,54 @@ def test_binary_matches_previous_json_backend_path(seed):
                     assert struct.pack("<d", x) == struct.pack("<d", y)
                 else:
                     assert x == y
+
+
+def test_compact_integer_transport_uses_int16_for_routes_without_list_materialization():
+    rng = np.random.default_rng(0)
+    routes = rng.integers(0, 288, size=(1024, 4, 8), dtype=np.int16)
+    routes[0, 0, 0] = -1
+    original = types.ForwardBackwardInput(
+        data=[
+            DatumModel.model_construct(
+                model_input=types.ModelInput.from_ints(list(range(1024))),
+                loss_fn_inputs={
+                    "target_tokens": ArrayTensorData.from_array(
+                        np.arange(1024, dtype=np.int32), dtype="int64", shape=[1024]
+                    ),
+                    "routed_experts": ArrayTensorData.from_array(
+                        routes, dtype="int64", shape=list(routes.shape)
+                    ),
+                },
+            )
+        ],
+        loss_fn="importance_sampling",
+    )
+    encoded = encode_payload(original)
+    # 1024*4*8 int16 = 64 KiB vs 256 KiB if widened to int64.
+    assert len(encoded) < 90_000
+    decoded = decode_payload(encoded)
+    tensor = decoded.data[0].loss_fn_inputs["routed_experts"]
+    assert isinstance(tensor, ArrayTensorData)
+    assert "data" not in tensor.__dict__
+    compact = tensor.to_numpy_compact()
+    assert compact.dtype == np.int16
+    assert "data" not in tensor.__dict__
+    np.testing.assert_array_equal(compact, routes)
+    # Public to_numpy() honors declared dtype without materializing .data.
+    public = tensor.to_numpy()
+    assert public.dtype == np.int64
+    assert "data" not in tensor.__dict__
+    np.testing.assert_array_equal(public, routes)
+
+    # model_dump() includes data even before .data is accessed directly.
+    fresh = decode_payload(encoded).data[0].loss_fn_inputs["target_tokens"]
+    assert "data" not in fresh.__dict__
+    dumped = fresh.model_dump()
+    assert dumped["data"][:4] == [0, 1, 2, 3]
+
+    # Mutating materialized .data updates to_numpy() and re-encoding consistently.
+    assert tensor.data[0] == -1
+    tensor.data[0] = 77
+    assert int(tensor.to_numpy().reshape(-1)[0]) == 77
+    re_decoded = decode_payload(encode_payload(decoded))
+    assert re_decoded.data[0].loss_fn_inputs["routed_experts"].data[0] == 77

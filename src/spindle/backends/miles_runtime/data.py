@@ -120,7 +120,7 @@ def _align_row(row: dict[str, Any], multiple: int) -> None:
         route = row["routed_experts"]
         width = route["shape"][1] * route["shape"][2]
         route["values"] = np.concatenate(
-            [route["values"], np.full(pad * width, -1, dtype=np.int32)]
+            [route["values"], np.full(pad * width, -1, dtype=route["values"].dtype)]
         )
         route["shape"][0] += pad
     if "sampling_mask_offsets" in row:
