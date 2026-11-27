@@ -18,6 +18,10 @@ if TYPE_CHECKING:
 from spindle.telemetry.sample_stats import SampleAttempt, event_sink, timing_metadata
 from spindle.telemetry.http_trace import HTTPTrace
 from spindle.replay import capture_replay
+from spindle.stability import (
+    CapturePlan,
+    parse_stability_request,
+)
 
 RETRY_INITIAL_DELAY_SECONDS = 1.0
 RETRY_MAX_DELAY_SECONDS = 5.0
@@ -81,6 +85,21 @@ async def sample_task(
     replay_flags = {key: request.get(key, False) for key in REPLAY_FLAGS}
     if replay_flags["return_sampling_probabilities"]:
         replay_flags["return_sampling_mask"] = True
+    capture_plan = _capture_plan(task)
+    sglang_replay_flags = dict(replay_flags)
+    if capture_plan is not None:
+        if capture_plan.routed_experts:
+            sglang_replay_flags["return_routed_experts"] = True
+        if capture_plan.sampling_mask:
+            sglang_replay_flags["return_sampling_mask"] = True
+        if capture_plan.sampling_probabilities:
+            sglang_replay_flags["return_sampling_mask"] = True
+            sglang_replay_flags["return_sampling_probabilities"] = True
+        if capture_plan.sampling_mask_top_k is not None and (
+            params.get("top_k") is None or int(params["top_k"]) <= 0
+        ):
+            params["top_k"] = capture_plan.sampling_mask_top_k
+    capture_session_id = task.get("session_id") or session_id
     model_id = task.get("model_id")
     version = task.get("publish_version")
     latest = bool(task.get("latest"))
@@ -149,7 +168,17 @@ async def sample_task(
                     routing_session_id=routing_session_id,
                     cache_affinity_id=cache_affinity_id,
                     routed_dp_rank=routed_dp_rank,
-                    replay_flags=replay_flags,
+                    replay_flags=sglang_replay_flags,
+                    capture_spec=(
+                        {
+                            "session_id": capture_session_id,
+                            "sequence_id": f"{request_id}:{index}",
+                            "plan": capture_plan.model_dump(mode="json"),
+                            "temperature": float(params.get("temperature", 1.0)),
+                        }
+                        if capture_plan is not None and capture_session_id
+                        else None
+                    ),
                     prompt_logprobs=prompt_logprobs and index == 0,
                     topk_prompt_logprobs=(topk_prompt_logprobs if index == 0 else 0),
                     logprob_start_len=logprob_start_len,
@@ -226,6 +255,7 @@ async def _sample_one(
     cache_affinity_id: str | None,
     routed_dp_rank: int,
     replay_flags: dict[str, bool],
+    capture_spec: dict[str, Any] | None = None,
     prompt_logprobs: bool,
     topk_prompt_logprobs: int,
     logprob_start_len: int,
@@ -256,6 +286,8 @@ async def _sample_one(
         body["sampling_logprobs_mode"] = "support"
     if replay_flags["return_routed_experts"]:
         body["routed_experts_start_len"] = 0
+    if capture_spec is not None:
+        body["_spindle_capture"] = capture_spec
     if cache_affinity_id is not None:
         body["session_id"] = cache_affinity_id
     if prompt_logprobs or topk_prompt_logprobs:
@@ -501,10 +533,19 @@ def _conversation_affinity_id(task: dict[str, Any], prompt: list[int]) -> str | 
     return f"conversation-{digest.hexdigest()[:32]}"
 
 
+def _capture_plan(task: dict[str, Any]) -> CapturePlan | None:
+    raw = task.get("capture_plan")
+    if raw is None:
+        return None
+    return CapturePlan.model_validate(raw)
+
+
 def validate_sample_request(request: dict[str, Any]) -> None:
     for key in REPLAY_FLAGS:
         if type(request.get(key, False)) is not bool:
             raise ValueError(f"{key} must be a boolean")
+    if "record_stability_info" in request:
+        parse_stability_request(request.get("record_stability_info"))
     if int(request.get("num_samples", 1)) < 1:
         raise ValueError("num_samples must be positive")
     if int(request.get("topk_prompt_logprobs") or 0) < 0:

@@ -19,6 +19,7 @@ class SamplingTask:
     latest: bool = False
     accepted_at: float | None = None
     telemetry_tags: dict[str, str] = field(default_factory=dict)
+    capture_plan: dict | None = None
 
 
 class SamplingTaskStatus(StrEnum):
